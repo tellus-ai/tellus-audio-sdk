@@ -40,6 +40,7 @@
     "check:js": "npm run build && find dist -name '*.js' -print0 | xargs -0 -n1 node --check",
     "check:package": "npm run build && node dist/installer/check-package-contents.js",
     "install:binary": "node dist/installer/install-binary-cli.js",
+    "prepare": "npm run build",
     "postinstall": "node dist/installer/install-binary-cli.js"
   },
   "engines": {
