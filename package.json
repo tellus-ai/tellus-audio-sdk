@@ -41,7 +41,7 @@
     "check:package": "npm run build && node dist/installer/check-package-contents.js",
     "install:binary": "node dist/installer/install-binary-cli.js",
     "prepare": "npm run build",
-    "postinstall": "node dist/installer/install-binary-cli.js"
+    "postinstall": "node -e \"const fs=require('node:fs');const cp=require('node:child_process');if(!fs.existsSync('dist/installer/install-binary-cli.js')&&fs.existsSync('src/installer/install-binary-cli.ts'))cp.execFileSync(process.platform==='win32'?'npm.cmd':'npm',['run','build'],{stdio:'inherit'});cp.execFileSync(process.execPath,['dist/installer/install-binary-cli.js'],{stdio:'inherit'});\""
   },
   "engines": {
     "node": ">= 18"
