@@ -1,6 +1,6 @@
 {
   "name": "@tellus-ai/audio-sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Tellus Audio SDK wrapper for Electron and Node.js",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
