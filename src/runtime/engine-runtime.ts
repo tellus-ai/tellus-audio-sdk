@@ -1,0 +1,103 @@
+import { existsSync, readdirSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
+
+import {
+  currentAssetKey,
+  nativeFileCandidates,
+  ortRuntimeKeys,
+} from '../platform/asset-key';
+
+const PACKAGE_ROOT = join(__dirname, '..', '..');
+const { platform } = process;
+
+function assetRoots(): string[] {
+  const key = currentAssetKey();
+  const roots: string[] = [];
+  if (platform === 'darwin') {
+    roots.push(join(PACKAGE_ROOT, 'vendor', 'darwin-universal'));
+  } else {
+    roots.push(join(PACKAGE_ROOT, 'vendor', key));
+  }
+  roots.push(PACKAGE_ROOT);
+  return roots;
+}
+
+function resolveExistingPath(candidate: string): string | null {
+  if (existsSync(candidate)) {
+    return candidate;
+  }
+
+  const fileName = basename(candidate);
+  if (fileName !== 'libonnxruntime.so') {
+    return null;
+  }
+
+  const dir = dirname(candidate);
+  if (!existsSync(dir)) {
+    return null;
+  }
+
+  const versionedFileName = readdirSync(dir).find((entry) => entry.startsWith(`${fileName}.`));
+  return versionedFileName ? join(dir, versionedFileName) : null;
+}
+
+function findExistingPath(relativePaths: string[]): string | null {
+  for (const root of assetRoots()) {
+    for (const relativePath of relativePaths) {
+      const found = resolveExistingPath(join(root, relativePath));
+      if (found) {
+        return found;
+      }
+    }
+  }
+  return null;
+}
+
+function configureOrtDylibPath(): void {
+  const fileNameByPlatform: Record<string, string> = {
+    darwin: 'libonnxruntime.dylib',
+    linux: 'libonnxruntime.so',
+    win32: 'onnxruntime.dll',
+  };
+  const fileName = fileNameByPlatform[platform];
+  if (!fileName) {
+    return;
+  }
+
+  const relativePaths =
+    platform === 'darwin'
+      ? [join('onnxruntime', 'darwin-universal', fileName)]
+      : [
+          ...ortRuntimeKeys().map((runtimeKey) => join('onnxruntime', runtimeKey, fileName)),
+          join('onnxruntime', fileName),
+          fileName,
+        ];
+  const found = findExistingPath(relativePaths);
+  if (found) {
+    process.env.ORT_DYLIB_PATH = found;
+  }
+}
+
+function loadNativeBinding(): any {
+  configureOrtDylibPath();
+
+  const nativePath = findExistingPath(nativeFileCandidates());
+  if (!nativePath) {
+    throw new Error(
+      [
+        `Failed to find Tellus audio engine native binary for ${currentAssetKey()}.`,
+        'Run `node node_modules/@tellus-ai/audio-sdk/scripts/install-binary.js` after installing the package.',
+      ].join(' '),
+    );
+  }
+
+  return require(nativePath);
+}
+
+export function prepareEngineRuntime(): {
+  nativeBinding: any;
+} {
+  return {
+    nativeBinding: loadNativeBinding(),
+  };
+}

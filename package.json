@@ -1,0 +1,53 @@
+{
+  "name": "@tellus-ai/audio-sdk",
+  "version": "0.1.0",
+  "description": "Tellus Audio SDK wrapper for Electron and Node.js",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tellus-ai/tellus-audio-sdk.git"
+  },
+  "files": [
+    "dist/index.js",
+    "dist/index.d.ts",
+    "dist/runtime/engine-runtime.js",
+    "dist/runtime/engine-runtime.d.ts",
+    "dist/platform/asset-key.js",
+    "dist/platform/asset-key.d.ts",
+    "dist/installer/install-binary.js",
+    "dist/installer/install-binary.d.ts",
+    "dist/installer/install-binary-cli.js",
+    "dist/installer/install-binary-cli.d.ts",
+    "dist/installer/check-binary.js",
+    "dist/installer/check-binary.d.ts",
+    "dist/installer/check-binary-cli.js",
+    "dist/installer/check-binary-cli.d.ts",
+    "README.md",
+    "LICENSE",
+    "release-assets.json"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check:binary": "node dist/installer/check-binary-cli.js",
+    "check:js": "npm run build && find dist -name '*.js' -print0 | xargs -0 -n1 node --check",
+    "check:package": "npm run build && node dist/installer/check-package-contents.js",
+    "install:binary": "node dist/installer/install-binary-cli.js",
+    "postinstall": "node dist/installer/install-binary-cli.js"
+  },
+  "engines": {
+    "node": ">= 18"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "typescript": "^6.0.3"
+  }
+}
