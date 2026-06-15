@@ -17,6 +17,12 @@ export type AudioTransportConfig =
       codec: 'pcm_f32le';
     };
 
+export type AudioTrackSource =
+  | 'microphone'
+  | 'screen_share_audio'
+  | 'system_audio'
+  | 'microphone_speaker_mix';
+
 /** Audio capture configuration. */
 export interface AudioCaptureConfig {
   /** Enables microphone capture. Native default is true. */
@@ -73,6 +79,8 @@ export interface RawAudioBundle {
 export interface AudioChunk {
   /** Final transport payload: Opus by default, PCM16LE for pcm_s16le, or Float32LE for pcm_f32le. */
   data: Buffer;
+  /** Source label for the final transport payload. */
+  trackSource: AudioTrackSource;
   sampleRate: number;
   sample: number;
   timestamp: number;

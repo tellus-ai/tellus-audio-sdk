@@ -20,8 +20,8 @@ The required native engine version is pinned in `release-assets.json`:
 ```json
 {
   "sdkVersion": "0.1.1",
-  "nativeEngineVersion": "0.2.2",
-  "nativeEngineTag": "v0.2.2"
+  "nativeEngineVersion": "0.2.4",
+  "nativeEngineTag": "v0.2.4"
 }
 ```
 
@@ -84,6 +84,7 @@ capture.start((err, chunk) => {
 
   console.log({
     bytes: chunk.data.length,
+    trackSource: chunk.trackSource,
     rms: chunk.rms,
     vadRms: chunk.vadRms ?? null,
     gateEvent: chunk.gateEvent ?? null,
@@ -97,6 +98,10 @@ capture.start((err, chunk) => {
 rate. For example, a 48kHz microphone returns `rawAudio.mic.sampleRate === 48000` even when the
 capture config uses `processing.sampleRate: 16000`. `rawAudio.mixed` is a derived mix and uses the
 configured processing/mixer sample rate.
+
+`chunk.trackSource` labels the final transport payload in `chunk.data`. Mic-only output is
+`"microphone"`, speaker-only output is usually `"system_audio"`, macOS ScreenCaptureKit fallback
+output is `"screen_share_audio"`, and mic+speaker output is `"microphone_speaker_mix"`.
 
 ### Capture Source Examples
 
@@ -123,6 +128,7 @@ Output shape:
 ```ts
 {
   data: <encoded mic output>,
+  trackSource: "microphone",
   sampleRate: 16000,
   sample: 3200,
   timestamp: 1710000000400,
@@ -158,6 +164,7 @@ Output shape:
 ```ts
 {
   data: <encoded speaker output>,
+  trackSource: "system_audio",
   sampleRate: 16000,
   sample: 3200,
   timestamp: 1710000000400,
@@ -193,6 +200,7 @@ Output shape:
 ```ts
 {
   data: <encoded mixed output>,
+  trackSource: "microphone_speaker_mix",
   sampleRate: 16000,
   sample: 3200,
   timestamp: 1710000000400,
@@ -278,6 +286,12 @@ export type AudioTransportConfig =
   | { codec: 'opus'; bitrateBps?: number }
   | { codec: 'pcm_s16le' }
   | { codec: 'pcm_f32le' };
+
+export type AudioTrackSource =
+  | 'microphone'
+  | 'screen_share_audio'
+  | 'system_audio'
+  | 'microphone_speaker_mix';
 ```
 
 `processing.sampleRate` controls the processing/mixer and transport sample rate. `pcm_s16le` and
@@ -331,6 +345,7 @@ VAD-enabled output includes `vadRms`:
 ```ts
 {
   data: <encoded mixed output>,
+  trackSource: "microphone_speaker_mix",
   sampleRate: 16000,
   sample: 3200,
   timestamp: 1710000000400,
