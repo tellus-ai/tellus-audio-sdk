@@ -20,8 +20,8 @@ The required native engine version is pinned in `release-assets.json`:
 ```json
 {
   "sdkVersion": "0.1.1",
-  "nativeEngineVersion": "0.2.2",
-  "nativeEngineTag": "v0.2.2"
+  "nativeEngineVersion": "0.2.4",
+  "nativeEngineTag": "v0.2.4"
 }
 ```
 
@@ -58,11 +58,18 @@ console.log('Microphones:', devices);
 console.log('Speaker supported:', isSpeakerCaptureSupported());
 
 const capture = new AudioCapture({
-  sampleRate: 16000,
-  chunkDurationMs: 20,
-  audioCodec: 'opus',
-  enableMic: true,
-  enableSpeaker: false,
+  micEnabled: true,
+  speakerEnabled: true,
+  enableRawAudio: true,
+  vadEnabled: true,
+  processing: {
+    sampleRate: 16000,
+    chunkDurationMs: 20,
+  },
+  transport: {
+    codec: 'opus',
+    bitrateBps: 64000,
+  },
 });
 
 capture.onError((err, captureError) => {
@@ -75,8 +82,282 @@ capture.start((err, chunk) => {
     return;
   }
 
-  console.log(chunk.source, chunk.data.length, chunk.rms);
+  console.log({
+    bytes: chunk.data.length,
+    trackSource: chunk.trackSource,
+    rms: chunk.rms,
+    vadRms: chunk.vadRms ?? null,
+    gateEvent: chunk.gateEvent ?? null,
+    micSampleRate: chunk.rawAudio?.mic?.sampleRate ?? null,
+    speakerSampleRate: chunk.rawAudio?.speaker?.sampleRate ?? null,
+  });
 });
+```
+
+`rawAudio.mic` and `rawAudio.speaker` are PCM16 little-endian frames at the original device sample
+rate. For example, a 48kHz microphone returns `rawAudio.mic.sampleRate === 48000` even when the
+capture config uses `processing.sampleRate: 16000`. `rawAudio.mixed` is a derived mix and uses the
+configured processing/mixer sample rate.
+
+`chunk.trackSource` labels the final transport payload in `chunk.data`. Mic-only output is
+`"microphone"`, speaker-only output is usually `"system_audio"`, macOS ScreenCaptureKit fallback
+output is `"screen_share_audio"`, and mic+speaker output is `"microphone_speaker_mix"`.
+
+### Capture Source Examples
+
+Mic only:
+
+```javascript
+const capture = new AudioCapture({
+  micEnabled: true,
+  speakerEnabled: false,
+  enableRawAudio: true,
+  processing: {
+    sampleRate: 16000,
+    chunkDurationMs: 20,
+  },
+  transport: {
+    codec: 'opus',
+    bitrateBps: 64000,
+  },
+});
+```
+
+Output shape:
+
+```ts
+{
+  data: <encoded mic output>,
+  trackSource: "microphone",
+  sampleRate: 16000,
+  sample: 3200,
+  timestamp: 1710000000400,
+  rms: 0.012,
+  rawAudio: {
+    mic: { data: <pcm16 mic>, sampleRate: 48000, sample: 9600, timestamp: 1710000000400, rms: 0.012 },
+    speaker: null,
+    mixed: null,
+  },
+}
+```
+
+Speaker only:
+
+```javascript
+const capture = new AudioCapture({
+  micEnabled: false,
+  speakerEnabled: true,
+  enableRawAudio: true,
+  processing: {
+    sampleRate: 16000,
+    chunkDurationMs: 20,
+  },
+  transport: {
+    codec: 'opus',
+    bitrateBps: 64000,
+  },
+});
+```
+
+Output shape:
+
+```ts
+{
+  data: <encoded speaker output>,
+  trackSource: "system_audio",
+  sampleRate: 16000,
+  sample: 3200,
+  timestamp: 1710000000400,
+  rms: 0.020,
+  rawAudio: {
+    mic: null,
+    speaker: { data: <pcm16 speaker>, sampleRate: 44100, sample: 8820, timestamp: 1710000000400, rms: 0.020 },
+    mixed: null,
+  },
+}
+```
+
+Mic and speaker mixed:
+
+```javascript
+const capture = new AudioCapture({
+  micEnabled: true,
+  speakerEnabled: true,
+  enableRawAudio: true,
+  processing: {
+    sampleRate: 16000,
+    chunkDurationMs: 20,
+  },
+  transport: {
+    codec: 'opus',
+    bitrateBps: 64000,
+  },
+});
+```
+
+Output shape:
+
+```ts
+{
+  data: <encoded mixed output>,
+  trackSource: "microphone_speaker_mix",
+  sampleRate: 16000,
+  sample: 3200,
+  timestamp: 1710000000400,
+  rms: 0.016,
+  rawAudio: {
+    mic: { data: <pcm16 mic>, sampleRate: 48000, sample: 9600, timestamp: 1710000000400, rms: 0.012 },
+    speaker: { data: <pcm16 speaker>, sampleRate: 44100, sample: 8820, timestamp: 1710000000400, rms: 0.020 },
+    mixed: { data: <pcm16 mixed>, sampleRate: 16000, sample: 3200, timestamp: 1710000000400, rms: 0.016 },
+  },
+}
+```
+
+### Transport Codec Examples
+
+Opus:
+
+```javascript
+const capture = new AudioCapture({
+  micEnabled: true,
+  speakerEnabled: true,
+  processing: {
+    sampleRate: 16000,
+    chunkDurationMs: 20,
+  },
+  transport: {
+    codec: 'opus',
+    bitrateBps: 64000,
+  },
+});
+```
+
+PCM16 little-endian:
+
+```javascript
+const capture = new AudioCapture({
+  micEnabled: true,
+  speakerEnabled: true,
+  processing: {
+    sampleRate: 16000,
+    chunkDurationMs: 20,
+  },
+  transport: {
+    codec: 'pcm_s16le',
+  },
+});
+```
+
+Float32 little-endian PCM:
+
+```javascript
+const capture = new AudioCapture({
+  micEnabled: true,
+  speakerEnabled: true,
+  processing: {
+    sampleRate: 48000,
+    chunkDurationMs: 20,
+  },
+  transport: {
+    codec: 'pcm_f32le',
+  },
+});
+```
+
+### AudioCaptureConfig
+
+```ts
+export interface AudioCaptureConfig {
+  micEnabled?: boolean;
+  speakerEnabled?: boolean;
+  enableRawAudio?: boolean;
+  vadEnabled?: boolean;
+  micDeviceName?: string;
+  processing?: AudioProcessingConfig;
+  transport?: AudioTransportConfig;
+}
+
+export interface AudioProcessingConfig {
+  sampleRate?: number;
+  chunkDurationMs?: number;
+}
+
+export type AudioTransportConfig =
+  | { codec: 'opus'; bitrateBps?: number }
+  | { codec: 'pcm_s16le' }
+  | { codec: 'pcm_f32le' };
+
+export type AudioTrackSource =
+  | 'microphone'
+  | 'screen_share_audio'
+  | 'system_audio'
+  | 'microphone_speaker_mix';
+```
+
+`processing.sampleRate` controls the processing/mixer and transport sample rate. `pcm_s16le` and
+`pcm_f32le` describe the sample representation only; they do not include a sample rate. `bitrateBps`
+is valid only with `transport.codec: 'opus'`.
+
+`micEnabled: true` captures microphone input. `speakerEnabled: true` captures speaker/system audio.
+At least one of `micEnabled` or `speakerEnabled` must be true.
+
+### VAD
+
+VAD is enabled by default with `vadEnabled: true`. VAD speech decisions are made only by the fixed
+Silero model path inside the native engine: `models/silero_vad_v6.2.onnx`. RMS is reported for
+diagnostics and is not used as a fallback speech detector.
+
+```javascript
+capture.setVadEnabled(true);
+
+capture.setVadConfig({
+  vadPositiveThreshold: 0.5,
+  vadNegativeThreshold: 0.35,
+  vadSilenceDurationMs: 500,
+  vadPreSpeechBufferMs: 200,
+});
+
+const status = capture.getStatus();
+
+console.log({
+  vadEnabled: status.vadEnabled,
+  vadReady: status.vadReady,
+  vadMode: status.vadMode, // "silero" | "disabled"
+  vadGateState: status.vadGateState, // "open" | "closed"
+  vadProbability: status.vadProbability,
+  vadRms: status.vadRms,
+  vadIsSpeech: status.vadIsSpeech,
+});
+```
+
+`VADConfig` fields are optional. Missing values use the native defaults shown below.
+
+| Property | Type | Default | Description |
+| --- | --- | --- | --- |
+| `vadPositiveThreshold` | `number` | `0.5` | Speech start threshold for Silero probability. |
+| `vadNegativeThreshold` | `number` | `0.35` | Speech end threshold for Silero probability. |
+| `vadRmsThreshold` | `number` | `0.015` | Compatibility value. Silero-only VAD does not use RMS for speech decisions. |
+| `vadSilenceDurationMs` | `number` | `500` | Keep the gate open for this long after the last speech frame. |
+| `vadPreSpeechBufferMs` | `number` | `200` | Keep this much pre-speech context inside the VAD gate. |
+
+VAD-enabled output includes `vadRms`:
+
+```ts
+{
+  data: <encoded mixed output>,
+  trackSource: "microphone_speaker_mix",
+  sampleRate: 16000,
+  sample: 3200,
+  timestamp: 1710000000400,
+  rms: 0.016,
+  vadRms: 0.015,
+  gateEvent: "speech_gate_opened",
+  rawAudio: {
+    mic: { data: <pcm16 mic>, sampleRate: 16000, sample: 3200, timestamp: 1710000000400, rms: 0.012 },
+    speaker: { data: <pcm16 speaker>, sampleRate: 16000, sample: 3200, timestamp: 1710000000400, rms: 0.020 },
+    mixed: { data: <pcm16 mixed>, sampleRate: 16000, sample: 3200, timestamp: 1710000000400, rms: 0.016 },
+  },
+}
 ```
 
 ## Public API
@@ -87,7 +368,8 @@ The public runtime API is intentionally small:
 - `listMicDevices()`
 - `isSpeakerCaptureSupported()`
 
-`AudioCapture` exposes `onError`, `start`, `pause`, `resume`, `stop`, and `getState`.
+`AudioCapture` exposes `onError`, `start`, `pause`, `resume`, `stop`, `getState`, `getStatus`,
+`setVadEnabled`, `setVadConfig`, and `getVadConfig`.
 
 ## Development
 

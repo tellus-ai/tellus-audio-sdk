@@ -78,8 +78,23 @@ function configureOrtDylibPath(): void {
   }
 }
 
+function configureModelDir(): void {
+  if (process.env.TELLUS_AUDIO_ENGINE_MODEL_DIR) {
+    return;
+  }
+
+  for (const root of assetRoots()) {
+    const modelDir = join(root, 'models');
+    if (existsSync(modelDir)) {
+      process.env.TELLUS_AUDIO_ENGINE_MODEL_DIR = modelDir;
+      return;
+    }
+  }
+}
+
 function loadNativeBinding(): any {
   configureOrtDylibPath();
+  configureModelDir();
 
   const nativePath = findExistingPath(nativeFileCandidates());
   if (!nativePath) {
