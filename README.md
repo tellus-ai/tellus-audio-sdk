@@ -19,7 +19,7 @@ The required native engine version is pinned in `release-assets.json`:
 
 ```json
 {
-  "sdkVersion": "0.2.5",
+  "sdkVersion": "0.1.2",
   "nativeEngineVersion": "0.2.5",
   "nativeEngineTag": "v0.2.5"
 }
