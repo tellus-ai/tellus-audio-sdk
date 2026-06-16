@@ -20,8 +20,8 @@ The required native engine version is pinned in `release-assets.json`:
 ```json
 {
   "sdkVersion": "0.1.2",
-  "nativeEngineVersion": "0.2.4",
-  "nativeEngineTag": "v0.2.4"
+  "nativeEngineVersion": "0.2.5",
+  "nativeEngineTag": "v0.2.5"
 }
 ```
 
@@ -82,8 +82,14 @@ capture.start((err, chunk) => {
     return;
   }
 
+  const payload =
+    chunk.data.mixed ??
+    chunk.data.microphone ??
+    chunk.data.system_audio ??
+    chunk.data.screen_share_audio;
+
   console.log({
-    bytes: chunk.data.length,
+    bytes: payload?.length ?? 0,
     trackSource: chunk.trackSource,
     rms: chunk.rms,
     vadRms: chunk.vadRms ?? null,
@@ -99,9 +105,161 @@ rate. For example, a 48kHz microphone returns `rawAudio.mic.sampleRate === 48000
 capture config uses `processing.sampleRate: 16000`. `rawAudio.mixed` is a derived mix and uses the
 configured processing/mixer sample rate.
 
-`chunk.trackSource` labels the final transport payload in `chunk.data`. Mic-only output is
-`"microphone"`, speaker-only output is usually `"system_audio"`, macOS ScreenCaptureKit fallback
-output is `"screen_share_audio"`, and mic+speaker output is `"microphone_speaker_mix"`.
+`chunk.data` contains final transport payloads keyed by source. Mic-only output uses
+`chunk.data.microphone`, speaker-only output usually uses `chunk.data.system_audio`, macOS
+ScreenCaptureKit fallback output uses `chunk.data.screen_share_audio`, and mic+speaker output uses
+`chunk.data.microphone`, `chunk.data.speaker`, and `chunk.data.mixed`. `chunk.trackSource` labels
+the primary payload.
+
+### Engine Initialization and Capture Lifecycle
+
+Use `init()` when you want to initialize the native audio engine before creating a capture session
+and inspect the initialized processing/DSP status. `initLogging()` is optional and should be called
+early if you want native engine logs.
+
+```javascript
+const {
+  AudioCapture,
+  checkMicCapturePermission,
+  checkSystemAudioCapturePermission,
+  getDefaultInputDevice,
+  getDefaultOutputDevice,
+  init,
+  initLogging,
+  isSpeakerCaptureSupported,
+  listMicDevices,
+  requestSystemAudioCapturePermission,
+} = require('@tellus-ai/audio-sdk');
+
+const captureConfig = {
+  micEnabled: true,
+  speakerEnabled: true,
+  enableRawAudio: true,
+  vadEnabled: true,
+  microphoneLevelMode: 'agc2',
+  micOutputGainDb: 0,
+  processing: {
+    sampleRate: 16000,
+    chunkDurationMs: 20,
+  },
+  transport: {
+    codec: 'pcm_s16le',
+  },
+};
+
+initLogging('audio_capture=info');
+
+console.log('Input devices:', listMicDevices());
+console.log('Default input:', getDefaultInputDevice());
+console.log('Default output:', getDefaultOutputDevice());
+console.log('Speaker capture supported:', isSpeakerCaptureSupported());
+
+if (!checkMicCapturePermission()) {
+  throw new Error('Microphone capture permission is not available.');
+}
+
+if (captureConfig.speakerEnabled && !checkSystemAudioCapturePermission()) {
+  const granted = requestSystemAudioCapturePermission();
+  if (!granted) {
+    throw new Error('System audio capture permission is not available.');
+  }
+}
+
+const initStatus = init(captureConfig);
+console.log('Engine initialized:', {
+  initialized: initStatus.initialized,
+  reused: initStatus.reused,
+  processingSampleRate: initStatus.processingSampleRate,
+  chunkDurationMs: initStatus.chunkDurationMs,
+  denoiseActive: initStatus.denoise.active,
+  dspEnabled: initStatus.dsp.enabled,
+});
+
+const capture = new AudioCapture(captureConfig);
+
+capture.onError((err, captureError) => {
+  console.error('Capture error:', {
+    err,
+    source: captureError.source,
+    message: captureError.message,
+    recoverable: captureError.recoverable,
+  });
+});
+
+capture.start((err, chunk) => {
+  if (err) {
+    console.error('Chunk error:', err);
+    return;
+  }
+
+  const primaryPayload =
+    chunk.data.mixed ??
+    chunk.data.microphone ??
+    chunk.data.system_audio ??
+    chunk.data.screen_share_audio;
+
+  console.log('Audio chunk:', {
+    bytes: primaryPayload?.length ?? 0,
+    trackSource: chunk.trackSource,
+    sampleRate: chunk.sampleRate,
+    sample: chunk.sample,
+    rms: chunk.rms,
+    vadRms: chunk.vadRms ?? null,
+    gateEvent: chunk.gateEvent ?? null,
+    rawMicBytes: chunk.rawAudio?.mic?.data.length ?? null,
+    rawSpeakerBytes: chunk.rawAudio?.speaker?.data.length ?? null,
+  });
+});
+
+console.log('State after start:', capture.getState());
+console.log('Status after start:', capture.getStatus());
+```
+
+### Pause, Resume, Stop, and Runtime Controls
+
+`pause()` temporarily stops delivery from the running capture session. `resume()` continues the same
+session, and `stop()` releases the native capture threads.
+
+```javascript
+setTimeout(() => {
+  capture.pause();
+  console.log('Paused:', capture.getState());
+}, 5000);
+
+setTimeout(() => {
+  capture.resume();
+  console.log('Resumed:', capture.getState());
+}, 8000);
+
+setTimeout(() => {
+  capture.setVadEnabled(false);
+  capture.setDenoiseAttenuation(-18);
+  capture.setMicDenoiseAttenuation(-12);
+  capture.setSpeakerDenoiseAttenuation(-12);
+  capture.setMicOutputGainDb(3);
+
+  console.log('Runtime tuning:', {
+    vadConfig: capture.getVadConfig(),
+    denoiseAttenuationDb: capture.getDenoiseAttenuation(),
+    micDenoiseAttenuationDb: capture.getMicDenoiseAttenuation(),
+    speakerDenoiseAttenuationDb: capture.getSpeakerDenoiseAttenuation(),
+    micOutputGainDb: capture.getMicOutputGainDb(),
+    status: capture.getStatus(),
+  });
+}, 10000);
+
+setTimeout(() => {
+  capture.stop();
+  console.log('Stopped:', capture.getState());
+}, 15000);
+```
+
+Instance helpers mirror the standalone device checks:
+
+```javascript
+console.log('Capture mic devices:', capture.getMicDevices());
+console.log('Capture speaker supported:', capture.isSpeakerSupported());
+```
 
 ### Capture Source Examples
 
@@ -127,7 +285,9 @@ Output shape:
 
 ```ts
 {
-  data: <encoded mic output>,
+  data: {
+    microphone: <encoded mic output>,
+  },
   trackSource: "microphone",
   sampleRate: 16000,
   sample: 3200,
@@ -163,7 +323,9 @@ Output shape:
 
 ```ts
 {
-  data: <encoded speaker output>,
+  data: {
+    system_audio: <encoded speaker output>,
+  },
   trackSource: "system_audio",
   sampleRate: 16000,
   sample: 3200,
@@ -199,7 +361,11 @@ Output shape:
 
 ```ts
 {
-  data: <encoded mixed output>,
+  data: {
+    microphone: <encoded microphone output>,
+    speaker: <encoded speaker output>,
+    mixed: <encoded mixed output>,
+  },
   trackSource: "microphone_speaker_mix",
   sampleRate: 16000,
   sample: 3200,
@@ -273,6 +439,8 @@ export interface AudioCaptureConfig {
   enableRawAudio?: boolean;
   vadEnabled?: boolean;
   micDeviceName?: string;
+  microphoneLevelMode?: 'agc2' | 'microphone_level_max' | 'none';
+  micOutputGainDb?: number;
   processing?: AudioProcessingConfig;
   transport?: AudioTransportConfig;
 }
@@ -282,10 +450,10 @@ export interface AudioProcessingConfig {
   chunkDurationMs?: number;
 }
 
-export type AudioTransportConfig =
-  | { codec: 'opus'; bitrateBps?: number }
-  | { codec: 'pcm_s16le' }
-  | { codec: 'pcm_f32le' };
+export interface AudioTransportConfig {
+  codec?: 'opus' | 'pcm_s16le' | 'pcm_f32le';
+  bitrateBps?: number;
+}
 
 export type AudioTrackSource =
   | 'microphone'
@@ -300,6 +468,9 @@ is valid only with `transport.codec: 'opus'`.
 
 `micEnabled: true` captures microphone input. `speakerEnabled: true` captures speaker/system audio.
 At least one of `micEnabled` or `speakerEnabled` must be true.
+
+`microphoneLevelMode` controls the native microphone level policy. `micOutputGainDb` applies
+SDK-internal microphone output gain to mixed/output payloads without changing OS input volume.
 
 ### VAD
 
@@ -344,7 +515,11 @@ VAD-enabled output includes `vadRms`:
 
 ```ts
 {
-  data: <encoded mixed output>,
+  data: {
+    microphone: <encoded microphone output>,
+    speaker: <encoded speaker output>,
+    mixed: <encoded mixed output>,
+  },
   trackSource: "microphone_speaker_mix",
   sampleRate: 16000,
   sample: 3200,
@@ -362,14 +537,29 @@ VAD-enabled output includes `vadRms`:
 
 ## Public API
 
-The public runtime API is intentionally small:
+The public runtime API mirrors the native engine 0.2.5 contract:
 
 - `AudioCapture`
+- `init(config?)`
+- `initLogging(level?)`
 - `listMicDevices()`
 - `isSpeakerCaptureSupported()`
+- `probeMicCapture()`
+- `checkMicCapturePermission()`
+- `probeSpeakerCapture()`
+- `checkSpeakerCapturePermission()`
+- `checkSystemAudioCapturePermission()`
+- `requestSystemAudioCapturePermission()`
+- `getMicActiveApps()`
+- `getDefaultInputDevice()`
+- `getDefaultOutputDevice()`
+- `isBuiltInSpeaker()`
 
 `AudioCapture` exposes `onError`, `start`, `pause`, `resume`, `stop`, `getState`, `getStatus`,
-`setVadEnabled`, `setVadConfig`, and `getVadConfig`.
+`getMicDevices`, `isSpeakerSupported`, `setVadEnabled`, `setVadConfig`, `getVadConfig`,
+`setDenoiseAttenuation`, `getDenoiseAttenuation`, `setMicDenoiseAttenuation`,
+`getMicDenoiseAttenuation`, `setSpeakerDenoiseAttenuation`, `getSpeakerDenoiseAttenuation`,
+`setMicOutputGainDb`, and `getMicOutputGainDb`.
 
 ## Development
 

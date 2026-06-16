@@ -5,17 +5,10 @@ export interface AudioProcessingConfig {
   chunkDurationMs?: number;
 }
 
-export type AudioTransportConfig =
-  | {
-      codec: 'opus';
-      bitrateBps?: number;
-    }
-  | {
-      codec: 'pcm_s16le';
-    }
-  | {
-      codec: 'pcm_f32le';
-    };
+export interface AudioTransportConfig {
+  codec?: 'opus' | 'pcm_s16le' | 'pcm_f32le';
+  bitrateBps?: number;
+}
 
 export type AudioTrackSource =
   | 'microphone'
@@ -35,6 +28,10 @@ export interface AudioCaptureConfig {
   vadEnabled?: boolean;
   /** Optional microphone device name. */
   micDeviceName?: string;
+  /** Microphone level policy. */
+  microphoneLevelMode?: 'agc2' | 'microphone_level_max' | 'none';
+  /** SDK-internal microphone output gain in dB. Does not change the OS input volume. */
+  micOutputGainDb?: number;
   /** Processing/mixer settings. */
   processing?: AudioProcessingConfig;
   /** Final transport payload settings. Native default is { codec: "opus" }. */
@@ -69,17 +66,30 @@ export interface RawAudioFrame {
 
 export interface RawAudioBundle {
   /** Microphone PCM16 frame at the original microphone device sample rate, or null when inactive. */
-  mic: RawAudioFrame | null;
+  mic?: RawAudioFrame | null;
   /** Speaker PCM16 frame at the original speaker device sample rate, or null when inactive. */
-  speaker: RawAudioFrame | null;
+  speaker?: RawAudioFrame | null;
   /** Mixed PCM16 frame at the configured processing sample rate, or null unless both sources are enabled. */
-  mixed: RawAudioFrame | null;
+  mixed?: RawAudioFrame | null;
+}
+
+export interface AudioData {
+  /** Microphone output payload. Filled for mic-only and mixed output. */
+  microphone?: Buffer;
+  /** System-audio output payload. Filled for speaker-only output. */
+  system_audio?: Buffer;
+  /** macOS ScreenCaptureKit fallback speaker-only output payload. */
+  screen_share_audio?: Buffer;
+  /** Speaker component payload for mixed output. */
+  speaker?: Buffer;
+  /** Mixed output payload. */
+  mixed?: Buffer;
 }
 
 export interface AudioChunk {
-  /** Final transport payload: Opus by default, PCM16LE for pcm_s16le, or Float32LE for pcm_f32le. */
-  data: Buffer;
-  /** Source label for the final transport payload. */
+  /** Final transport payloads keyed by source. */
+  data: AudioData;
+  /** Source label for the primary final transport payload. */
   trackSource: AudioTrackSource;
   sampleRate: number;
   sample: number;
@@ -107,7 +117,10 @@ export interface CaptureStatus {
   vadProbability: number;
   vadRms: number;
   vadIsSpeech: boolean;
+  /** Current denoise attenuation limit in dB. */
   denoiseAttenuationDb: number;
+  /** Current SDK-internal microphone output gain in dB. */
+  micOutputGainDb: number;
   vadPositiveThreshold: number;
   vadNegativeThreshold: number;
   vadRmsThreshold: number;
@@ -121,6 +134,40 @@ export interface CaptureError {
   recoverable: boolean;
 }
 
+export interface MicActiveApp {
+  processId: number;
+  appName: string;
+  bundleId?: string;
+}
+
+export interface AudioEngineDenoiseInitStatus {
+  enabled: boolean;
+  active: boolean;
+  reused: boolean;
+  model: string;
+  modelDir?: string;
+  sampleRateHz: number;
+  preparedInstances: number;
+  warmupMs: number;
+}
+
+export interface AudioEngineDspInitStatus {
+  enabled: boolean;
+  dcRemovalEnabled: boolean;
+  hpfEnabled: boolean;
+  micAgc2Enabled: boolean;
+  limiterEnabled: boolean;
+}
+
+export interface AudioEngineInitStatus {
+  initialized: boolean;
+  reused: boolean;
+  processingSampleRate: number;
+  chunkDurationMs: number;
+  denoise: AudioEngineDenoiseInitStatus;
+  dsp: AudioEngineDspInitStatus;
+}
+
 export type ErrorCallback = (err: Error | null, arg: CaptureError) => unknown;
 export type AudioChunkCallback = (err: Error | null, arg: AudioChunk) => unknown;
 
@@ -130,6 +177,18 @@ const {
   AudioCapture: NativeAudioCapture,
   listMicDevices: nativeListMicDevices,
   isSpeakerCaptureSupported: nativeIsSpeakerCaptureSupported,
+  probeMicCapture: nativeProbeMicCapture,
+  checkMicCapturePermission: nativeCheckMicCapturePermission,
+  probeSpeakerCapture: nativeProbeSpeakerCapture,
+  checkSpeakerCapturePermission: nativeCheckSpeakerCapturePermission,
+  checkSystemAudioCapturePermission: nativeCheckSystemAudioCapturePermission,
+  requestSystemAudioCapturePermission: nativeRequestSystemAudioCapturePermission,
+  getMicActiveApps: nativeGetMicActiveApps,
+  getDefaultInputDevice: nativeGetDefaultInputDevice,
+  getDefaultOutputDevice: nativeGetDefaultOutputDevice,
+  isBuiltInSpeaker: nativeIsBuiltInSpeaker,
+  init: nativeInit,
+  initLogging: nativeInitLogging,
 } = nativeBinding;
 
 export class AudioCapture {
@@ -167,6 +226,14 @@ export class AudioCapture {
     return this.#native.getStatus();
   }
 
+  getMicDevices(): string[] {
+    return this.#native.getMicDevices();
+  }
+
+  isSpeakerSupported(): boolean {
+    return this.#native.isSpeakerSupported();
+  }
+
   setVadEnabled(enabled: boolean): void {
     this.#native.setVadEnabled(enabled);
   }
@@ -178,7 +245,53 @@ export class AudioCapture {
   getVadConfig(): VADConfig {
     return this.#native.getVadConfig();
   }
+
+  setDenoiseAttenuation(db: number): void {
+    this.#native.setDenoiseAttenuation(db);
+  }
+
+  getDenoiseAttenuation(): number {
+    return this.#native.getDenoiseAttenuation();
+  }
+
+  setMicDenoiseAttenuation(db: number): void {
+    this.#native.setMicDenoiseAttenuation(db);
+  }
+
+  getMicDenoiseAttenuation(): number {
+    return this.#native.getMicDenoiseAttenuation();
+  }
+
+  setSpeakerDenoiseAttenuation(db: number): void {
+    this.#native.setSpeakerDenoiseAttenuation(db);
+  }
+
+  getSpeakerDenoiseAttenuation(): number {
+    return this.#native.getSpeakerDenoiseAttenuation();
+  }
+
+  setMicOutputGainDb(db: number): void {
+    this.#native.setMicOutputGainDb(db);
+  }
+
+  getMicOutputGainDb(): number {
+    return this.#native.getMicOutputGainDb();
+  }
 }
 
 export const listMicDevices: () => string[] = nativeListMicDevices;
 export const isSpeakerCaptureSupported: () => boolean = nativeIsSpeakerCaptureSupported;
+export const probeMicCapture: () => boolean = nativeProbeMicCapture;
+export const checkMicCapturePermission: () => boolean = nativeCheckMicCapturePermission;
+export const probeSpeakerCapture: () => boolean = nativeProbeSpeakerCapture;
+export const checkSpeakerCapturePermission: () => boolean = nativeCheckSpeakerCapturePermission;
+export const checkSystemAudioCapturePermission: () => boolean =
+  nativeCheckSystemAudioCapturePermission;
+export const requestSystemAudioCapturePermission: () => boolean =
+  nativeRequestSystemAudioCapturePermission;
+export const getMicActiveApps: () => Promise<MicActiveApp[]> = nativeGetMicActiveApps;
+export const getDefaultInputDevice: () => string | null = nativeGetDefaultInputDevice;
+export const getDefaultOutputDevice: () => string | null = nativeGetDefaultOutputDevice;
+export const isBuiltInSpeaker: () => boolean = nativeIsBuiltInSpeaker;
+export const init: (config?: AudioCaptureConfig | null) => AudioEngineInitStatus = nativeInit;
+export const initLogging: (level?: string | null) => void = nativeInitLogging;
