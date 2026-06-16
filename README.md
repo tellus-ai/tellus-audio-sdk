@@ -20,8 +20,8 @@ The required native engine version is pinned in `release-assets.json`:
 ```json
 {
   "sdkVersion": "0.1.3",
-  "nativeEngineVersion": "0.2.5",
-  "nativeEngineTag": "v0.2.5"
+  "nativeEngineVersion": "0.2.6",
+  "nativeEngineTag": "v0.2.6"
 }
 ```
 
@@ -556,7 +556,7 @@ VAD-enabled output includes `vadRms`:
 
 ## Public API
 
-The public runtime API mirrors the native engine 0.2.5 contract:
+The public runtime API mirrors the native engine 0.2.6 contract:
 
 - `AudioCapture`
 - `init(config?)`
