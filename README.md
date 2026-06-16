@@ -125,7 +125,7 @@ early if you want native engine logs.
 const {
   AudioCapture,
   checkMicCapturePermission,
-  checkSystemAudioCapturePermission,
+  checkSpeakerCapturePermission,
   getDefaultInputDevice,
   getDefaultOutputDevice,
   init,
@@ -162,7 +162,7 @@ if (!checkMicCapturePermission()) {
   throw new Error('Microphone capture permission is not available.');
 }
 
-if (captureConfig.speakerEnabled && !checkSystemAudioCapturePermission()) {
+if (captureConfig.speakerEnabled && !checkSpeakerCapturePermission()) {
   const granted = requestSystemAudioCapturePermission();
   if (!granted) {
     throw new Error('System audio capture permission is not available.');
@@ -567,12 +567,14 @@ The public runtime API mirrors the native engine 0.2.6 contract:
 - `checkMicCapturePermission()`
 - `probeSpeakerCapture()`
 - `checkSpeakerCapturePermission()`
-- `checkSystemAudioCapturePermission()`
 - `requestSystemAudioCapturePermission()`
 - `getMicActiveApps()`
 - `getDefaultInputDevice()`
 - `getDefaultOutputDevice()`
 - `isBuiltInSpeaker()`
+
+`checkSystemAudioCapturePermission()` remains available as a deprecated compatibility alias for
+`checkSpeakerCapturePermission()`.
 
 `AudioCapture` exposes `onError`, `start`, `pause`, `resume`, `stop`, `getState`, `getStatus`,
 `getMicDevices`, `isSpeakerSupported`, `setVadEnabled`, `setVadConfig`, `getVadConfig`,
