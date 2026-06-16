@@ -7,7 +7,7 @@ This repository contains the public TypeScript wrapper source, built JavaScript 
 ## Install
 
 ```bash
-npm install git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.1.3
+npm install git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.1.4
 ```
 
 Installing from GitHub uses the public `tellus-ai/tellus-audio-sdk` repository. The package `prepare` step builds the TypeScript wrapper before npm packs the git dependency.
@@ -19,7 +19,7 @@ The required native engine version is pinned in `release-assets.json`:
 
 ```json
 {
-  "sdkVersion": "0.1.3",
+  "sdkVersion": "0.1.4",
   "nativeEngineVersion": "0.2.6",
   "nativeEngineTag": "v0.2.6"
 }
@@ -31,7 +31,7 @@ Provide the token explicitly before install:
 
 ```bash
 export TELLUS_AUDIO_ENGINE_TOKEN="..."
-npm install git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.1.3
+npm install git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.1.4
 ```
 
 Alternatively, place the token in the installing project's `.env` file:
