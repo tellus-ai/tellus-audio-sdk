@@ -91,6 +91,9 @@ capture.start((err, chunk) => {
   console.log({
     bytes: payload?.length ?? 0,
     trackSource: chunk.trackSource,
+    codec: chunk.codec,
+    sampleCount: chunk.sampleCount,
+    durationMs: chunk.durationMs,
     rms: chunk.rms,
     vadRms: chunk.vadRms ?? null,
     gateEvent: chunk.gateEvent ?? null,
@@ -109,7 +112,8 @@ configured processing/mixer sample rate.
 `chunk.data.microphone`, speaker-only output usually uses `chunk.data.system_audio`, macOS
 ScreenCaptureKit fallback output uses `chunk.data.screen_share_audio`, and mic+speaker output uses
 `chunk.data.microphone`, `chunk.data.speaker`, and `chunk.data.mixed`. `chunk.trackSource` labels
-the primary payload.
+the primary payload. `chunk.codec`, `chunk.sampleRate`, `chunk.sampleCount`, and
+`chunk.durationMs` describe the final transport payloads in `chunk.data`.
 
 ### Engine Initialization and Capture Lifecycle
 
@@ -201,7 +205,10 @@ capture.start((err, chunk) => {
   console.log('Audio chunk:', {
     bytes: primaryPayload?.length ?? 0,
     trackSource: chunk.trackSource,
+    codec: chunk.codec,
     sampleRate: chunk.sampleRate,
+    sampleCount: chunk.sampleCount,
+    durationMs: chunk.durationMs,
     sample: chunk.sample,
     rms: chunk.rms,
     vadRms: chunk.vadRms ?? null,
@@ -289,7 +296,10 @@ Output shape:
     microphone: <encoded mic output>,
   },
   trackSource: "microphone",
+  codec: "opus",
   sampleRate: 16000,
+  sampleCount: 320,
+  durationMs: 20,
   sample: 3200,
   timestamp: 1710000000400,
   rms: 0.012,
@@ -327,7 +337,10 @@ Output shape:
     system_audio: <encoded speaker output>,
   },
   trackSource: "system_audio",
+  codec: "opus",
   sampleRate: 16000,
+  sampleCount: 320,
+  durationMs: 20,
   sample: 3200,
   timestamp: 1710000000400,
   rms: 0.020,
@@ -367,7 +380,10 @@ Output shape:
     mixed: <encoded mixed output>,
   },
   trackSource: "microphone_speaker_mix",
+  codec: "opus",
   sampleRate: 16000,
+  sampleCount: 320,
+  durationMs: 20,
   sample: 3200,
   timestamp: 1710000000400,
   rms: 0.016,
@@ -521,7 +537,10 @@ VAD-enabled output includes `vadRms`:
     mixed: <encoded mixed output>,
   },
   trackSource: "microphone_speaker_mix",
+  codec: "opus",
   sampleRate: 16000,
+  sampleCount: 320,
+  durationMs: 20,
   sample: 3200,
   timestamp: 1710000000400,
   rms: 0.016,

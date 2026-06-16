@@ -91,7 +91,13 @@ export interface AudioChunk {
   data: AudioData;
   /** Source label for the primary final transport payload. */
   trackSource: AudioTrackSource;
+  /** Codec used for the final transport payloads in data. */
+  codec: 'opus' | 'pcm_s16le' | 'pcm_f32le';
   sampleRate: number;
+  /** Number of samples per channel in this transport chunk. */
+  sampleCount: number;
+  /** Duration covered by this transport chunk in milliseconds. */
+  durationMs: number;
   sample: number;
   timestamp: number;
   rms: number;
