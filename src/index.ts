@@ -187,7 +187,6 @@ const {
   checkMicCapturePermission: nativeCheckMicCapturePermission,
   probeSpeakerCapture: nativeProbeSpeakerCapture,
   checkSpeakerCapturePermission: nativeCheckSpeakerCapturePermission,
-  checkSystemAudioCapturePermission: nativeCheckSystemAudioCapturePermission,
   requestSystemAudioCapturePermission: nativeRequestSystemAudioCapturePermission,
   getMicActiveApps: nativeGetMicActiveApps,
   getDefaultInputDevice: nativeGetDefaultInputDevice,
@@ -291,8 +290,8 @@ export const probeMicCapture: () => boolean = nativeProbeMicCapture;
 export const checkMicCapturePermission: () => boolean = nativeCheckMicCapturePermission;
 export const probeSpeakerCapture: () => boolean = nativeProbeSpeakerCapture;
 export const checkSpeakerCapturePermission: () => boolean = nativeCheckSpeakerCapturePermission;
-export const checkSystemAudioCapturePermission: () => boolean =
-  nativeCheckSystemAudioCapturePermission;
+/** @deprecated Use checkSpeakerCapturePermission(). */
+export const checkSystemAudioCapturePermission: () => boolean = nativeCheckSpeakerCapturePermission;
 export const requestSystemAudioCapturePermission: () => boolean =
   nativeRequestSystemAudioCapturePermission;
 export const getMicActiveApps: () => Promise<MicActiveApp[]> = nativeGetMicActiveApps;
