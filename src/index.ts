@@ -1,3 +1,5 @@
+import { release as osRelease } from 'node:os';
+
 import { prepareEngineRuntime } from './runtime/engine-runtime';
 
 export interface AudioProcessingConfig {
@@ -24,7 +26,9 @@ export interface AudioCaptureConfig {
   speakerEnabled?: boolean;
   /** Includes synchronized PCM16 raw frames in chunk.rawAudio. */
   enableRawAudio?: boolean;
-  /** Enables the native Silero VAD gate. Native default is true. */
+  /** Enables FastEnhancer denoise. Native default is true. */
+  denoiseEnabled?: boolean;
+  /** Enables the native Silero VAD gate. Native default is false. */
   vadEnabled?: boolean;
   /** Optional microphone device name. */
   micDeviceName?: string;
@@ -157,6 +161,17 @@ export interface AudioEngineDenoiseInitStatus {
   warmupMs: number;
 }
 
+export interface AudioEngineVadInitStatus {
+  enabled: boolean;
+  active: boolean;
+  ready: boolean;
+  reused: boolean;
+  model: string;
+  modelDir?: string;
+  sampleRateHz: number;
+  warmupMs: number;
+}
+
 export interface AudioEngineDspInitStatus {
   enabled: boolean;
   dcRemovalEnabled: boolean;
@@ -168,10 +183,38 @@ export interface AudioEngineDspInitStatus {
 export interface AudioEngineInitStatus {
   initialized: boolean;
   reused: boolean;
+  modelsPreloaded: boolean;
   processingSampleRate: number;
   chunkDurationMs: number;
   denoise: AudioEngineDenoiseInitStatus;
+  vad: AudioEngineVadInitStatus;
   dsp: AudioEngineDspInitStatus;
+}
+
+export interface AudioEngineInitOptions {
+  preloadModels?: boolean;
+}
+
+export type CapturePermissionRequest = 'microphone' | 'speaker';
+export type CapturePermissionScope = 'microphone' | 'system_audio' | 'screen_recording' | 'none';
+export type CapturePermissionBackend =
+  | 'cpal_microphone'
+  | 'core_audio_tap'
+  | 'screen_capture_kit'
+  | 'wasapi_loopback'
+  | 'pulseaudio_monitor'
+  | 'unsupported';
+export type CapturePermissionStatus = 'granted' | 'denied' | 'unsupported' | 'stale' | 'unknown';
+
+export interface CapturePermissionCheckResult {
+  granted: boolean;
+  request: CapturePermissionRequest;
+  permissionScope: CapturePermissionScope;
+  trackSource?: AudioTrackSource | null;
+  backend: CapturePermissionBackend;
+  status: CapturePermissionStatus;
+  message: string;
+  error?: string;
 }
 
 export type ErrorCallback = (err: Error | null, arg: CaptureError) => unknown;
@@ -195,6 +238,187 @@ const {
   init: nativeInit,
   initLogging: nativeInitLogging,
 } = nativeBinding;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function normalizeVadStatus(status: Record<string, unknown>): AudioEngineVadInitStatus {
+  const vad = isRecord(status.vad) ? status.vad : {};
+  const enabled = Boolean(vad.enabled ?? vad.ready ?? false);
+  return {
+    enabled,
+    active: Boolean(vad.active ?? vad.ready ?? enabled),
+    ready: Boolean(vad.ready ?? vad.active ?? false),
+    reused: Boolean(vad.reused ?? false),
+    model: typeof vad.model === 'string' ? vad.model : 'silero_vad_v6.2',
+    modelDir: typeof vad.modelDir === 'string' ? vad.modelDir : undefined,
+    sampleRateHz: typeof vad.sampleRateHz === 'number' ? vad.sampleRateHz : 16000,
+    warmupMs: typeof vad.warmupMs === 'number' ? vad.warmupMs : 0,
+  };
+}
+
+function normalizeInitStatus(status: AudioEngineInitStatus): AudioEngineInitStatus {
+  const record = status as unknown as Record<string, unknown>;
+  const denoise = isRecord(record.denoise) ? record.denoise : {};
+  const vad = normalizeVadStatus(record);
+  const modelsPreloaded =
+    typeof record.modelsPreloaded === 'boolean'
+      ? record.modelsPreloaded
+      : Boolean(denoise.active ?? vad.ready ?? vad.active);
+
+  return {
+    ...status,
+    modelsPreloaded,
+    vad,
+  };
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function darwinMajorVersion(): number {
+  return Number.parseInt(osRelease().split('.')[0] ?? '', 10);
+}
+
+function speakerPermissionDetails(): {
+  backend: CapturePermissionBackend;
+  permissionScope: CapturePermissionScope;
+  trackSource: AudioTrackSource | null;
+} {
+  if (process.platform === 'darwin') {
+    const darwinMajor = darwinMajorVersion();
+    if (Number.isFinite(darwinMajor) && darwinMajor >= 23) {
+      return {
+        backend: 'core_audio_tap',
+        permissionScope: 'system_audio',
+        trackSource: 'system_audio',
+      };
+    }
+    return {
+      backend: 'screen_capture_kit',
+      permissionScope: 'screen_recording',
+      trackSource: 'screen_share_audio',
+    };
+  }
+  if (process.platform === 'win32') {
+    return {
+      backend: 'wasapi_loopback',
+      permissionScope: 'none',
+      trackSource: 'system_audio',
+    };
+  }
+  if (process.platform === 'linux') {
+    return {
+      backend: 'pulseaudio_monitor',
+      permissionScope: 'none',
+      trackSource: 'system_audio',
+    };
+  }
+  return {
+    backend: 'unsupported',
+    permissionScope: 'none',
+    trackSource: null,
+  };
+}
+
+function permissionStatus(granted: boolean, backend: CapturePermissionBackend): CapturePermissionStatus {
+  if (granted) {
+    return 'granted';
+  }
+  return backend === 'unsupported' ? 'unsupported' : 'denied';
+}
+
+function normalizePermissionResult(
+  request: CapturePermissionRequest,
+  value: unknown,
+): CapturePermissionCheckResult {
+  if (isRecord(value) && typeof value.granted === 'boolean') {
+    return value as unknown as CapturePermissionCheckResult;
+  }
+
+  const granted = Boolean(value);
+  if (request === 'microphone') {
+    const status = permissionStatus(granted, 'cpal_microphone');
+    return {
+      granted,
+      request,
+      permissionScope: 'microphone',
+      trackSource: granted ? 'microphone' : null,
+      backend: 'cpal_microphone',
+      status,
+      message: granted
+        ? 'Microphone capture permission is granted and the microphone capture stream can be opened.'
+        : 'Microphone capture permission is denied or the microphone capture stream cannot be opened.',
+    };
+  }
+
+  const details = speakerPermissionDetails();
+  const status = permissionStatus(granted, details.backend);
+  return {
+    granted,
+    request,
+    permissionScope: details.permissionScope,
+    trackSource: granted ? details.trackSource : null,
+    backend: details.backend,
+    status,
+    message: granted
+      ? `Speaker capture permission is granted and the ${details.trackSource ?? 'speaker'} capture stream can be opened.`
+      : 'Speaker capture permission is denied, unsupported, or the speaker capture stream cannot be opened.',
+  };
+}
+
+function permissionFailureResult(
+  request: CapturePermissionRequest,
+  error: unknown,
+): CapturePermissionCheckResult {
+  const message = errorText(error);
+  const lower = message.toLowerCase();
+  const failedStatus: CapturePermissionStatus = lower.includes('stale')
+    ? 'stale'
+    : lower.includes('unsupported') || lower.includes('not supported')
+      ? 'unsupported'
+      : lower.includes('denied') || lower.includes('permission')
+        ? 'denied'
+        : 'unknown';
+
+  if (request === 'microphone') {
+    return {
+      granted: false,
+      request,
+      permissionScope: 'microphone',
+      trackSource: null,
+      backend: 'cpal_microphone',
+      status: failedStatus,
+      message: 'Microphone capture permission check failed.',
+      error: message,
+    };
+  }
+
+  const details = speakerPermissionDetails();
+  return {
+    granted: false,
+    request,
+    permissionScope: details.permissionScope,
+    trackSource: null,
+    backend: details.backend,
+    status: failedStatus,
+    message: 'Speaker capture permission check failed.',
+    error: message,
+  };
+}
+
+function callPermissionCheck(
+  request: CapturePermissionRequest,
+  check: () => unknown,
+): CapturePermissionCheckResult {
+  try {
+    return normalizePermissionResult(request, check());
+  } catch (error) {
+    return permissionFailureResult(request, error);
+  }
+}
 
 export class AudioCapture {
   #native: any;
@@ -284,19 +508,62 @@ export class AudioCapture {
   }
 }
 
+export class AudioEngine {
+  #config?: AudioCaptureConfig | null;
+  #status: AudioEngineInitStatus;
+
+  private constructor(config: AudioCaptureConfig | null | undefined, status: AudioEngineInitStatus) {
+    this.#config = config;
+    this.#status = status;
+  }
+
+  static async init(
+    config?: AudioCaptureConfig | null,
+    options?: AudioEngineInitOptions | null,
+  ): Promise<AudioEngine> {
+    const status = init(config, options);
+    return new AudioEngine(config, status);
+  }
+
+  createCapture(): AudioCapture {
+    return new AudioCapture(this.#config);
+  }
+
+  getStatus(): AudioEngineInitStatus {
+    return this.#status;
+  }
+}
+
 export const listMicDevices: () => string[] = nativeListMicDevices;
 export const isSpeakerCaptureSupported: () => boolean = nativeIsSpeakerCaptureSupported;
 export const probeMicCapture: () => boolean = nativeProbeMicCapture;
 export const checkMicCapturePermission: () => boolean = nativeCheckMicCapturePermission;
+export const checkMicCapturePermissionInfo: () => CapturePermissionCheckResult = () =>
+  callPermissionCheck('microphone', nativeCheckMicCapturePermission);
 export const probeSpeakerCapture: () => boolean = nativeProbeSpeakerCapture;
 export const checkSpeakerCapturePermission: () => boolean = nativeCheckSpeakerCapturePermission;
+export const checkSpeakerCapturePermissionInfo: () => CapturePermissionCheckResult = () =>
+  callPermissionCheck('speaker', nativeCheckSpeakerCapturePermission);
 /** @deprecated Use checkSpeakerCapturePermission(). */
 export const checkSystemAudioCapturePermission: () => boolean = nativeCheckSpeakerCapturePermission;
+/** @deprecated Use checkSpeakerCapturePermissionInfo(). */
+export const checkSystemAudioCapturePermissionInfo: () => CapturePermissionCheckResult =
+  checkSpeakerCapturePermissionInfo;
 export const requestSystemAudioCapturePermission: () => boolean =
   nativeRequestSystemAudioCapturePermission;
 export const getMicActiveApps: () => Promise<MicActiveApp[]> = nativeGetMicActiveApps;
 export const getDefaultInputDevice: () => string | null = nativeGetDefaultInputDevice;
 export const getDefaultOutputDevice: () => string | null = nativeGetDefaultOutputDevice;
 export const isBuiltInSpeaker: () => boolean = nativeIsBuiltInSpeaker;
-export const init: (config?: AudioCaptureConfig | null) => AudioEngineInitStatus = nativeInit;
+export const init: (
+  config?: AudioCaptureConfig | null,
+  options?: AudioEngineInitOptions | null,
+) => AudioEngineInitStatus = (config, options) => normalizeInitStatus(nativeInit(config, options));
+export const preloadModels: (config?: AudioCaptureConfig | null) => AudioEngineInitStatus = (config) => {
+  const nativePreloadModels = nativeBinding.preloadModels;
+  if (typeof nativePreloadModels === 'function') {
+    return normalizeInitStatus(nativePreloadModels(config));
+  }
+  return init(config, { preloadModels: true });
+};
 export const initLogging: (level?: string | null) => void = nativeInitLogging;

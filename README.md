@@ -1,8 +1,31 @@
 # Tellus Audio SDK
 
-Node.js/Electron wrapper for the Tellus native audio engine.
+Node.js/Electron SDK for the Tellus native audio engine.
 
-This repository contains the public TypeScript wrapper source, built JavaScript package entrypoint, TypeScript declarations, and installer scripts only. Native binaries are distributed separately through GitHub Releases.
+This package provides a public JavaScript/TypeScript entrypoint for low-latency microphone,
+speaker/system-audio capture, denoise model preload, Silero VAD gating, transport encoding, and
+runtime capture control. Native binaries are distributed separately through GitHub Releases and are
+installed into `vendor/<platform>/` during package installation.
+
+## Features
+
+- Microphone capture through the native engine.
+- Speaker/system-audio capture:
+  - Windows: WASAPI loopback.
+  - macOS 14.2+: CoreAudio TapGuard, exposed as `system_audio`.
+  - macOS fallback: ScreenCaptureKit, exposed as `screen_share_audio`.
+  - Linux: PulseAudio monitor.
+- `AudioEngine.init(config)` facade for app-start initialization and model preload.
+- Optional manual post-init model preload with `preloadModels(config)`.
+- FastEnhancer denoise model support.
+- Silero VAD gate support.
+- Transport payload encoding:
+  - `opus`
+  - `pcm_s16le`
+  - `pcm_f32le`
+- Optional synchronized `rawAudio` PCM16 frames for mic, speaker, and mixed streams.
+- Structured permission checks that do not require live audio samples.
+- Device helper APIs for default input/output and speaker capability checks.
 
 ## Install
 
@@ -10,10 +33,14 @@ This repository contains the public TypeScript wrapper source, built JavaScript 
 npm install git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.1.5
 ```
 
-Installing from GitHub uses the public `tellus-ai/tellus-audio-sdk` repository. The package `prepare` step builds the TypeScript wrapper before npm packs the git dependency.
+Installing from GitHub uses the public `tellus-ai/tellus-audio-sdk` repository. The package
+`prepare` step builds the TypeScript wrapper before npm packs the git dependency.
 
-The postinstall step downloads the native binary for the current platform, verifies its SHA-256 checksum, and installs it under `vendor/<platform>/`.
-This SDK repository may be public, but the native Tellus audio engine release is private. Installation requires a Tellus-issued GitHub token with access to the engine release assets.
+The `postinstall` step downloads the native binary for the current platform, verifies its SHA-256
+checksum, and installs it under `vendor/<platform>/`.
+
+This SDK repository may be public, but the native Tellus audio engine release is private.
+Installation requires a Tellus-issued GitHub token with access to the engine release assets.
 
 The required native engine version is pinned in `release-assets.json`:
 
@@ -25,7 +52,9 @@ The required native engine version is pinned in `release-assets.json`:
 }
 ```
 
-The installer validates that the manifest matches the installed SDK package version and that artifact file names include the pinned native engine tag. Download URLs are resolved from the private GitHub Release by exact asset file name.
+The installer validates that the manifest matches the installed SDK package version and that
+artifact file names include the pinned native engine tag. Download URLs are resolved from the
+private GitHub Release by exact asset file name.
 
 Provide the token explicitly before install:
 
@@ -45,23 +74,33 @@ TELLUS_AUDIO_ENGINE_TOKEN=...
 | Name | Description |
 | --- | --- |
 | `TELLUS_AUDIO_ENGINE_TOKEN` | Bearer token for private GitHub Release asset downloads. The installer also reads this single key from the installing project's `.env` file. |
+| `TELLUS_AUDIO_ENGINE_MODEL_DIR` | Optional override for the native model directory. When omitted, the SDK looks for bundled `models/` next to the installed native binary. |
+| `ORT_DYLIB_PATH` | Optional override for the ONNX Runtime dynamic library path. When omitted, the SDK resolves the bundled ONNX Runtime for the current platform. |
 
-Only `TELLUS_AUDIO_ENGINE_TOKEN` is read from `.env`; other `.env` keys are ignored.
+Only `TELLUS_AUDIO_ENGINE_TOKEN` is read from `.env`; other environment variables must be provided
+by the process environment if they are needed.
 
-## Usage
+## Quick Start
+
+Use `AudioEngine.init(config)` at app startup, then call `engine.createCapture()` when the user
+starts a meeting, recording, or live audio session.
 
 ```javascript
-const { AudioCapture, listMicDevices, isSpeakerCaptureSupported } = require('@tellus-ai/audio-sdk');
+const {
+  AudioEngine,
+  checkMicCapturePermissionInfo,
+  checkSpeakerCapturePermissionInfo,
+  initLogging,
+  isSpeakerCaptureSupported,
+  listMicDevices,
+} = require('@tellus-ai/audio-sdk');
 
-const devices = listMicDevices();
-console.log('Microphones:', devices);
-console.log('Speaker supported:', isSpeakerCaptureSupported());
-
-const capture = new AudioCapture({
+const audioConfig = {
   micEnabled: true,
   speakerEnabled: true,
-  enableRawAudio: true,
+  denoiseEnabled: true,
   vadEnabled: true,
+  enableRawAudio: true,
   processing: {
     sampleRate: 16000,
     chunkDurationMs: 20,
@@ -70,210 +109,329 @@ const capture = new AudioCapture({
     codec: 'opus',
     bitrateBps: 64000,
   },
-});
+};
 
-capture.onError((err, captureError) => {
-  console.error('Capture error:', captureError.source, captureError.message);
-});
+async function main() {
+  initLogging('audio_capture=info');
 
-capture.start((err, chunk) => {
-  if (err) {
-    console.error(err);
-    return;
+  console.log('Microphones:', listMicDevices());
+  console.log('Speaker supported:', isSpeakerCaptureSupported());
+
+  const micPermission = checkMicCapturePermissionInfo();
+  const speakerPermission = checkSpeakerCapturePermissionInfo();
+
+  if (!micPermission.granted) {
+    throw new Error(`Microphone unavailable: ${micPermission.status} ${micPermission.message}`);
   }
 
-  const payload =
-    chunk.data.mixed ??
-    chunk.data.microphone ??
-    chunk.data.system_audio ??
-    chunk.data.screen_share_audio;
+  if (audioConfig.speakerEnabled && !speakerPermission.granted) {
+    throw new Error(`Speaker capture unavailable: ${speakerPermission.status} ${speakerPermission.message}`);
+  }
 
-  console.log({
-    bytes: payload?.length ?? 0,
-    trackSource: chunk.trackSource,
-    codec: chunk.codec,
-    sampleCount: chunk.sampleCount,
-    durationMs: chunk.durationMs,
-    rms: chunk.rms,
-    vadRms: chunk.vadRms ?? null,
-    gateEvent: chunk.gateEvent ?? null,
-    micSampleRate: chunk.rawAudio?.mic?.sampleRate ?? null,
-    speakerSampleRate: chunk.rawAudio?.speaker?.sampleRate ?? null,
+  const engine = await AudioEngine.init(audioConfig);
+  const capture = engine.createCapture();
+
+  capture.onError((err, captureError) => {
+    console.error('Capture error:', {
+      err,
+      source: captureError.source,
+      message: captureError.message,
+      recoverable: captureError.recoverable,
+    });
   });
-});
+
+  capture.start((err, chunk) => {
+    if (err) {
+      console.error('Chunk error:', err);
+      return;
+    }
+
+    const payload =
+      chunk.data.mixed ??
+      chunk.data.microphone ??
+      chunk.data.system_audio ??
+      chunk.data.screen_share_audio;
+
+    console.log('Audio chunk:', {
+      bytes: payload?.length ?? 0,
+      trackSource: chunk.trackSource,
+      codec: chunk.codec,
+      sampleRate: chunk.sampleRate,
+      sampleCount: chunk.sampleCount,
+      durationMs: chunk.durationMs,
+      rms: chunk.rms,
+      vadRms: chunk.vadRms ?? null,
+      gateEvent: chunk.gateEvent ?? null,
+      rawMicBytes: chunk.rawAudio?.mic?.data.length ?? null,
+      rawSpeakerBytes: chunk.rawAudio?.speaker?.data.length ?? null,
+      rawMixedBytes: chunk.rawAudio?.mixed?.data.length ?? null,
+    });
+  });
+}
+
+main().catch(console.error);
 ```
 
-`rawAudio.mic` and `rawAudio.speaker` are PCM16 little-endian frames at the original device sample
-rate. For example, a 48kHz microphone returns `rawAudio.mic.sampleRate === 48000` even when the
-capture config uses `processing.sampleRate: 16000`. `rawAudio.mixed` is a derived mix and uses the
-configured processing/mixer sample rate.
+## Core Concepts
 
-`chunk.data` contains final transport payloads keyed by source. Mic-only output uses
-`chunk.data.microphone`, speaker-only output usually uses `chunk.data.system_audio`, macOS
-ScreenCaptureKit fallback output uses `chunk.data.screen_share_audio`, and mic+speaker output uses
-`chunk.data.microphone`, `chunk.data.speaker`, and `chunk.data.mixed`. `chunk.trackSource` labels
-the primary payload. `chunk.codec`, `chunk.sampleRate`, `chunk.sampleCount`, and
-`chunk.durationMs` describe the final transport payloads in `chunk.data`.
+### `AudioEngine` vs `AudioCapture`
 
-### Engine Initialization and Capture Lifecycle
-
-Use `init()` when you want to initialize the native audio engine before creating a capture session
-and inspect the initialized processing/DSP status. `initLogging()` is optional and should be called
-early if you want native engine logs.
+`AudioEngine` is the recommended high-level entrypoint. It validates the capture config, prepares
+DSP/model state, stores the config, and creates capture sessions later.
 
 ```javascript
-const {
-  AudioCapture,
-  checkMicCapturePermission,
-  checkSpeakerCapturePermission,
-  getDefaultInputDevice,
-  getDefaultOutputDevice,
-  init,
-  initLogging,
-  isSpeakerCaptureSupported,
-  listMicDevices,
-  requestSystemAudioCapturePermission,
-} = require('@tellus-ai/audio-sdk');
+const engine = await AudioEngine.init(audioConfig);
+const capture = engine.createCapture();
+```
 
-const captureConfig = {
+`AudioCapture` is the actual capture session. It owns native capture threads after `start()` and
+releases them on `stop()`.
+
+You can still construct `new AudioCapture(config)` directly, but the preferred app flow is:
+
+1. Build one `audioConfig`.
+2. Call `AudioEngine.init(audioConfig)` during app startup.
+3. Call `engine.createCapture()` when capture is needed.
+4. Register `capture.onError(...)`.
+5. Call `capture.start(...)`.
+6. Call `capture.stop()` when the session ends.
+
+### Default Devices
+
+`AudioCapture` follows the OS default input and output devices. Change microphone or speaker routing
+through the operating system device settings.
+
+When default devices change while capture is running, the native engine is expected to follow the
+current OS defaults for the relevant source path. Use `getDefaultInputDevice()` and
+`getDefaultOutputDevice()` for UI diagnostics.
+
+### Final Payload vs Raw Audio
+
+`chunk.data` contains final transport payloads. These are encoded according to
+`transport.codec`.
+
+`chunk.rawAudio` is present only when `enableRawAudio: true`. Raw frames are PCM16 little-endian:
+
+- `rawAudio.mic`: microphone PCM16 at the original microphone device sample rate.
+- `rawAudio.speaker`: speaker PCM16 at the original speaker device sample rate.
+- `rawAudio.mixed`: mixed PCM16 at `processing.sampleRate`.
+
+For example, a 48kHz microphone can return `rawAudio.mic.sampleRate === 48000` even when the final
+transport payload uses `processing.sampleRate: 16000`.
+
+## Engine Initialization and Model Preload
+
+By default, `AudioEngine.init(config)` performs core init first and then preloads enabled models as
+a post-init step.
+
+- `denoiseEnabled` defaults to `true`.
+- `vadEnabled` defaults to `false`.
+- Set `vadEnabled: true` if you want the Silero VAD model preloaded and used.
+- Set `options.preloadModels: false` to keep startup light and preload models manually later.
+
+### Default Post-Init Preload
+
+```javascript
+const { AudioEngine } = require('@tellus-ai/audio-sdk');
+
+const engine = await AudioEngine.init({
   micEnabled: true,
   speakerEnabled: true,
-  enableRawAudio: true,
+  denoiseEnabled: true,
   vadEnabled: true,
-  microphoneLevelMode: 'agc2',
-  micOutputGainDb: 0,
   processing: {
     sampleRate: 16000,
     chunkDurationMs: 20,
   },
-  transport: {
-    codec: 'pcm_s16le',
+});
+
+const status = engine.getStatus();
+
+console.log({
+  initialized: status.initialized,
+  modelsPreloaded: status.modelsPreloaded,
+  denoiseActive: status.denoise.active,
+  vadReady: status.vad.ready,
+});
+```
+
+### Manual Model Preload After Core Init
+
+Use this when you want fast application startup, but still want models ready before the first
+capture session.
+
+```javascript
+const { AudioEngine, preloadModels } = require('@tellus-ai/audio-sdk');
+
+const audioConfig = {
+  micEnabled: true,
+  speakerEnabled: true,
+  denoiseEnabled: true,
+  vadEnabled: true,
+  processing: {
+    sampleRate: 16000,
+    chunkDurationMs: 20,
   },
 };
 
-initLogging('audio_capture=info');
+async function startCaptureAfterManualModelPreload() {
+  const engine = await AudioEngine.init(audioConfig, {
+    preloadModels: false,
+  });
 
-console.log('Input devices:', listMicDevices());
-console.log('Default input:', getDefaultInputDevice());
-console.log('Default output:', getDefaultOutputDevice());
-console.log('Speaker capture supported:', isSpeakerCaptureSupported());
+  console.log('Core init status:', engine.getStatus());
 
-if (!checkMicCapturePermission()) {
-  throw new Error('Microphone capture permission is not available.');
+  // Run after startup and before the first capture session.
+  const modelStatus = preloadModels(audioConfig);
+
+  console.log({
+    denoiseActive: modelStatus.denoise.active,
+    denoiseModel: modelStatus.denoise.model,
+    vadReady: modelStatus.vad.ready,
+    vadModel: modelStatus.vad.model,
+  });
+
+  const capture = engine.createCapture();
+
+  capture.start((err, chunk) => {
+    if (err) {
+      console.error(err);
+      return;
+    }
+
+    // Send chunk.data.* to your backend.
+    console.log(chunk.trackSource, chunk.durationMs);
+  });
 }
 
-if (captureConfig.speakerEnabled && !checkSpeakerCapturePermission()) {
-  const granted = requestSystemAudioCapturePermission();
-  if (!granted) {
-    throw new Error('System audio capture permission is not available.');
-  }
+startCaptureAfterManualModelPreload().catch(console.error);
+```
+
+`preloadModels(config)` should receive the same config used for `AudioEngine.init(config)`. If
+`vadEnabled` is omitted or false, VAD preload reports inactive.
+
+### Core Init Only With Standalone `init`
+
+The standalone `init(config, options?)` function exists for lower-level integrations.
+
+```javascript
+const { init, preloadModels } = require('@tellus-ai/audio-sdk');
+
+const initStatus = init(audioConfig, { preloadModels: false });
+const modelStatus = preloadModels(audioConfig);
+
+console.log(initStatus.initialized, modelStatus.denoise.active, modelStatus.vad.ready);
+```
+
+Prefer `AudioEngine.init()` for new application code because it keeps the capture config and creates
+matching `AudioCapture` sessions through `createCapture()`.
+
+## Permission Checks
+
+Permission checks expose structured results through:
+
+- `checkMicCapturePermissionInfo()`
+- `checkSpeakerCapturePermissionInfo()`
+
+These checks verify that the native backend and stream can be opened. They do not wait for live
+microphone or system-audio samples. Silent microphone input or no speaker audio should not be
+classified as permission failure.
+
+```javascript
+const {
+  checkMicCapturePermissionInfo,
+  checkSpeakerCapturePermissionInfo,
+  requestSystemAudioCapturePermission,
+} = require('@tellus-ai/audio-sdk');
+
+const mic = checkMicCapturePermissionInfo();
+const speaker = checkSpeakerCapturePermissionInfo();
+
+console.log('Mic permission:', mic);
+console.log('Speaker permission:', speaker);
+
+if (!speaker.granted && speaker.status === 'denied') {
+  const requested = requestSystemAudioCapturePermission();
+  console.log('Permission request result:', requested);
+}
+```
+
+Use `result.granted` for simple branching. Use `result.status`, `result.permissionScope`,
+`result.trackSource`, `result.backend`, `result.message`, and `result.error` when UI or logs need to
+explain what happened.
+
+### Permission Result Type
+
+```ts
+type CapturePermissionCheckResult = {
+  granted: boolean;
+  request: 'microphone' | 'speaker';
+  permissionScope: 'microphone' | 'system_audio' | 'screen_recording' | 'none';
+  trackSource?: 'microphone' | 'system_audio' | 'screen_share_audio' | 'microphone_speaker_mix' | null;
+  backend:
+    | 'cpal_microphone'
+    | 'core_audio_tap'
+    | 'screen_capture_kit'
+    | 'wasapi_loopback'
+    | 'pulseaudio_monitor'
+    | 'unsupported';
+  status: 'granted' | 'denied' | 'unsupported' | 'stale' | 'unknown';
+  message: string;
+  error?: string;
+};
+```
+
+| Field | Description |
+| --- | --- |
+| `granted` | `true` when the requested capture backend/stream can be opened. |
+| `request` | SDK-level request: `microphone` or `speaker`. |
+| `permissionScope` | OS/platform permission scope involved in the check. |
+| `trackSource` | `AudioChunk.trackSource` used by successful capture. |
+| `backend` | Native backend used for the check. |
+| `status` | Stable machine-readable status for branching. |
+| `message` | Human-readable English explanation for logs or UI. |
+| `error` | Developer diagnostic text when the check fails or cannot be classified precisely. |
+
+| Status | Meaning | Typical action |
+| --- | --- | --- |
+| `granted` | Permission/backend checks succeeded. | Start capture. |
+| `denied` | The OS denied the requested permission. | Ask the user to enable permission in system settings. |
+| `unsupported` | The platform, OS version, or runtime does not support the requested capture path. | Disable that feature or show an unsupported-platform message. |
+| `stale` | Permission state is inconsistent or outdated, most commonly after macOS Screen Recording changes. | Ask the user to re-grant permission and restart the app. |
+| `unknown` | The check failed in a way that cannot be safely classified. | Show `message`, inspect `error`, and retry or collect diagnostics. |
+
+Example results:
+
+```js
+// macOS 14.2+ CoreAudio TapGuard
+{
+  granted: true,
+  request: 'speaker',
+  permissionScope: 'system_audio',
+  trackSource: 'system_audio',
+  backend: 'core_audio_tap',
+  status: 'granted',
+  message: 'Speaker capture permission is granted and the system_audio capture stream can be opened.'
 }
 
-const initStatus = init(captureConfig);
-console.log('Engine initialized:', {
-  initialized: initStatus.initialized,
-  reused: initStatus.reused,
-  processingSampleRate: initStatus.processingSampleRate,
-  chunkDurationMs: initStatus.chunkDurationMs,
-  denoiseActive: initStatus.denoise.active,
-  dspEnabled: initStatus.dsp.enabled,
-});
-
-const capture = new AudioCapture(captureConfig);
-
-capture.onError((err, captureError) => {
-  console.error('Capture error:', {
-    err,
-    source: captureError.source,
-    message: captureError.message,
-    recoverable: captureError.recoverable,
-  });
-});
-
-capture.start((err, chunk) => {
-  if (err) {
-    console.error('Chunk error:', err);
-    return;
-  }
-
-  const primaryPayload =
-    chunk.data.mixed ??
-    chunk.data.microphone ??
-    chunk.data.system_audio ??
-    chunk.data.screen_share_audio;
-
-  console.log('Audio chunk:', {
-    bytes: primaryPayload?.length ?? 0,
-    trackSource: chunk.trackSource,
-    codec: chunk.codec,
-    sampleRate: chunk.sampleRate,
-    sampleCount: chunk.sampleCount,
-    durationMs: chunk.durationMs,
-    sample: chunk.sample,
-    rms: chunk.rms,
-    vadRms: chunk.vadRms ?? null,
-    gateEvent: chunk.gateEvent ?? null,
-    rawMicBytes: chunk.rawAudio?.mic?.data.length ?? null,
-    rawSpeakerBytes: chunk.rawAudio?.speaker?.data.length ?? null,
-  });
-});
-
-console.log('State after start:', capture.getState());
-console.log('Status after start:', capture.getStatus());
+// macOS ScreenCaptureKit fallback
+{
+  granted: true,
+  request: 'speaker',
+  permissionScope: 'screen_recording',
+  trackSource: 'screen_share_audio',
+  backend: 'screen_capture_kit',
+  status: 'granted',
+  message: 'Screen Recording permission is granted and the screen_share_audio capture stream can be opened.'
+}
 ```
 
-### Pause, Resume, Stop, and Runtime Controls
+## Capture Examples
 
-`pause()` temporarily stops delivery from the running capture session. `resume()` continues the same
-session, and `stop()` releases the native capture threads.
-
-```javascript
-setTimeout(() => {
-  capture.pause();
-  console.log('Paused:', capture.getState());
-}, 5000);
-
-setTimeout(() => {
-  capture.resume();
-  console.log('Resumed:', capture.getState());
-}, 8000);
-
-setTimeout(() => {
-  capture.setVadEnabled(false);
-  capture.setDenoiseAttenuation(-18);
-  capture.setMicDenoiseAttenuation(-12);
-  capture.setSpeakerDenoiseAttenuation(-12);
-  capture.setMicOutputGainDb(3);
-
-  console.log('Runtime tuning:', {
-    vadConfig: capture.getVadConfig(),
-    denoiseAttenuationDb: capture.getDenoiseAttenuation(),
-    micDenoiseAttenuationDb: capture.getMicDenoiseAttenuation(),
-    speakerDenoiseAttenuationDb: capture.getSpeakerDenoiseAttenuation(),
-    micOutputGainDb: capture.getMicOutputGainDb(),
-    status: capture.getStatus(),
-  });
-}, 10000);
-
-setTimeout(() => {
-  capture.stop();
-  console.log('Stopped:', capture.getState());
-}, 15000);
-```
-
-Instance helpers mirror the standalone device checks:
+### Microphone Only
 
 ```javascript
-console.log('Capture mic devices:', capture.getMicDevices());
-console.log('Capture speaker supported:', capture.isSpeakerSupported());
-```
-
-### Capture Source Examples
-
-Mic only:
-
-```javascript
-const capture = new AudioCapture({
+const engine = await AudioEngine.init({
   micEnabled: true,
   speakerEnabled: false,
   enableRawAudio: true,
@@ -286,6 +444,18 @@ const capture = new AudioCapture({
     bitrateBps: 64000,
   },
 });
+
+const capture = engine.createCapture();
+
+capture.start((err, chunk) => {
+  if (err) return console.error(err);
+
+  console.log({
+    payload: chunk.data.microphone,
+    trackSource: chunk.trackSource, // "microphone"
+    rawMicSampleRate: chunk.rawAudio?.mic?.sampleRate,
+  });
+});
 ```
 
 Output shape:
@@ -295,8 +465,8 @@ Output shape:
   data: {
     microphone: <encoded mic output>,
   },
-  trackSource: "microphone",
-  codec: "opus",
+  trackSource: 'microphone',
+  codec: 'opus',
   sampleRate: 16000,
   sampleCount: 320,
   durationMs: 20,
@@ -311,10 +481,10 @@ Output shape:
 }
 ```
 
-Speaker only:
+### Speaker Only
 
 ```javascript
-const capture = new AudioCapture({
+const engine = await AudioEngine.init({
   micEnabled: false,
   speakerEnabled: true,
   enableRawAudio: true,
@@ -327,6 +497,20 @@ const capture = new AudioCapture({
     bitrateBps: 64000,
   },
 });
+
+const capture = engine.createCapture();
+
+capture.start((err, chunk) => {
+  if (err) return console.error(err);
+
+  const speakerPayload = chunk.data.system_audio ?? chunk.data.screen_share_audio;
+
+  console.log({
+    payload: speakerPayload,
+    trackSource: chunk.trackSource,
+    rawSpeakerSampleRate: chunk.rawAudio?.speaker?.sampleRate,
+  });
+});
 ```
 
 Output shape:
@@ -336,8 +520,8 @@ Output shape:
   data: {
     system_audio: <encoded speaker output>,
   },
-  trackSource: "system_audio",
-  codec: "opus",
+  trackSource: 'system_audio',
+  codec: 'opus',
   sampleRate: 16000,
   sampleCount: 320,
   durationMs: 20,
@@ -352,10 +536,21 @@ Output shape:
 }
 ```
 
-Mic and speaker mixed:
+On macOS ScreenCaptureKit fallback, the speaker-only output uses:
+
+```ts
+{
+  data: {
+    screen_share_audio: <encoded speaker output>,
+  },
+  trackSource: 'screen_share_audio',
+}
+```
+
+### Microphone and Speaker Mixed
 
 ```javascript
-const capture = new AudioCapture({
+const engine = await AudioEngine.init({
   micEnabled: true,
   speakerEnabled: true,
   enableRawAudio: true,
@@ -368,6 +563,19 @@ const capture = new AudioCapture({
     bitrateBps: 64000,
   },
 });
+
+const capture = engine.createCapture();
+
+capture.start((err, chunk) => {
+  if (err) return console.error(err);
+
+  console.log({
+    microphone: chunk.data.microphone,
+    speaker: chunk.data.speaker,
+    mixed: chunk.data.mixed,
+    trackSource: chunk.trackSource, // "microphone_speaker_mix"
+  });
+});
 ```
 
 Output shape:
@@ -379,8 +587,8 @@ Output shape:
     speaker: <encoded speaker output>,
     mixed: <encoded mixed output>,
   },
-  trackSource: "microphone_speaker_mix",
-  codec: "opus",
+  trackSource: 'microphone_speaker_mix',
+  codec: 'opus',
   sampleRate: 16000,
   sampleCount: 320,
   durationMs: 20,
@@ -395,12 +603,12 @@ Output shape:
 }
 ```
 
-### Transport Codec Examples
+## Transport Codec Examples
 
-Opus:
+### Opus
 
 ```javascript
-const capture = new AudioCapture({
+const config = {
   micEnabled: true,
   speakerEnabled: true,
   processing: {
@@ -411,13 +619,15 @@ const capture = new AudioCapture({
     codec: 'opus',
     bitrateBps: 64000,
   },
-});
+};
 ```
 
-PCM16 little-endian:
+`chunk.data.*` values are Opus frame bytes.
+
+### PCM16 Little-Endian
 
 ```javascript
-const capture = new AudioCapture({
+const config = {
   micEnabled: true,
   speakerEnabled: true,
   processing: {
@@ -427,13 +637,15 @@ const capture = new AudioCapture({
   transport: {
     codec: 'pcm_s16le',
   },
-});
+};
 ```
 
-Float32 little-endian PCM:
+`chunk.data.*` values are signed 16-bit little-endian PCM bytes at `processing.sampleRate`.
+
+### Float32 Little-Endian PCM
 
 ```javascript
-const capture = new AudioCapture({
+const config = {
   micEnabled: true,
   speakerEnabled: true,
   processing: {
@@ -443,67 +655,55 @@ const capture = new AudioCapture({
   transport: {
     codec: 'pcm_f32le',
   },
-});
+};
 ```
 
-### AudioCaptureConfig
+`chunk.data.*` values are 32-bit float little-endian PCM bytes at `processing.sampleRate`.
 
-```ts
-export interface AudioCaptureConfig {
-  micEnabled?: boolean;
-  speakerEnabled?: boolean;
-  enableRawAudio?: boolean;
-  vadEnabled?: boolean;
-  micDeviceName?: string;
-  microphoneLevelMode?: 'agc2' | 'microphone_level_max' | 'none';
-  micOutputGainDb?: number;
-  processing?: AudioProcessingConfig;
-  transport?: AudioTransportConfig;
-}
+## VAD
 
-export interface AudioProcessingConfig {
-  sampleRate?: number;
-  chunkDurationMs?: number;
-}
-
-export interface AudioTransportConfig {
-  codec?: 'opus' | 'pcm_s16le' | 'pcm_f32le';
-  bitrateBps?: number;
-}
-
-export type AudioTrackSource =
-  | 'microphone'
-  | 'screen_share_audio'
-  | 'system_audio'
-  | 'microphone_speaker_mix';
-```
-
-`processing.sampleRate` controls the processing/mixer and transport sample rate. `pcm_s16le` and
-`pcm_f32le` describe the sample representation only; they do not include a sample rate. `bitrateBps`
-is valid only with `transport.codec: 'opus'`.
-
-`micEnabled: true` captures microphone input. `speakerEnabled: true` captures speaker/system audio.
-At least one of `micEnabled` or `speakerEnabled` must be true.
-
-`microphoneLevelMode` controls the native microphone level policy. `micOutputGainDb` applies
-SDK-internal microphone output gain to mixed/output payloads without changing OS input volume.
-
-### VAD
-
-VAD is enabled by default with `vadEnabled: true`. VAD speech decisions are made only by the fixed
-Silero model path inside the native engine: `models/silero_vad_v6.2.onnx`. RMS is reported for
-diagnostics and is not used as a fallback speech detector.
+VAD is disabled by default with `vadEnabled: false`. Set `vadEnabled: true` to enable the native
+Silero VAD gate and include VAD in model preload.
 
 ```javascript
-capture.setVadEnabled(true);
+const engine = await AudioEngine.init({
+  micEnabled: true,
+  speakerEnabled: true,
+  denoiseEnabled: true,
+  vadEnabled: true,
+  processing: {
+    sampleRate: 16000,
+    chunkDurationMs: 20,
+  },
+});
+
+const capture = engine.createCapture();
 
 capture.setVadConfig({
   vadPositiveThreshold: 0.5,
   vadNegativeThreshold: 0.35,
-  vadSilenceDurationMs: 500,
-  vadPreSpeechBufferMs: 200,
+  vadSilenceDurationMs: 550,
+  vadPreSpeechBufferMs: 500,
 });
 
+capture.setVadEnabled(true);
+
+console.log(capture.getVadConfig());
+```
+
+`VadConfig` fields are optional. Missing values use native defaults.
+
+| Property | Type | Default | Description |
+| --- | --- | --- | --- |
+| `vadPositiveThreshold` | `number` | `0.5` | Speech start threshold for Silero probability. |
+| `vadNegativeThreshold` | `number` | `0.35` | Speech end threshold for Silero probability. |
+| `vadRmsThreshold` | `number` | `0.015` | Compatibility value. Silero-only VAD does not use RMS for speech decisions. |
+| `vadSilenceDurationMs` | `number` | `550` | Keep the gate open for this long after the last speech frame. |
+| `vadPreSpeechBufferMs` | `number` | `500` | Keep this much pre-speech context inside the VAD gate. |
+
+VAD status is available from `capture.getStatus()`:
+
+```javascript
 const status = capture.getStatus();
 
 console.log({
@@ -517,17 +717,7 @@ console.log({
 });
 ```
 
-`VADConfig` fields are optional. Missing values use the native defaults shown below.
-
-| Property | Type | Default | Description |
-| --- | --- | --- | --- |
-| `vadPositiveThreshold` | `number` | `0.5` | Speech start threshold for Silero probability. |
-| `vadNegativeThreshold` | `number` | `0.35` | Speech end threshold for Silero probability. |
-| `vadRmsThreshold` | `number` | `0.015` | Compatibility value. Silero-only VAD does not use RMS for speech decisions. |
-| `vadSilenceDurationMs` | `number` | `500` | Keep the gate open for this long after the last speech frame. |
-| `vadPreSpeechBufferMs` | `number` | `200` | Keep this much pre-speech context inside the VAD gate. |
-
-VAD-enabled output includes `vadRms`:
+VAD-enabled output may include `vadRms` and `gateEvent`:
 
 ```ts
 {
@@ -536,61 +726,451 @@ VAD-enabled output includes `vadRms`:
     speaker: <encoded speaker output>,
     mixed: <encoded mixed output>,
   },
-  trackSource: "microphone_speaker_mix",
-  codec: "opus",
+  trackSource: 'microphone_speaker_mix',
   sampleRate: 16000,
+  codec: 'opus',
   sampleCount: 320,
   durationMs: 20,
   sample: 3200,
   timestamp: 1710000000400,
   rms: 0.016,
   vadRms: 0.015,
-  gateEvent: "speech_gate_opened",
-  rawAudio: {
-    mic: { data: <pcm16 mic>, sampleRate: 16000, sample: 3200, timestamp: 1710000000400, rms: 0.012 },
-    speaker: { data: <pcm16 speaker>, sampleRate: 16000, sample: 3200, timestamp: 1710000000400, rms: 0.020 },
-    mixed: { data: <pcm16 mixed>, sampleRate: 16000, sample: 3200, timestamp: 1710000000400, rms: 0.016 },
-  },
+  gateEvent: 'speech_gate_opened',
 }
 ```
 
-## Public API
+## Runtime Controls
 
-The public runtime API mirrors the native engine 0.2.7 contract:
+```javascript
+const capture = engine.createCapture();
 
-- `AudioCapture`
-- `init(config?)`
-- `initLogging(level?)`
-- `listMicDevices()`
-- `isSpeakerCaptureSupported()`
-- `probeMicCapture()`
-- `checkMicCapturePermission()`
-- `probeSpeakerCapture()`
-- `checkSpeakerCapturePermission()`
-- `requestSystemAudioCapturePermission()`
-- `getMicActiveApps()`
-- `getDefaultInputDevice()`
-- `getDefaultOutputDevice()`
-- `isBuiltInSpeaker()`
+capture.onError((err, captureError) => {
+  console.error('Capture error:', captureError.source, captureError.message);
+});
 
-`checkSystemAudioCapturePermission()` remains available as a deprecated compatibility alias for
-`checkSpeakerCapturePermission()`.
+capture.start((err, chunk) => {
+  if (err) {
+    console.error(err);
+    return;
+  }
 
-`AudioCapture` exposes `onError`, `start`, `pause`, `resume`, `stop`, `getState`, `getStatus`,
-`getMicDevices`, `isSpeakerSupported`, `setVadEnabled`, `setVadConfig`, `getVadConfig`,
-`setDenoiseAttenuation`, `getDenoiseAttenuation`, `setMicDenoiseAttenuation`,
-`getMicDenoiseAttenuation`, `setSpeakerDenoiseAttenuation`, `getSpeakerDenoiseAttenuation`,
-`setMicOutputGainDb`, and `getMicOutputGainDb`.
+  console.log(chunk.durationMs);
+});
+
+setTimeout(() => {
+  capture.pause();
+  console.log('Paused:', capture.getState());
+}, 5000);
+
+setTimeout(() => {
+  capture.resume();
+  console.log('Resumed:', capture.getState());
+}, 8000);
+
+setTimeout(() => {
+  capture.setVadEnabled(false);
+  console.log('VAD disabled:', capture.getStatus().vadEnabled);
+}, 10000);
+
+setTimeout(() => {
+  capture.stop();
+  console.log('Stopped:', capture.getState());
+}, 15000);
+```
+
+## Microphone Activity Lookup
+
+Use `getMicActiveApps()` when you only need to know which apps are currently using the microphone,
+such as meeting detection. This API does not require `AudioEngine.init()`, does not create
+`AudioCapture`, and does not preload denoise/VAD models.
+
+```javascript
+const { getMicActiveApps } = require('@tellus-ai/audio-sdk');
+
+async function checkMicrophoneActivity() {
+  const activeApps = await getMicActiveApps();
+
+  for (const app of activeApps) {
+    console.log(`${app.appName} is using the microphone`, {
+      processId: app.processId,
+      bundleId: app.bundleId ?? null,
+    });
+  }
+}
+
+checkMicrophoneActivity().catch(console.error);
+```
+
+## API Reference
+
+### Exports
+
+```ts
+export {
+  AudioEngine,
+  AudioCapture,
+  init,
+  preloadModels,
+  initLogging,
+  listMicDevices,
+  isSpeakerCaptureSupported,
+  checkMicCapturePermissionInfo,
+  checkSpeakerCapturePermissionInfo,
+  requestSystemAudioCapturePermission,
+  getMicActiveApps,
+  getDefaultInputDevice,
+  getDefaultOutputDevice,
+  isBuiltInSpeaker,
+};
+```
+
+### `AudioEngine`
+
+```ts
+class AudioEngine {
+  static init(
+    config?: AudioCaptureConfig | null,
+    options?: AudioEngineInitOptions | null,
+  ): Promise<AudioEngine>;
+
+  createCapture(): AudioCapture;
+  getStatus(): AudioEngineInitStatus;
+}
+```
+
+| Method | Description |
+| --- | --- |
+| `AudioEngine.init(config?, options?)` | Initializes the engine, validates config, runs post-init model preload unless `options.preloadModels === false`, and returns an engine instance. |
+| `createCapture()` | Creates a new `AudioCapture` using the config passed to `AudioEngine.init()`. |
+| `getStatus()` | Returns the init status captured by the engine instance. |
+
+### `AudioCapture`
+
+```ts
+class AudioCapture {
+  constructor(config?: AudioCaptureConfig | null);
+  onError(callback: (err: Error | null, arg: CaptureError) => unknown): void;
+  start(callback: (err: Error | null, arg: AudioChunk) => unknown): void;
+  pause(): void;
+  resume(): void;
+  stop(): void;
+  getState(): 'idle' | 'recording' | 'paused' | 'error' | string;
+  getStatus(): CaptureStatus;
+  getMicDevices(): string[];
+  isSpeakerSupported(): boolean;
+  setVadEnabled(enabled: boolean): void;
+  setVadConfig(config: VadConfig): void;
+  getVadConfig(): VadConfig;
+}
+```
+
+Register `onError()` before `start()` so native source, mixer, or thread errors can be surfaced to
+your app.
+
+### Standalone Functions
+
+| Function | Description |
+| --- | --- |
+| `init(config?, options?)` | Initializes the native engine. `options.preloadModels` defaults to `true`. |
+| `preloadModels(config?)` | Preloads enabled FastEnhancer denoise and Silero VAD models after core init. |
+| `initLogging(level?)` | Initializes native tracing, for example `audio_capture=info`. |
+| `listMicDevices()` | Lists available microphone devices. |
+| `isSpeakerCaptureSupported()` | Returns whether speaker/system-audio capture is supported on the current platform. |
+| `checkMicCapturePermissionInfo()` | Checks microphone capture availability and returns structured permission/backend details. |
+| `checkSpeakerCapturePermissionInfo()` | Checks speaker capture availability and returns structured permission/backend details. |
+| `requestSystemAudioCapturePermission()` | Requests or probes system-audio permission on supported macOS paths. |
+| `getMicActiveApps()` | Returns apps currently using the microphone. |
+| `getDefaultInputDevice()` | Returns the current OS default input device name, or `null`. |
+| `getDefaultOutputDevice()` | Returns the current OS default output device name, or `null`. |
+| `isBuiltInSpeaker()` | Returns whether the current output device is a built-in speaker rather than headphones/earbuds. |
+
+### `AudioCaptureConfig`
+
+```ts
+interface AudioCaptureConfig {
+  micEnabled?: boolean;
+  speakerEnabled?: boolean;
+  enableRawAudio?: boolean;
+  vadEnabled?: boolean;
+  denoiseEnabled?: boolean;
+  processing?: AudioProcessingConfig;
+  transport?: AudioTransportConfig;
+}
+
+interface AudioProcessingConfig {
+  sampleRate?: number;
+  chunkDurationMs?: number;
+}
+
+interface AudioTransportConfig {
+  codec?: 'opus' | 'pcm_s16le' | 'pcm_f32le';
+  bitrateBps?: number;
+}
+```
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `micEnabled` | `boolean` | `true` | Enable microphone capture. |
+| `speakerEnabled` | `boolean` | `false` | Enable speaker/system-audio capture. |
+| `enableRawAudio` | `boolean` | `false` | Include synchronized PCM16 raw frames in `chunk.rawAudio`. |
+| `denoiseEnabled` | `boolean` | `true` | Enable FastEnhancer denoise for captured audio. |
+| `vadEnabled` | `boolean` | `false` | Enable the native Silero VAD gate and include VAD in model preload. |
+| `processing.sampleRate` | `number` | `16000` | Processing, mixer, and transport sample rate. |
+| `processing.chunkDurationMs` | `number` | `20` | Final transport chunk duration in milliseconds. |
+| `transport.codec` | `'opus' \| 'pcm_s16le' \| 'pcm_f32le'` | `'opus'` | Final transport payload codec/format. |
+| `transport.bitrateBps` | `number` | `undefined` | Opus target bitrate. Valid only when `transport.codec` is `'opus'`. |
+
+At least one of `micEnabled` or `speakerEnabled` must be true.
+
+### `AudioEngineInitStatus`
+
+```ts
+interface AudioEngineInitStatus {
+  initialized: boolean;
+  reused: boolean;
+  modelsPreloaded: boolean;
+  processingSampleRate: number;
+  chunkDurationMs: number;
+  denoise: AudioEngineDenoiseInitStatus;
+  vad: AudioEngineVadInitStatus;
+  dsp: AudioEngineDspInitStatus;
+}
+```
+
+```ts
+interface AudioEngineDenoiseInitStatus {
+  enabled: boolean;
+  active: boolean;
+  reused: boolean;
+  model: string;
+  modelDir?: string;
+  sampleRateHz: number;
+  preparedInstances: number;
+  warmupMs: number;
+}
+
+interface AudioEngineVadInitStatus {
+  enabled: boolean;
+  active: boolean;
+  ready: boolean;
+  reused: boolean;
+  model: string;
+  modelDir?: string;
+  sampleRateHz: number;
+  warmupMs: number;
+}
+
+interface AudioEngineDspInitStatus {
+  enabled: boolean;
+  dcRemovalEnabled: boolean;
+  hpfEnabled: boolean;
+  micAgc2Enabled: boolean;
+  limiterEnabled: boolean;
+}
+```
+
+### `AudioChunk`
+
+```ts
+type AudioTrackSource =
+  | 'microphone'
+  | 'screen_share_audio'
+  | 'system_audio'
+  | 'microphone_speaker_mix';
+
+interface AudioChunk {
+  data: AudioData;
+  trackSource: AudioTrackSource;
+  sampleRate: number;
+  codec: 'opus' | 'pcm_s16le' | 'pcm_f32le';
+  sampleCount: number;
+  durationMs: number;
+  sample: number;
+  timestamp: number;
+  rms: number;
+  gateEvent?: string;
+  vadRms?: number;
+  rawAudio?: RawAudioBundle;
+}
+```
+
+| Property | Description |
+| --- | --- |
+| `data` | Final transport payloads keyed by source. |
+| `trackSource` | Primary output source label. |
+| `sampleRate` | Final transport sample rate. |
+| `codec` | Final transport payload codec/format. |
+| `sampleCount` | Decoded PCM sample count represented by this chunk. A 20ms chunk at 16kHz has 320 samples. |
+| `durationMs` | Media duration represented by this chunk. Prefer this over payload byte length for timing. |
+| `sample` | Processing sample cursor at the start of the chunk. |
+| `timestamp` | Unix epoch timestamp in milliseconds. |
+| `rms` | RMS level, `0.0` to `1.0`. |
+| `gateEvent` | VAD gate transition event, usually absent on regular chunks. |
+| `vadRms` | RMS measured on the VAD input chunk. Present when VAD is enabled. |
+| `rawAudio` | Raw PCM16 frames when `enableRawAudio: true`. |
+
+### `AudioData`
+
+```ts
+interface AudioData {
+  microphone?: Buffer;
+  system_audio?: Buffer;
+  screen_share_audio?: Buffer;
+  speaker?: Buffer;
+  mixed?: Buffer;
+}
+```
+
+| Source configuration | `trackSource` | Payload keys |
+| --- | --- | --- |
+| `micEnabled: true`, `speakerEnabled: false` | `microphone` | `data.microphone` |
+| `micEnabled: false`, `speakerEnabled: true` with system-audio backend | `system_audio` | `data.system_audio` |
+| `micEnabled: false`, `speakerEnabled: true` with ScreenCaptureKit fallback | `screen_share_audio` | `data.screen_share_audio` |
+| `micEnabled: true`, `speakerEnabled: true` | `microphone_speaker_mix` | `data.microphone`, `data.speaker`, `data.mixed` |
+
+### `RawAudioBundle`
+
+```ts
+interface RawAudioFrame {
+  data: Buffer;
+  sampleRate: number;
+  sample: number;
+  timestamp: number;
+  rms: number;
+}
+
+interface RawAudioBundle {
+  mic?: RawAudioFrame | null;
+  speaker?: RawAudioFrame | null;
+  mixed?: RawAudioFrame | null;
+}
+```
+
+| Property | Source behavior |
+| --- | --- |
+| `mic` | Present when `micEnabled: true`; uses the original microphone device sample rate. |
+| `speaker` | Present when `speakerEnabled: true`; uses the original speaker device sample rate. |
+| `mixed` | Present when both mic and speaker are enabled; uses `processing.sampleRate`. |
+
+Disabled sources are `null`. Enabled but silent sources can still return PCM silence buffers.
+
+### `CaptureStatus`
+
+```ts
+interface CaptureStatus {
+  state: string;
+  micThreadAlive: boolean;
+  speakerThreadAlive: boolean;
+  mixerThreadAlive: boolean;
+  denoiseActive: boolean;
+  aecActive: boolean;
+  vadEnabled: boolean;
+  vadReady: boolean;
+  vadMode: string;
+  vadGateState: string;
+  vadProbability: number;
+  vadRms: number;
+  vadIsSpeech: boolean;
+  vadPositiveThreshold: number;
+  vadNegativeThreshold: number;
+  vadRmsThreshold: number;
+  vadSilenceDurationMs: number;
+  vadPreSpeechBufferMs: number;
+}
+```
+
+Use `getStatus()` for diagnostics, UI state, and runtime health checks. Use `getState()` when only
+the state string is needed.
+
+### `CaptureError`
+
+```ts
+interface CaptureError {
+  source: string; // "mic", "speaker", "mixer", or another native source label
+  message: string;
+  recoverable: boolean;
+}
+```
+
+## Platform Notes
+
+### macOS Microphone Permission
+
+Electron apps need microphone permission. Add an `Info.plist` usage description:
+
+```xml
+<key>NSMicrophoneUsageDescription</key>
+<string>This app needs microphone access for audio capture.</string>
+```
+
+### macOS Speaker Capture Permission
+
+Speaker capture can use either:
+
+- CoreAudio TapGuard: `permissionScope: 'system_audio'`, `trackSource: 'system_audio'`.
+- ScreenCaptureKit fallback: `permissionScope: 'screen_recording'`, `trackSource: 'screen_share_audio'`.
+
+Call `checkSpeakerCapturePermissionInfo()` before starting capture to see which backend and
+permission scope are active.
+
+If `status` is `stale`, ask the user to re-grant Screen Recording permission and restart the app.
+If `status` is `denied`, ask the user to enable the relevant permission in System Settings.
+
+### Windows
+
+Speaker capture uses WASAPI loopback. If no audio is captured:
+
+- Confirm an output device is enabled.
+- Check that the target app is not using exclusive audio mode.
+- Check `isSpeakerCaptureSupported()` and `checkSpeakerCapturePermissionInfo()`.
+
+### Linux
+
+Speaker capture uses PulseAudio monitor devices. Ensure PulseAudio-compatible audio routing is
+available in the runtime environment.
 
 ## Development
 
-Runtime, installer, and verification source lives under `src/` and is built into `dist/` before publishing. The npm package exposes only the root entrypoint through `exports`; internal runtime and installer files are not public import paths. npm lifecycle commands call the built CLI files under `dist/installer/`.
+Runtime, installer, and verification source lives under `src/` and is built into `dist/` before
+publishing. The npm package exposes only the root entrypoint through `exports`; internal runtime and
+installer files are not public import paths.
 
 ```bash
 npm run build
 npm run check:js
 npm run check:package
 ```
+
+## Troubleshooting
+
+### Native Binary Not Found
+
+If loading fails with a native binary error, run:
+
+```bash
+npm run install:binary
+npm run check:binary
+```
+
+Also verify that `TELLUS_AUDIO_ENGINE_TOKEN` has access to the private native engine release.
+
+### Model or ONNX Runtime Load Failure
+
+The SDK normally resolves bundled model and ONNX Runtime paths automatically. If your app packages
+assets into a custom location, set:
+
+```bash
+export TELLUS_AUDIO_ENGINE_MODEL_DIR="/path/to/models"
+export ORT_DYLIB_PATH="/path/to/onnxruntime"
+```
+
+### Permission Check Succeeds But No Audio Is Heard
+
+Permission checks only verify that the backend/stream can be opened. They do not require live audio
+samples. A silent microphone or no system playback can still produce successful permission checks.
+
+Use `chunk.rms`, `chunk.rawAudio`, and the selected `trackSource` to diagnose whether audio is
+actually present during capture.
 
 ## License
 
