@@ -228,8 +228,10 @@ const {
   isSpeakerCaptureSupported: nativeIsSpeakerCaptureSupported,
   probeMicCapture: nativeProbeMicCapture,
   checkMicCapturePermission: nativeCheckMicCapturePermission,
+  checkMicCapturePermissionInfo: nativeCheckMicCapturePermissionInfo,
   probeSpeakerCapture: nativeProbeSpeakerCapture,
   checkSpeakerCapturePermission: nativeCheckSpeakerCapturePermission,
+  checkSpeakerCapturePermissionInfo: nativeCheckSpeakerCapturePermissionInfo,
   requestSystemAudioCapturePermission: nativeRequestSystemAudioCapturePermission,
   getMicActiveApps: nativeGetMicActiveApps,
   getDefaultInputDevice: nativeGetDefaultInputDevice,
@@ -420,6 +422,26 @@ function callPermissionCheck(
   }
 }
 
+function callNativeMicPermissionCheck(): unknown {
+  if (typeof nativeCheckMicCapturePermissionInfo === 'function') {
+    return nativeCheckMicCapturePermissionInfo();
+  }
+  if (typeof nativeCheckMicCapturePermission === 'function') {
+    return nativeCheckMicCapturePermission();
+  }
+  throw new Error('Native microphone permission check is not available.');
+}
+
+function callNativeSpeakerPermissionCheck(): unknown {
+  if (typeof nativeCheckSpeakerCapturePermissionInfo === 'function') {
+    return nativeCheckSpeakerCapturePermissionInfo();
+  }
+  if (typeof nativeCheckSpeakerCapturePermission === 'function') {
+    return nativeCheckSpeakerCapturePermission();
+  }
+  throw new Error('Native speaker permission check is not available.');
+}
+
 export class AudioCapture {
   #native: any;
 
@@ -536,16 +558,20 @@ export class AudioEngine {
 
 export const listMicDevices: () => string[] = nativeListMicDevices;
 export const isSpeakerCaptureSupported: () => boolean = nativeIsSpeakerCaptureSupported;
-export const probeMicCapture: () => boolean = nativeProbeMicCapture;
-export const checkMicCapturePermission: () => boolean = nativeCheckMicCapturePermission;
+export const probeMicCapture: () => boolean = () =>
+  typeof nativeProbeMicCapture === 'function' ? nativeProbeMicCapture() : checkMicCapturePermissionInfo().granted;
+export const checkMicCapturePermission: () => boolean = () => checkMicCapturePermissionInfo().granted;
 export const checkMicCapturePermissionInfo: () => CapturePermissionCheckResult = () =>
-  callPermissionCheck('microphone', nativeCheckMicCapturePermission);
-export const probeSpeakerCapture: () => boolean = nativeProbeSpeakerCapture;
-export const checkSpeakerCapturePermission: () => boolean = nativeCheckSpeakerCapturePermission;
+  callPermissionCheck('microphone', callNativeMicPermissionCheck);
+export const probeSpeakerCapture: () => boolean = () =>
+  typeof nativeProbeSpeakerCapture === 'function'
+    ? nativeProbeSpeakerCapture()
+    : checkSpeakerCapturePermissionInfo().granted;
+export const checkSpeakerCapturePermission: () => boolean = () => checkSpeakerCapturePermissionInfo().granted;
 export const checkSpeakerCapturePermissionInfo: () => CapturePermissionCheckResult = () =>
-  callPermissionCheck('speaker', nativeCheckSpeakerCapturePermission);
+  callPermissionCheck('speaker', callNativeSpeakerPermissionCheck);
 /** @deprecated Use checkSpeakerCapturePermission(). */
-export const checkSystemAudioCapturePermission: () => boolean = nativeCheckSpeakerCapturePermission;
+export const checkSystemAudioCapturePermission: () => boolean = checkSpeakerCapturePermission;
 /** @deprecated Use checkSpeakerCapturePermissionInfo(). */
 export const checkSystemAudioCapturePermissionInfo: () => CapturePermissionCheckResult =
   checkSpeakerCapturePermissionInfo;
