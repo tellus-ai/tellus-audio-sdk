@@ -31,10 +31,13 @@ function npmPackDryRunJson(): string {
     });
   }
 
-  const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  return execFileSync(npmCommand, ['pack', '--dry-run', '--json'], {
-    encoding: 'utf8',
-  });
+  if (process.platform === 'win32') {
+    return execFileSync('cmd.exe', ['/d', '/s', '/c', 'npm pack --dry-run --json'], {
+      encoding: 'utf8',
+    });
+  }
+
+  return execFileSync('npm', ['pack', '--dry-run', '--json'], { encoding: 'utf8' });
 }
 
 function loadPackageJson(): PackageJson {
