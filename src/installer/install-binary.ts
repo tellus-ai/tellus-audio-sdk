@@ -11,7 +11,7 @@ import {
 } from 'node:fs';
 import { get } from 'node:https';
 import { tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 import { currentAssetKey } from '../platform/asset-key';
@@ -254,7 +254,10 @@ function readExpectedSha256(filePath: string): string {
 }
 
 function assertSafeTarEntries(archivePath: string): void {
-  const output = execFileSync('tar', ['-tzf', archivePath], { encoding: 'utf8' });
+  const output = execFileSync('tar', ['-tzf', basename(archivePath)], {
+    cwd: dirname(archivePath),
+    encoding: 'utf8',
+  });
   for (const entry of output.split(/\r?\n/).filter(Boolean)) {
     if (isAbsolute(entry) || entry.split('/').includes('..')) {
       fail(`Unsafe tar entry is included: ${entry}`);
@@ -265,9 +268,8 @@ function assertSafeTarEntries(archivePath: string): void {
 function extractTarGz(archivePath: string, destination: string): void {
   assertSafeTarEntries(archivePath);
   mkdirSync(destination, { recursive: true });
-  const archiveArg = relative(destination, archivePath).split(sep).join('/');
-  execFileSync('tar', ['-xzf', archiveArg], {
-    cwd: destination,
+  execFileSync('tar', ['-xzf', basename(archivePath), '-C', destination], {
+    cwd: dirname(archivePath),
     stdio: 'inherit',
   });
 }
