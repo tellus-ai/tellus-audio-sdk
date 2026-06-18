@@ -1,6 +1,6 @@
 {
   "name": "@tellus-ai/audio-sdk",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Tellus Audio SDK wrapper for Electron and Node.js",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -39,9 +39,10 @@
     "check:binary": "node dist/installer/check-binary-cli.js",
     "check:js": "npm run build && find dist -name '*.js' -print0 | xargs -0 -n1 node --check",
     "check:package": "npm run build && node dist/installer/check-package-contents.js",
+    "check:postinstall-build": "node scripts/check-postinstall-build-command.js",
     "install:binary": "node dist/installer/install-binary-cli.js",
     "prepare": "npm run build",
-    "postinstall": "node -e \"const fs=require('node:fs');const cp=require('node:child_process');if(!fs.existsSync('dist/installer/install-binary-cli.js')&&fs.existsSync('src/installer/install-binary-cli.ts'))cp.execFileSync(process.platform==='win32'?'npm.cmd':'npm',['run','build'],{stdio:'inherit'});cp.execFileSync(process.execPath,['dist/installer/install-binary-cli.js'],{stdio:'inherit'});\""
+    "postinstall": "node -e \"const fs=require('node:fs');const cp=require('node:child_process');const runBuild=()=>{const npmExec=process.env.npm_execpath;if(npmExec){cp.execFileSync(process.execPath,[npmExec,'run','build'],{stdio:'inherit'});return;}if(process.platform==='win32'){cp.execFileSync('cmd.exe',['/d','/s','/c','npm run build'],{stdio:'inherit'});return;}cp.execFileSync('npm',['run','build'],{stdio:'inherit'});};if(!fs.existsSync('dist/installer/install-binary-cli.js')&&fs.existsSync('src/installer/install-binary-cli.ts'))runBuild();cp.execFileSync(process.execPath,['dist/installer/install-binary-cli.js'],{stdio:'inherit'});\""
   },
   "engines": {
     "node": ">= 18"

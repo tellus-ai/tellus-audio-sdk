@@ -33,7 +33,7 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Verify postinstall build command
-        run: npm run check:postinstall-build
+        run: node scripts/check-postinstall-build-command.js
 
       - name: Verify package contents
         run: npm run check:package
