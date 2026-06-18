@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
+  cpSync,
   createWriteStream,
   existsSync,
   mkdirSync,
@@ -10,8 +11,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { get } from 'node:https';
-import { tmpdir } from 'node:os';
-import { basename, dirname, isAbsolute, join } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 import { currentAssetKey } from '../platform/asset-key';
@@ -268,10 +268,23 @@ function assertSafeTarEntries(archivePath: string): void {
 function extractTarGz(archivePath: string, destination: string): void {
   assertSafeTarEntries(archivePath);
   mkdirSync(destination, { recursive: true });
-  execFileSync('tar', ['-xzf', basename(archivePath), '-C', destination], {
-    cwd: dirname(archivePath),
+  const archiveArg = relative(destination, archivePath).split(sep).join('/');
+  execFileSync('tar', ['-xzf', archiveArg], {
+    cwd: destination,
     stdio: 'inherit',
   });
+}
+
+function moveDirectory(source: string, destination: string): void {
+  try {
+    renameSync(source, destination);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EXDEV') {
+      throw error;
+    }
+    cpSync(source, destination, { recursive: true });
+    rmSync(source, { recursive: true, force: true });
+  }
 }
 
 function alreadyInstalled(targetDir: string, expectedSha: string): boolean {
@@ -318,7 +331,9 @@ export async function installBinary(): Promise<void> {
 
   const platformDir = asset.platform || key;
   const targetDir = join(ROOT, 'vendor', platformDir);
-  const tempDir = mkdtempSync(join(tmpdir(), 'tellus-audio-sdk-'));
+  const vendorDir = dirname(targetDir);
+  mkdirSync(vendorDir, { recursive: true });
+  const tempDir = mkdtempSync(join(vendorDir, '.tmp-'));
   const archivePath = join(tempDir, 'asset.tar.gz');
   const shaPath = join(tempDir, 'asset.tar.gz.sha256');
   const token = tokenForDownload();
@@ -358,8 +373,8 @@ export async function installBinary(): Promise<void> {
     const extractDir = join(tempDir, 'extract');
     extractTarGz(archivePath, extractDir);
     rmSync(targetDir, { recursive: true, force: true });
-    mkdirSync(dirname(targetDir), { recursive: true });
-    renameSync(extractDir, targetDir);
+    mkdirSync(vendorDir, { recursive: true });
+    moveDirectory(extractDir, targetDir);
     writeFileSync(
       join(targetDir, '.install-state.json'),
       JSON.stringify(
