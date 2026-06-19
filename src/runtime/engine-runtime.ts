@@ -12,14 +12,31 @@ const { platform } = process;
 
 function assetRoots(): string[] {
   const key = currentAssetKey();
-  const roots: string[] = [];
-  if (platform === 'darwin') {
-    roots.push(join(PACKAGE_ROOT, 'vendor', 'darwin-universal'));
-  } else {
-    roots.push(join(PACKAGE_ROOT, 'vendor', key));
+  const platformVendorDir = platform === 'darwin' ? 'darwin-universal' : key;
+  const packageRoots = packageRootCandidates();
+  return uniquePaths([
+    ...packageRoots.map((root) => join(root, 'vendor', platformVendorDir)),
+    ...packageRoots,
+  ]);
+}
+
+function packageRootCandidates(): string[] {
+  const unpackedRoot = asarUnpackedPath(PACKAGE_ROOT);
+  if (!unpackedRoot) {
+    return [PACKAGE_ROOT];
   }
-  roots.push(PACKAGE_ROOT);
-  return roots;
+
+  return [unpackedRoot, PACKAGE_ROOT];
+}
+
+function asarUnpackedPath(filePath: string): string | null {
+  const unpackedPath = filePath.replace(/(^|[/\\])app\.asar(?=([/\\]|$))/, '$1app.asar.unpacked');
+
+  return unpackedPath === filePath ? null : unpackedPath;
+}
+
+function uniquePaths(paths: string[]): string[] {
+  return Array.from(new Set(paths));
 }
 
 function resolveExistingPath(candidate: string): string | null {
