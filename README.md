@@ -24,13 +24,14 @@ installed into `vendor/<platform>/` during package installation.
   - `pcm_s16le`
   - `pcm_f32le`
 - Optional synchronized `rawAudio` PCM16 frames for mic, speaker, and mixed streams.
-- Structured permission checks that do not require live audio samples.
+- Structured permission checks with macOS public authorization APIs and CoreAudio TapGuard probe
+  validation.
 - Device helper APIs for default input/output and speaker capability checks.
 
 ## Install
 
 ```bash
-npm install git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.1.10
+npm install git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.1.11
 ```
 
 Installing from GitHub uses the public `tellus-ai/tellus-audio-sdk` repository. The package
@@ -46,7 +47,7 @@ The required native engine version is pinned in `release-assets.json`:
 
 ```json
 {
-  "sdkVersion": "0.1.10",
+  "sdkVersion": "0.1.11",
   "nativeEngineVersion": "0.2.8",
   "nativeEngineTag": "v0.2.8"
 }
@@ -60,7 +61,7 @@ Provide the token explicitly before install:
 
 ```bash
 export TELLUS_AUDIO_ENGINE_TOKEN="..."
-npm install git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.1.10
+npm install git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.1.11
 ```
 
 Alternatively, place the token in the installing project's `.env` file:
@@ -333,9 +334,16 @@ Permission checks expose structured results through:
 - `checkMicCapturePermissionInfo()`
 - `checkSpeakerCapturePermissionInfo()`
 
-These checks verify that the native backend and stream can be opened. They do not wait for live
-microphone or system-audio samples. Silent microphone input or no speaker audio should not be
-classified as permission failure.
+These checks verify the active native permission scope for the selected backend:
+
+- macOS microphone checks use Apple's public microphone authorization status API.
+- macOS ScreenCaptureKit fallback checks use Apple's public Screen Recording preflight API.
+- macOS 14.2+ CoreAudio TapGuard `system_audio` checks play a short, quiet probe tone and verify
+  that the tone is captured through the tap.
+- Windows and Linux speaker checks verify that the loopback/monitor stream can be opened.
+
+For CoreAudio TapGuard, `granted` means the SDK captured its own probe tone through the system-audio
+path. It does not require the user or another app to be playing audio.
 
 ```javascript
 const {
@@ -383,7 +391,7 @@ type CapturePermissionCheckResult = {
 
 | Field | Description |
 | --- | --- |
-| `granted` | `true` when the requested capture backend/stream can be opened. |
+| `granted` | `true` when the requested permission check succeeds. For CoreAudio TapGuard this means the probe tone was captured. |
 | `request` | SDK-level request: `microphone` or `speaker`. |
 | `permissionScope` | OS/platform permission scope involved in the check. |
 | `trackSource` | `AudioChunk.trackSource` used by successful capture. |
@@ -395,7 +403,7 @@ type CapturePermissionCheckResult = {
 | Status | Meaning | Typical action |
 | --- | --- | --- |
 | `granted` | Permission/backend checks succeeded. | Start capture. |
-| `denied` | The OS denied the requested permission. | Ask the user to enable permission in system settings. |
+| `denied` | The OS denied the requested permission, or CoreAudio TapGuard could not capture the probe tone. | Ask the user to enable permission in system settings. |
 | `unsupported` | The platform, OS version, or runtime does not support the requested capture path. | Disable that feature or show an unsupported-platform message. |
 | `stale` | Permission state is inconsistent or outdated, most commonly after macOS Screen Recording changes. | Ask the user to re-grant permission and restart the app. |
 | `unknown` | The check failed in a way that cannot be safely classified. | Show `message`, inspect `error`, and retry or collect diagnostics. |
@@ -1096,11 +1104,34 @@ interface CaptureError {
 
 ### macOS Microphone Permission
 
-Electron apps need microphone permission. Add an `Info.plist` usage description:
+Electron apps need microphone permission when `micEnabled: true`. The permission belongs to the
+final `.app` bundle, not this npm package, because the native addon runs inside the Electron app
+process. Add an `Info.plist` usage description:
 
 ```xml
 <key>NSMicrophoneUsageDescription</key>
 <string>This app needs microphone access for audio capture.</string>
+```
+
+For sandboxed or Mac App Store builds, also allow audio input in the app entitlements:
+
+```xml
+<key>com.apple.security.device.audio-input</key>
+<true/>
+```
+
+In Electron, add the usage description through your packager configuration. For `electron-builder`:
+
+```json
+{
+  "build": {
+    "mac": {
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "This app needs microphone access for audio capture."
+      }
+    }
+  }
+}
 ```
 
 ### macOS Speaker Capture Permission
@@ -1110,11 +1141,57 @@ Speaker capture can use either:
 - CoreAudio TapGuard: `permissionScope: 'system_audio'`, `trackSource: 'system_audio'`.
 - ScreenCaptureKit fallback: `permissionScope: 'screen_recording'`, `trackSource: 'screen_share_audio'`.
 
+Electron apps that enable speaker/system-audio capture should include a system-audio usage
+description in the final `.app` bundle:
+
+```xml
+<key>NSAudioCaptureUsageDescription</key>
+<string>This app needs system audio access for speaker capture.</string>
+```
+
+On macOS 14.2 and later, the CoreAudio tap path requests System Audio Recording permission when the
+tap-backed capture stream is first opened. This can happen during
+`checkSpeakerCapturePermissionInfo()`, `requestSystemAudioCapturePermission()`, or the first
+speaker-enabled `AudioCapture.start()`, depending on which call first opens the backend.
+
+Because Apple doesn't expose a public authorization-status API for CoreAudio TapGuard system-audio
+permission, the SDK checks this path by opening the tap, playing a short probe tone, and detecting
+that tone in the captured stream. The current probe is a 997 Hz tone at about -70 dBFS for about one
+second, with a short fade in and fade out. This is intended to be below normal audibility, but users
+with high output volume or sensitive output devices may faintly hear it during permission checks.
+
+`requestSystemAudioCapturePermission()` returns `true` when the system-audio probe succeeds and
+`false` when the permission is denied or blocked. Other setup failures are surfaced through the
+structured permission result or thrown by the native binding, depending on the API used.
+
+Older macOS versions can fall back to ScreenCaptureKit, where the active scope is Screen Recording
+permission. In that case the app must appear under System Settings > Privacy & Security > Screen
+Recording, and users usually need to restart the app after changing the permission.
+
 Call `checkSpeakerCapturePermissionInfo()` before starting capture to see which backend and
 permission scope are active.
 
 If `status` is `stale`, ask the user to re-grant Screen Recording permission and restart the app.
 If `status` is `denied`, ask the user to enable the relevant permission in System Settings.
+
+For `electron-builder`, include both microphone and system-audio purpose strings when the app can
+capture both inputs:
+
+```json
+{
+  "build": {
+    "mac": {
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "This app needs microphone access for audio capture.",
+        "NSAudioCaptureUsageDescription": "This app needs system audio access for speaker capture."
+      }
+    }
+  }
+}
+```
+
+For Electron Forge or direct `electron-packager` usage, set `packagerConfig.extendInfo` to an object
+or to a plist file that contains the same keys.
 
 ### Windows
 
@@ -1166,8 +1243,11 @@ export ORT_DYLIB_PATH="/path/to/onnxruntime"
 
 ### Permission Check Succeeds But No Audio Is Heard
 
-Permission checks only verify that the backend/stream can be opened. They do not require live audio
-samples. A silent microphone or no system playback can still produce successful permission checks.
+Permission checks verify permission/backend readiness, not the loudness of the user's meeting audio.
+For CoreAudio TapGuard `system_audio`, the SDK injects its own quiet probe tone, so user playback is
+not required for the permission check. For microphone, Windows loopback, Linux monitor, and
+ScreenCaptureKit fallback paths, a silent microphone or no system playback can still produce
+successful permission checks.
 
 Use `chunk.rms`, `chunk.rawAudio`, and the selected `trackSource` to diagnose whether audio is
 actually present during capture.
