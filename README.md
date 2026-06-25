@@ -31,7 +31,7 @@ installed into `vendor/<platform>/` during package installation.
 ## Install
 
 ```bash
-npm install git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.1.12
+npm install git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.1.13
 ```
 
 Installing from GitHub uses the public `tellus-ai/tellus-audio-sdk` repository. The package
@@ -47,9 +47,9 @@ The required native engine version is pinned in `release-assets.json`:
 
 ```json
 {
-  "sdkVersion": "0.1.12",
-  "nativeEngineVersion": "0.2.8",
-  "nativeEngineTag": "v0.2.8"
+  "sdkVersion": "0.1.13",
+  "nativeEngineVersion": "0.2.11",
+  "nativeEngineTag": "v0.2.12"
 }
 ```
 
@@ -61,7 +61,7 @@ Provide the token explicitly before install:
 
 ```bash
 export TELLUS_AUDIO_ENGINE_TOKEN="..."
-npm install git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.1.12
+npm install git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.1.13
 ```
 
 Alternatively, place the token in the installing project's `.env` file:
@@ -204,7 +204,7 @@ through the operating system device settings.
 
 When default devices change while capture is running, the native engine is expected to follow the
 current OS defaults for the relevant source path. Use `getDefaultInputDevice()` and
-`getDefaultOutputDevice()` for UI diagnostics.
+`getDefaultSpeakerDevice()` when the UI is checking speaker availability.
 
 ### Final Payload vs Raw Audio
 
@@ -333,23 +333,32 @@ Permission checks expose structured results through:
 
 - `checkMicCapturePermissionInfo()`
 - `checkSpeakerCapturePermissionInfo()`
+- `probeSpeakerCapturePermissionInfo()`
 
 These checks verify the active native permission scope for the selected backend:
 
 - macOS microphone checks use Apple's public microphone authorization status API.
 - macOS ScreenCaptureKit fallback checks use Apple's public Screen Recording preflight API.
-- macOS 14.2+ CoreAudio TapGuard `system_audio` checks play a short, quiet probe tone and verify
-  that the tone is captured through the tap.
+- macOS 14.2+ CoreAudio TapGuard `system_audio` passive checks return `unknown` when the permission
+  cannot be known without opening a tap.
+- macOS 14.2+ CoreAudio TapGuard `system_audio` active probes play a short, quiet probe tone and
+  verify that the tone is captured through the tap.
 - Windows and Linux speaker checks verify that the loopback/monitor stream can be opened.
 
-For CoreAudio TapGuard, `granted` means the SDK captured its own probe tone through the system-audio
-path. It does not require the user or another app to be playing audio.
+Use `checkSpeakerCapturePermissionInfo()` at app startup or on passive status screens. Use
+`probeSpeakerCapturePermissionInfo()` from an explicit user action such as a permission request
+button. For CoreAudio TapGuard active probes, `granted` means the SDK captured its own probe tone
+through the system-audio path. It does not require the user or another app to be playing audio.
+
+Permission request/probe APIs should not be treated as a durable permission-state cache. After an
+explicit request or probe, re-run the relevant structured check when the UI needs to render current
+state. macOS Screen Recording changes can require an app restart before the new state is usable.
 
 ```javascript
 const {
   checkMicCapturePermissionInfo,
   checkSpeakerCapturePermissionInfo,
-  requestSystemAudioCapturePermission,
+  probeSpeakerCapturePermissionInfo,
 } = require('@tellus-ai/audio-sdk');
 
 const mic = checkMicCapturePermissionInfo();
@@ -358,9 +367,12 @@ const speaker = checkSpeakerCapturePermissionInfo();
 console.log('Mic permission:', mic);
 console.log('Speaker permission:', speaker);
 
-if (!speaker.granted && speaker.status === 'denied') {
-  const requested = requestSystemAudioCapturePermission();
-  console.log('Permission request result:', requested);
+if (!speaker.granted && speaker.status === 'unknown') {
+  const requested = probeSpeakerCapturePermissionInfo();
+  console.log('Speaker probe result:', requested);
+
+  const refreshed = checkSpeakerCapturePermissionInfo();
+  console.log('Speaker permission after probe:', refreshed);
 }
 ```
 
@@ -383,9 +395,27 @@ type CapturePermissionCheckResult = {
     | 'wasapi_loopback'
     | 'pulseaudio_monitor'
     | 'unsupported';
-  status: 'granted' | 'denied' | 'unsupported' | 'stale' | 'unknown';
+  status: 'granted' | 'denied' | 'restricted' | 'unsupported' | 'stale' | 'not-determined' | 'unknown';
   message: string;
   error?: string;
+  rawStatus?: string;
+  rawResult?: {
+    api: string;
+    value?: boolean | null;
+    statusCode?: number | null;
+    errorCode?: number | null;
+    errorDomain?: string | null;
+    errorMessage?: string | null;
+  };
+  capabilityStatus?: string;
+  capabilityResult?: {
+    api: string;
+    value?: boolean | null;
+    statusCode?: number | null;
+    errorCode?: number | null;
+    errorDomain?: string | null;
+    errorMessage?: string | null;
+  };
 };
 ```
 
@@ -398,14 +428,27 @@ type CapturePermissionCheckResult = {
 | `backend` | Native backend used for the check. |
 | `status` | Stable machine-readable status for branching. |
 | `message` | Human-readable English explanation for logs or UI. |
+| `rawStatus` | Original status string returned by the OS/API when one exists. |
+| `rawResult` | Original low-level result metadata for logs and diagnostics. |
+| `capabilityStatus` | Optional raw status from a prompt-free permission-state API, such as Windows `AppCapability.CheckAccess("microphone")`. Omitted when unavailable or unsupported. |
+| `capabilityResult` | Optional low-level metadata for `capabilityStatus`. |
 | `error` | Developer diagnostic text when the check fails or cannot be classified precisely. |
+
+On Windows, microphone checks may include `capabilityStatus` and `capabilityResult` when
+`Windows.Security.Authorization.AppCapabilityAccess.AppCapability.CheckAccess("microphone")` is
+available and succeeds. This is supported on Windows 10 version 1903 / build 18362 and later. These
+fields are optional diagnostic metadata: they are omitted on older Windows versions or when the API
+call fails. Capture availability should still be decided from `granted`, `status`, and the
+stream-open `rawResult`.
 
 | Status | Meaning | Typical action |
 | --- | --- | --- |
 | `granted` | Permission/backend checks succeeded. | Start capture. |
 | `denied` | The OS denied the requested permission, or CoreAudio TapGuard could not capture the probe tone. | Ask the user to enable permission in system settings. |
+| `restricted` | The OS, policy, platform, or app declaration blocks the requested permission. | Show a blocked-by-system message and direct the user/admin to OS policy/settings. |
 | `unsupported` | The platform, OS version, or runtime does not support the requested capture path. | Disable that feature or show an unsupported-platform message. |
 | `stale` | Permission state is inconsistent or outdated, most commonly after macOS Screen Recording changes. | Ask the user to re-grant permission and restart the app. |
+| `not-determined` | The permission has not been requested yet, or the OS reports a prompt-required state. | Ask from an explicit user action before calling a request API. |
 | `unknown` | The check failed in a way that cannot be safely classified. | Show `message`, inspect `error`, and retry or collect diagnostics. |
 
 Example results:
@@ -824,10 +867,11 @@ export {
   isSpeakerCaptureSupported,
   checkMicCapturePermissionInfo,
   checkSpeakerCapturePermissionInfo,
+  probeSpeakerCapturePermissionInfo,
   requestSystemAudioCapturePermission,
   getMicActiveApps,
   getDefaultInputDevice,
-  getDefaultOutputDevice,
+  getDefaultSpeakerDevice,
   isBuiltInSpeaker,
 };
 ```
@@ -885,12 +929,19 @@ your app.
 | `listMicDevices()` | Lists available microphone devices. |
 | `isSpeakerCaptureSupported()` | Returns whether speaker/system-audio capture is supported on the current platform. |
 | `checkMicCapturePermissionInfo()` | Checks microphone capture availability and returns structured permission/backend details. |
-| `checkSpeakerCapturePermissionInfo()` | Checks speaker capture availability and returns structured permission/backend details. |
-| `requestSystemAudioCapturePermission()` | Requests or probes system-audio permission on supported macOS paths. |
+| `checkSpeakerCapturePermissionInfo()` | Passively checks speaker capture availability and returns structured permission/backend details. On macOS 14.2+ CoreAudio `system_audio`, this can return `unknown` without prompting. |
+| `probeSpeakerCapturePermissionInfo()` | Actively probes speaker capture and returns structured permission/backend details. On macOS 14.2+ CoreAudio `system_audio`, this can show the System Audio Recording prompt and verifies capture with a quiet test tone. |
+| `requestSystemAudioCapturePermission()` | Legacy boolean request/probe path for system-audio permission on supported macOS paths. |
 | `getMicActiveApps()` | Returns apps currently using the microphone. |
 | `getDefaultInputDevice()` | Returns the current OS default input device name, or `null`. |
-| `getDefaultOutputDevice()` | Returns the current OS default output device name, or `null`. |
+| `getDefaultSpeakerDevice()` | Returns the current OS default speaker device name, or `null`. |
 | `isBuiltInSpeaker()` | Returns whether the current output device is a built-in speaker rather than headphones/earbuds. |
+
+This SDK version does not expose a standalone `requestScreenCapturePermission()` wrapper. For
+speaker capture, use `checkSpeakerCapturePermissionInfo()` to discover whether the active backend
+uses `permissionScope: 'screen_recording'`, then run `probeSpeakerCapturePermissionInfo()` or the
+legacy `requestSystemAudioCapturePermission()` from an explicit user action. Re-check permission
+state after the request/probe instead of reading final state from the request return value.
 
 ### `AudioCaptureConfig`
 
@@ -1150,15 +1201,16 @@ description in the final `.app` bundle:
 ```
 
 On macOS 14.2 and later, the CoreAudio tap path requests System Audio Recording permission when the
-tap-backed capture stream is first opened. This can happen during
-`checkSpeakerCapturePermissionInfo()`, `requestSystemAudioCapturePermission()`, or the first
-speaker-enabled `AudioCapture.start()`, depending on which call first opens the backend.
+tap-backed capture stream is first opened. `checkSpeakerCapturePermissionInfo()` does not open this
+tap. `probeSpeakerCapturePermissionInfo()`, `requestSystemAudioCapturePermission()`, or the first
+speaker-enabled `AudioCapture.start()` can trigger the prompt, depending on which call first opens
+the backend.
 
 Because Apple doesn't expose a public authorization-status API for CoreAudio TapGuard system-audio
-permission, the SDK checks this path by opening the tap, playing a short probe tone, and detecting
-that tone in the captured stream. The current probe is a 997 Hz tone at about -70 dBFS for about one
-second, with a short fade in and fade out. This is intended to be below normal audibility, but users
-with high output volume or sensitive output devices may faintly hear it during permission checks.
+permission, the passive check returns `unknown` for that path. The active probe opens the tap,
+plays a 997 Hz tone at about -70 dBFS for about one second, and detects that tone in the captured
+stream. This is intended to be below normal audibility, but users with high output volume or
+sensitive output devices may faintly hear it during active probes.
 
 `requestSystemAudioCapturePermission()` returns `true` when the system-audio probe succeeds and
 `false` when the permission is denied or blocked. Other setup failures are surfaced through the
@@ -1169,7 +1221,25 @@ permission. In that case the app must appear under System Settings > Privacy & S
 Recording, and users usually need to restart the app after changing the permission.
 
 Call `checkSpeakerCapturePermissionInfo()` before starting capture to see which backend and
-permission scope are active.
+permission scope are active. Call `probeSpeakerCapturePermissionInfo()` only from explicit user
+actions that are allowed to prompt.
+
+When the active backend is the ScreenCaptureKit fallback, use the same check-then-request flow:
+
+```javascript
+const speaker = checkSpeakerCapturePermissionInfo();
+
+if (speaker.permissionScope === 'screen_recording' && !speaker.granted) {
+  const requested = probeSpeakerCapturePermissionInfo();
+  console.log('Screen Recording request/probe result:', requested);
+
+  const refreshed = checkSpeakerCapturePermissionInfo();
+  console.log('Screen Recording state after request:', refreshed);
+}
+```
+
+Do not assume the request/probe return value is the final Screen Recording state. macOS can require
+the app to be restarted or the permission to be re-checked after System Settings changes.
 
 If `status` is `stale`, ask the user to re-grant Screen Recording permission and restart the app.
 If `status` is `denied`, ask the user to enable the relevant permission in System Settings.
