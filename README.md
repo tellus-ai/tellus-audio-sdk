@@ -31,7 +31,7 @@ installed into `vendor/<platform>/` during package installation.
 ## Install
 
 ```bash
-npm install git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.1.12
+npm install git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.1.13
 ```
 
 Installing from GitHub uses the public `tellus-ai/tellus-audio-sdk` repository. The package
@@ -47,7 +47,7 @@ The required native engine version is pinned in `release-assets.json`:
 
 ```json
 {
-  "sdkVersion": "0.1.12",
+  "sdkVersion": "0.1.13",
   "nativeEngineVersion": "0.2.11",
   "nativeEngineTag": "v0.2.12"
 }
@@ -61,7 +61,7 @@ Provide the token explicitly before install:
 
 ```bash
 export TELLUS_AUDIO_ENGINE_TOKEN="..."
-npm install git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.1.12
+npm install git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.1.13
 ```
 
 Alternatively, place the token in the installing project's `.env` file:
