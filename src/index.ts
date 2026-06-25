@@ -204,7 +204,23 @@ export type CapturePermissionBackend =
   | 'wasapi_loopback'
   | 'pulseaudio_monitor'
   | 'unsupported';
-export type CapturePermissionStatus = 'granted' | 'denied' | 'unsupported' | 'stale' | 'unknown';
+export type CapturePermissionStatus =
+  | 'granted'
+  | 'denied'
+  | 'restricted'
+  | 'unsupported'
+  | 'stale'
+  | 'not-determined'
+  | 'unknown';
+
+export interface CapturePermissionRawResult {
+  api: string;
+  value?: boolean | null;
+  statusCode?: number | null;
+  errorCode?: number | null;
+  errorDomain?: string | null;
+  errorMessage?: string | null;
+}
 
 export interface CapturePermissionCheckResult {
   granted: boolean;
@@ -215,6 +231,10 @@ export interface CapturePermissionCheckResult {
   status: CapturePermissionStatus;
   message: string;
   error?: string;
+  rawStatus?: string;
+  rawResult?: CapturePermissionRawResult;
+  capabilityStatus?: string;
+  capabilityResult?: CapturePermissionRawResult;
 }
 
 export type ErrorCallback = (err: Error | null, arg: CaptureError) => unknown;
@@ -232,10 +252,11 @@ const {
   probeSpeakerCapture: nativeProbeSpeakerCapture,
   checkSpeakerCapturePermission: nativeCheckSpeakerCapturePermission,
   checkSpeakerCapturePermissionInfo: nativeCheckSpeakerCapturePermissionInfo,
+  probeSpeakerCapturePermissionInfo: nativeProbeSpeakerCapturePermissionInfo,
   requestSystemAudioCapturePermission: nativeRequestSystemAudioCapturePermission,
   getMicActiveApps: nativeGetMicActiveApps,
   getDefaultInputDevice: nativeGetDefaultInputDevice,
-  getDefaultOutputDevice: nativeGetDefaultOutputDevice,
+  getDefaultSpeakerDevice: nativeGetDefaultSpeakerDevice,
   isBuiltInSpeaker: nativeIsBuiltInSpeaker,
   init: nativeInit,
   initLogging: nativeInitLogging,
@@ -353,6 +374,11 @@ function normalizePermissionResult(
       message: granted
         ? 'Microphone capture permission is granted and the microphone capture stream can be opened.'
         : 'Microphone capture permission is denied or the microphone capture stream cannot be opened.',
+      rawStatus: granted ? 'BooleanTrue' : 'BooleanFalse',
+      rawResult: {
+        api: 'legacy.boolean_permission_check',
+        value: granted,
+      },
     };
   }
 
@@ -368,6 +394,11 @@ function normalizePermissionResult(
     message: granted
       ? `Speaker capture permission is granted and the ${details.trackSource ?? 'speaker'} capture stream can be opened.`
       : 'Speaker capture permission is denied, unsupported, or the speaker capture stream cannot be opened.',
+    rawStatus: granted ? 'BooleanTrue' : 'BooleanFalse',
+    rawResult: {
+      api: 'legacy.boolean_permission_check',
+      value: granted,
+    },
   };
 }
 
@@ -381,9 +412,13 @@ function permissionFailureResult(
     ? 'stale'
     : lower.includes('unsupported') || lower.includes('not supported')
       ? 'unsupported'
-      : lower.includes('denied') || lower.includes('permission')
-        ? 'denied'
-        : 'unknown';
+      : lower.includes('restricted')
+        ? 'restricted'
+        : lower.includes('not determined') || lower.includes('not-determined')
+          ? 'not-determined'
+          : lower.includes('denied') || lower.includes('permission')
+            ? 'denied'
+            : 'unknown';
 
   if (request === 'microphone') {
     return {
@@ -395,6 +430,11 @@ function permissionFailureResult(
       status: failedStatus,
       message: 'Microphone capture permission check failed.',
       error: message,
+      rawStatus: 'Exception',
+      rawResult: {
+        api: 'sdk.microphone.permission_check',
+        errorMessage: message,
+      },
     };
   }
 
@@ -408,6 +448,11 @@ function permissionFailureResult(
     status: failedStatus,
     message: 'Speaker capture permission check failed.',
     error: message,
+    rawStatus: 'Exception',
+    rawResult: {
+      api: 'sdk.speaker.permission_check',
+      errorMessage: message,
+    },
   };
 }
 
@@ -440,6 +485,19 @@ function callNativeSpeakerPermissionCheck(): unknown {
     return nativeCheckSpeakerCapturePermission();
   }
   throw new Error('Native speaker permission check is not available.');
+}
+
+function callNativeSpeakerPermissionProbe(): unknown {
+  if (typeof nativeProbeSpeakerCapturePermissionInfo === 'function') {
+    return nativeProbeSpeakerCapturePermissionInfo();
+  }
+  if (typeof nativeRequestSystemAudioCapturePermission === 'function') {
+    return nativeRequestSystemAudioCapturePermission();
+  }
+  if (typeof nativeProbeSpeakerCapture === 'function') {
+    return nativeProbeSpeakerCapture();
+  }
+  throw new Error('Native speaker permission probe is not available.');
 }
 
 export class AudioCapture {
@@ -566,10 +624,12 @@ export const checkMicCapturePermissionInfo: () => CapturePermissionCheckResult =
 export const probeSpeakerCapture: () => boolean = () =>
   typeof nativeProbeSpeakerCapture === 'function'
     ? nativeProbeSpeakerCapture()
-    : checkSpeakerCapturePermissionInfo().granted;
+    : probeSpeakerCapturePermissionInfo().granted;
 export const checkSpeakerCapturePermission: () => boolean = () => checkSpeakerCapturePermissionInfo().granted;
 export const checkSpeakerCapturePermissionInfo: () => CapturePermissionCheckResult = () =>
   callPermissionCheck('speaker', callNativeSpeakerPermissionCheck);
+export const probeSpeakerCapturePermissionInfo: () => CapturePermissionCheckResult = () =>
+  callPermissionCheck('speaker', callNativeSpeakerPermissionProbe);
 /** @deprecated Use checkSpeakerCapturePermission(). */
 export const checkSystemAudioCapturePermission: () => boolean = checkSpeakerCapturePermission;
 /** @deprecated Use checkSpeakerCapturePermissionInfo(). */
@@ -579,7 +639,7 @@ export const requestSystemAudioCapturePermission: () => boolean =
   nativeRequestSystemAudioCapturePermission;
 export const getMicActiveApps: () => Promise<MicActiveApp[]> = nativeGetMicActiveApps;
 export const getDefaultInputDevice: () => string | null = nativeGetDefaultInputDevice;
-export const getDefaultOutputDevice: () => string | null = nativeGetDefaultOutputDevice;
+export const getDefaultSpeakerDevice: () => string | null = nativeGetDefaultSpeakerDevice;
 export const isBuiltInSpeaker: () => boolean = nativeIsBuiltInSpeaker;
 export const init: (
   config?: AudioCaptureConfig | null,
