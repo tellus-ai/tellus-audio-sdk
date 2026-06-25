@@ -66,7 +66,7 @@ Set the private release token before installation:
 
 ```bash
 export TELLUS_AUDIO_ENGINE_TOKEN="..."
-npm install git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.1.13
+npm install git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.1.14
 ```
 
 Installing from GitHub uses the public `tellus-ai/tellus-audio-sdk` repository. The package
@@ -82,7 +82,7 @@ The required native engine version is pinned in `release-assets.json`:
 
 ```json
 {
-  "sdkVersion": "0.1.13",
+  "sdkVersion": "0.1.14",
   "nativeEngineVersion": "0.2.13",
   "nativeEngineTag": "v0.2.13"
 }
