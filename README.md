@@ -7,6 +7,21 @@ speaker/system-audio capture, denoise model preload, Silero VAD gating, transpor
 runtime capture control. Native binaries are distributed separately through GitHub Releases and are
 installed into `vendor/<platform>/` during package installation.
 
+## Requirements
+
+- Node.js 18 or later.
+- A Tellus-issued GitHub token with access to the private native engine release assets.
+- macOS, Windows x64, or Linux x64 glibc. Linux musl builds are not currently supported.
+- `tar` available on `PATH` during installation.
+
+## Supported Platforms
+
+| Platform | Native asset | Speaker capture backend | Speaker track source |
+| --- | --- | --- | --- |
+| macOS arm64/x64 | `darwin-universal` | CoreAudio TapGuard on macOS 14.2+; ScreenCaptureKit fallback on older supported versions | `system_audio` or `screen_share_audio` |
+| Windows x64 | `win32-x64-msvc` | WASAPI loopback | `system_audio` |
+| Linux x64 glibc | `linux-x64-gnu` | PulseAudio monitor | `system_audio` |
+
 ## Features
 
 - Microphone capture through the native engine.
@@ -28,9 +43,29 @@ installed into `vendor/<platform>/` during package installation.
   validation.
 - Device helper APIs for default input/output and speaker capability checks.
 
+## Contents
+
+- [Install](#install)
+- [Environment Variables](#environment-variables)
+- [Quick Start](#quick-start)
+- [Core Concepts](#core-concepts)
+- [Permission Checks](#permission-checks)
+- [Capture Examples](#capture-examples)
+- [Transport Codec Examples](#transport-codec-examples)
+- [VAD](#vad)
+- [Runtime Controls](#runtime-controls)
+- [Microphone Activity Lookup](#microphone-activity-lookup)
+- [API Reference](#api-reference)
+- [Platform Notes](#platform-notes)
+- [Development](#development)
+- [Troubleshooting](#troubleshooting)
+
 ## Install
 
+Set the private release token before installation:
+
 ```bash
+export TELLUS_AUDIO_ENGINE_TOKEN="..."
 npm install git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.1.13
 ```
 
@@ -48,7 +83,7 @@ The required native engine version is pinned in `release-assets.json`:
 ```json
 {
   "sdkVersion": "0.1.13",
-  "nativeEngineVersion": "0.2.11",
+  "nativeEngineVersion": "0.2.12",
   "nativeEngineTag": "v0.2.12"
 }
 ```
@@ -57,14 +92,8 @@ The installer validates that the manifest matches the installed SDK package vers
 artifact file names include the pinned native engine tag. Download URLs are resolved from the
 private GitHub Release by exact asset file name.
 
-Provide the token explicitly before install:
-
-```bash
-export TELLUS_AUDIO_ENGINE_TOKEN="..."
-npm install git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.1.13
-```
-
-Alternatively, place the token in the installing project's `.env` file:
+If you do not want to export the token in the shell, place it in the installing project's `.env`
+file before running `npm install`:
 
 ```dotenv
 TELLUS_AUDIO_ENGINE_TOKEN=...
@@ -865,10 +894,22 @@ export {
   initLogging,
   listMicDevices,
   isSpeakerCaptureSupported,
+  probeMicCapture,
+  checkMicCapturePermission,
   checkMicCapturePermissionInfo,
+  probeSpeakerCapture,
+  checkSpeakerCapturePermission,
   checkSpeakerCapturePermissionInfo,
   probeSpeakerCapturePermissionInfo,
+  checkSystemAudioCapturePermission,
+  checkSystemAudioCapturePermissionInfo,
   requestSystemAudioCapturePermission,
+  requestInitialMicrophonePermissionOpen,
+  requestMicrophonePermission,
+  requestInitialSystemAudioPermission,
+  requestInitialSystemAudioPermissionOpen,
+  requestSystemAudioPermission,
+  requestScreenCapturePermission,
   getMicActiveApps,
   getDefaultInputDevice,
   getDefaultSpeakerDevice,
@@ -913,11 +954,20 @@ class AudioCapture {
   setVadEnabled(enabled: boolean): void;
   setVadConfig(config: VadConfig): void;
   getVadConfig(): VadConfig;
+  setDenoiseAttenuation(db: number): void;
+  getDenoiseAttenuation(): number;
+  setMicDenoiseAttenuation(db: number): void;
+  getMicDenoiseAttenuation(): number;
+  setSpeakerDenoiseAttenuation(db: number): void;
+  getSpeakerDenoiseAttenuation(): number;
+  setMicOutputGainDb(db: number): void;
+  getMicOutputGainDb(): number;
 }
 ```
 
 Register `onError()` before `start()` so native source, mixer, or thread errors can be surfaced to
-your app.
+your app. Denoise attenuation and microphone output gain setters update runtime DSP behavior without
+changing the operating system input or output volume.
 
 ### Standalone Functions
 
@@ -928,20 +978,30 @@ your app.
 | `initLogging(level?)` | Initializes native tracing, for example `audio_capture=info`. |
 | `listMicDevices()` | Lists available microphone devices. |
 | `isSpeakerCaptureSupported()` | Returns whether speaker/system-audio capture is supported on the current platform. |
+| `probeMicCapture()` | Legacy boolean microphone probe. Prefer `checkMicCapturePermissionInfo()` for new UI and diagnostics. |
+| `checkMicCapturePermission()` | Legacy boolean microphone permission check. |
 | `checkMicCapturePermissionInfo()` | Checks microphone capture availability and returns structured permission/backend details. |
+| `probeSpeakerCapture()` | Legacy boolean speaker probe. Prefer `probeSpeakerCapturePermissionInfo()` for new UI and diagnostics. |
+| `checkSpeakerCapturePermission()` | Legacy boolean speaker permission check. |
 | `checkSpeakerCapturePermissionInfo()` | Passively checks speaker capture availability and returns structured permission/backend details. On macOS 14.2+ CoreAudio `system_audio`, this can return `unknown` without prompting. |
 | `probeSpeakerCapturePermissionInfo()` | Actively probes speaker capture and returns structured permission/backend details. On macOS 14.2+ CoreAudio `system_audio`, this can show the System Audio Recording prompt and verifies capture with a quiet test tone. |
+| `checkSystemAudioCapturePermission()` | Deprecated alias for `checkSpeakerCapturePermission()`. |
+| `checkSystemAudioCapturePermissionInfo()` | Deprecated alias for `checkSpeakerCapturePermissionInfo()`. |
 | `requestSystemAudioCapturePermission()` | Legacy boolean request/probe path for system-audio permission on supported macOS paths. |
+| `requestInitialMicrophonePermissionOpen()` | Opens the microphone permission path and returns `{ opened, error? }`. Use from an explicit user action when prompting is possible. |
+| `requestMicrophonePermission()` | Requests or opens microphone permission and returns `{ opened, error? }`. |
+| `requestInitialSystemAudioPermission()` | Legacy boolean initial system-audio request. |
+| `requestInitialSystemAudioPermissionOpen()` | Opens the initial system-audio permission path and returns `{ opened, error? }`. |
+| `requestSystemAudioPermission()` | Requests or opens system-audio permission and returns `{ opened, error? }`. |
+| `requestScreenCapturePermission()` | Requests or opens Screen Recording permission for ScreenCaptureKit fallback and returns `{ opened, error? }`. |
 | `getMicActiveApps()` | Returns apps currently using the microphone. |
 | `getDefaultInputDevice()` | Returns the current OS default input device name, or `null`. |
 | `getDefaultSpeakerDevice()` | Returns the current OS default speaker device name, or `null`. |
 | `isBuiltInSpeaker()` | Returns whether the current output device is a built-in speaker rather than headphones/earbuds. |
 
-This SDK version does not expose a standalone `requestScreenCapturePermission()` wrapper. For
-speaker capture, use `checkSpeakerCapturePermissionInfo()` to discover whether the active backend
-uses `permissionScope: 'screen_recording'`, then run `probeSpeakerCapturePermissionInfo()` or the
-legacy `requestSystemAudioCapturePermission()` from an explicit user action. Re-check permission
-state after the request/probe instead of reading final state from the request return value.
+For speaker capture, use `checkSpeakerCapturePermissionInfo()` to discover which backend and
+permission scope are active. Run request/probe APIs only from explicit user actions, then re-check
+permission state instead of treating the request return value as a durable cache.
 
 ### `AudioCaptureConfig`
 
@@ -950,8 +1010,11 @@ interface AudioCaptureConfig {
   micEnabled?: boolean;
   speakerEnabled?: boolean;
   enableRawAudio?: boolean;
-  vadEnabled?: boolean;
   denoiseEnabled?: boolean;
+  vadEnabled?: boolean;
+  micDeviceName?: string;
+  microphoneLevelMode?: 'agc2' | 'microphone_level_max' | 'none';
+  micOutputGainDb?: number;
   processing?: AudioProcessingConfig;
   transport?: AudioTransportConfig;
 }
@@ -974,6 +1037,9 @@ interface AudioTransportConfig {
 | `enableRawAudio` | `boolean` | `false` | Include synchronized PCM16 raw frames in `chunk.rawAudio`. |
 | `denoiseEnabled` | `boolean` | `true` | Enable FastEnhancer denoise for captured audio. |
 | `vadEnabled` | `boolean` | `false` | Enable the native Silero VAD gate and include VAD in model preload. |
+| `micDeviceName` | `string` | `undefined` | Optional microphone device name. Omit to use the OS default input device. |
+| `microphoneLevelMode` | `'agc2' \| 'microphone_level_max' \| 'none'` | Native default | Microphone level policy used by the native engine. |
+| `micOutputGainDb` | `number` | Native default | SDK-internal microphone output gain in dB. This does not change the OS input volume. |
 | `processing.sampleRate` | `number` | `16000` | Processing, mixer, and transport sample rate. |
 | `processing.chunkDurationMs` | `number` | `20` | Final transport chunk duration in milliseconds. |
 | `transport.codec` | `'opus' \| 'pcm_s16le' \| 'pcm_f32le'` | `'opus'` | Final transport payload codec/format. |
@@ -1130,6 +1196,8 @@ interface CaptureStatus {
   vadProbability: number;
   vadRms: number;
   vadIsSpeech: boolean;
+  denoiseAttenuationDb: number;
+  micOutputGainDb: number;
   vadPositiveThreshold: number;
   vadNegativeThreshold: number;
   vadRmsThreshold: number;
