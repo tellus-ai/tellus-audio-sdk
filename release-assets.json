@@ -1,6 +1,6 @@
 {
   "sdkVersion": "0.1.13",
-  "nativeEngineVersion": "0.2.11",
+  "nativeEngineVersion": "0.2.12",
   "nativeEngineTag": "v0.2.12",
   "assets": {
     "darwin-arm64": {
