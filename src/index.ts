@@ -30,12 +30,6 @@ export interface AudioCaptureConfig {
   denoiseEnabled?: boolean;
   /** Enables the native Silero VAD gate. Native default is false. */
   vadEnabled?: boolean;
-  /** Optional microphone device name. */
-  micDeviceName?: string;
-  /** Microphone level policy. */
-  microphoneLevelMode?: 'agc2' | 'microphone_level_max' | 'none';
-  /** SDK-internal microphone output gain in dB. Does not change the OS input volume. */
-  micOutputGainDb?: number;
   /** Processing/mixer settings. */
   processing?: AudioProcessingConfig;
   /** Final transport payload settings. Native default is { codec: "opus" }. */
@@ -127,10 +121,6 @@ export interface CaptureStatus {
   vadProbability: number;
   vadRms: number;
   vadIsSpeech: boolean;
-  /** Current denoise attenuation limit in dB. */
-  denoiseAttenuationDb: number;
-  /** Current SDK-internal microphone output gain in dB. */
-  micOutputGainDb: number;
   vadPositiveThreshold: number;
   vadNegativeThreshold: number;
   vadRmsThreshold: number;
@@ -191,6 +181,11 @@ export interface AudioEngineInitStatus {
   dsp: AudioEngineDspInitStatus;
 }
 
+export interface AudioEngineModelsPreloadStatus {
+  denoise: AudioEngineDenoiseInitStatus;
+  vad: AudioEngineVadInitStatus;
+}
+
 export interface AudioEngineInitOptions {
   preloadModels?: boolean;
 }
@@ -208,8 +203,6 @@ export type CapturePermissionStatus =
   | 'granted'
   | 'denied'
   | 'restricted'
-  | 'unsupported'
-  | 'stale'
   | 'not-determined'
   | 'unknown';
 
@@ -237,6 +230,15 @@ export interface CapturePermissionCheckResult {
   capabilityResult?: CapturePermissionRawResult;
 }
 
+export interface PermissionOpenResult {
+  opened: boolean;
+  error?: string;
+}
+
+export interface MicrophonePermissionOpenResult extends PermissionOpenResult {}
+export interface SystemAudioPermissionOpenResult extends PermissionOpenResult {}
+export interface ScreenCapturePermissionOpenResult extends PermissionOpenResult {}
+
 export type ErrorCallback = (err: Error | null, arg: CaptureError) => unknown;
 export type AudioChunkCallback = (err: Error | null, arg: AudioChunk) => unknown;
 
@@ -245,6 +247,7 @@ const { nativeBinding } = prepareEngineRuntime();
 const {
   AudioCapture: NativeAudioCapture,
   listMicDevices: nativeListMicDevices,
+  listSpeakerDevices: nativeListSpeakerDevices,
   isSpeakerCaptureSupported: nativeIsSpeakerCaptureSupported,
   probeMicCapture: nativeProbeMicCapture,
   checkMicCapturePermission: nativeCheckMicCapturePermission,
@@ -254,6 +257,12 @@ const {
   checkSpeakerCapturePermissionInfo: nativeCheckSpeakerCapturePermissionInfo,
   probeSpeakerCapturePermissionInfo: nativeProbeSpeakerCapturePermissionInfo,
   requestSystemAudioCapturePermission: nativeRequestSystemAudioCapturePermission,
+  requestInitialMicrophonePermissionOpen: nativeRequestInitialMicrophonePermissionOpen,
+  requestMicrophonePermission: nativeRequestMicrophonePermission,
+  requestInitialSystemAudioPermission: nativeRequestInitialSystemAudioPermission,
+  requestInitialSystemAudioPermissionOpen: nativeRequestInitialSystemAudioPermissionOpen,
+  requestSystemAudioPermission: nativeRequestSystemAudioPermission,
+  requestScreenCapturePermission: nativeRequestScreenCapturePermission,
   getMicActiveApps: nativeGetMicActiveApps,
   getDefaultInputDevice: nativeGetDefaultInputDevice,
   getDefaultSpeakerDevice: nativeGetDefaultSpeakerDevice,
@@ -297,8 +306,39 @@ function normalizeInitStatus(status: AudioEngineInitStatus): AudioEngineInitStat
   };
 }
 
+function normalizeModelsPreloadStatus(status: AudioEngineModelsPreloadStatus): AudioEngineModelsPreloadStatus {
+  const record = status as unknown as Record<string, unknown>;
+  return {
+    denoise: (isRecord(record.denoise) ? record.denoise : {}) as unknown as AudioEngineDenoiseInitStatus,
+    vad: normalizeVadStatus(record),
+  };
+}
+
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function normalizePermissionOpenResult(value: unknown): PermissionOpenResult {
+  if (isRecord(value) && typeof value.opened === 'boolean') {
+    const result: PermissionOpenResult = { opened: value.opened };
+    if (typeof value.error === 'string') {
+      result.error = value.error;
+    }
+    return result;
+  }
+
+  return { opened: Boolean(value) };
+}
+
+function callPermissionOpen(request: () => unknown): PermissionOpenResult {
+  try {
+    return normalizePermissionOpenResult(request());
+  } catch (error) {
+    return {
+      opened: false,
+      error: errorText(error),
+    };
+  }
 }
 
 function darwinMajorVersion(): number {
@@ -350,7 +390,7 @@ function permissionStatus(granted: boolean, backend: CapturePermissionBackend): 
   if (granted) {
     return 'granted';
   }
-  return backend === 'unsupported' ? 'unsupported' : 'denied';
+  return backend === 'unsupported' ? 'unknown' : 'denied';
 }
 
 function normalizePermissionResult(
@@ -409,9 +449,9 @@ function permissionFailureResult(
   const message = errorText(error);
   const lower = message.toLowerCase();
   const failedStatus: CapturePermissionStatus = lower.includes('stale')
-    ? 'stale'
+    ? 'unknown'
     : lower.includes('unsupported') || lower.includes('not supported')
-      ? 'unsupported'
+      ? 'unknown'
       : lower.includes('restricted')
         ? 'restricted'
         : lower.includes('not determined') || lower.includes('not-determined')
@@ -554,38 +594,6 @@ export class AudioCapture {
   getVadConfig(): VADConfig {
     return this.#native.getVadConfig();
   }
-
-  setDenoiseAttenuation(db: number): void {
-    this.#native.setDenoiseAttenuation(db);
-  }
-
-  getDenoiseAttenuation(): number {
-    return this.#native.getDenoiseAttenuation();
-  }
-
-  setMicDenoiseAttenuation(db: number): void {
-    this.#native.setMicDenoiseAttenuation(db);
-  }
-
-  getMicDenoiseAttenuation(): number {
-    return this.#native.getMicDenoiseAttenuation();
-  }
-
-  setSpeakerDenoiseAttenuation(db: number): void {
-    this.#native.setSpeakerDenoiseAttenuation(db);
-  }
-
-  getSpeakerDenoiseAttenuation(): number {
-    return this.#native.getSpeakerDenoiseAttenuation();
-  }
-
-  setMicOutputGainDb(db: number): void {
-    this.#native.setMicOutputGainDb(db);
-  }
-
-  getMicOutputGainDb(): number {
-    return this.#native.getMicOutputGainDb();
-  }
 }
 
 export class AudioEngine {
@@ -615,6 +623,8 @@ export class AudioEngine {
 }
 
 export const listMicDevices: () => string[] = nativeListMicDevices;
+export const listSpeakerDevices: () => string[] = () =>
+  typeof nativeListSpeakerDevices === 'function' ? nativeListSpeakerDevices() : [];
 export const isSpeakerCaptureSupported: () => boolean = nativeIsSpeakerCaptureSupported;
 export const probeMicCapture: () => boolean = () =>
   typeof nativeProbeMicCapture === 'function' ? nativeProbeMicCapture() : checkMicCapturePermissionInfo().granted;
@@ -637,6 +647,20 @@ export const checkSystemAudioCapturePermissionInfo: () => CapturePermissionCheck
   checkSpeakerCapturePermissionInfo;
 export const requestSystemAudioCapturePermission: () => boolean =
   nativeRequestSystemAudioCapturePermission;
+export const requestInitialMicrophonePermissionOpen: () => MicrophonePermissionOpenResult = () =>
+  callPermissionOpen(nativeRequestInitialMicrophonePermissionOpen);
+export const requestMicrophonePermission: () => MicrophonePermissionOpenResult = () =>
+  callPermissionOpen(nativeRequestMicrophonePermission);
+export const requestInitialSystemAudioPermission: () => boolean = () =>
+  typeof nativeRequestInitialSystemAudioPermission === 'function'
+    ? Boolean(nativeRequestInitialSystemAudioPermission())
+    : requestInitialSystemAudioPermissionOpen().opened;
+export const requestInitialSystemAudioPermissionOpen: () => SystemAudioPermissionOpenResult = () =>
+  callPermissionOpen(nativeRequestInitialSystemAudioPermissionOpen);
+export const requestSystemAudioPermission: () => SystemAudioPermissionOpenResult = () =>
+  callPermissionOpen(nativeRequestSystemAudioPermission);
+export const requestScreenCapturePermission: () => ScreenCapturePermissionOpenResult = () =>
+  callPermissionOpen(nativeRequestScreenCapturePermission);
 export const getMicActiveApps: () => Promise<MicActiveApp[]> = nativeGetMicActiveApps;
 export const getDefaultInputDevice: () => string | null = nativeGetDefaultInputDevice;
 export const getDefaultSpeakerDevice: () => string | null = nativeGetDefaultSpeakerDevice;
@@ -645,11 +669,15 @@ export const init: (
   config?: AudioCaptureConfig | null,
   options?: AudioEngineInitOptions | null,
 ) => AudioEngineInitStatus = (config, options) => normalizeInitStatus(nativeInit(config, options));
-export const preloadModels: (config?: AudioCaptureConfig | null) => AudioEngineInitStatus = (config) => {
+export const preloadModels: (config?: AudioCaptureConfig | null) => AudioEngineModelsPreloadStatus = (config) => {
   const nativePreloadModels = nativeBinding.preloadModels;
   if (typeof nativePreloadModels === 'function') {
-    return normalizeInitStatus(nativePreloadModels(config));
+    return normalizeModelsPreloadStatus(nativePreloadModels(config));
   }
-  return init(config, { preloadModels: true });
+  const status = init(config, { preloadModels: true });
+  return {
+    denoise: status.denoise,
+    vad: status.vad,
+  };
 };
 export const initLogging: (level?: string | null) => void = nativeInitLogging;

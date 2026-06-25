@@ -122,6 +122,7 @@ const {
   checkSpeakerCapturePermissionInfo,
   initLogging,
   isSpeakerCaptureSupported,
+  listSpeakerDevices,
   listMicDevices,
 } = require('@tellus-ai/audio-sdk');
 
@@ -145,6 +146,7 @@ async function main() {
   initLogging('audio_capture=info');
 
   console.log('Microphones:', listMicDevices());
+  console.log('Speakers:', listSpeakerDevices());
   console.log('Speaker supported:', isSpeakerCaptureSupported());
 
   const micPermission = checkMicCapturePermissionInfo();
@@ -424,7 +426,7 @@ type CapturePermissionCheckResult = {
     | 'wasapi_loopback'
     | 'pulseaudio_monitor'
     | 'unsupported';
-  status: 'granted' | 'denied' | 'restricted' | 'unsupported' | 'stale' | 'not-determined' | 'unknown';
+  status: 'granted' | 'denied' | 'restricted' | 'not-determined' | 'unknown';
   message: string;
   error?: string;
   rawStatus?: string;
@@ -475,10 +477,8 @@ stream-open `rawResult`.
 | `granted` | Permission/backend checks succeeded. | Start capture. |
 | `denied` | The OS denied the requested permission, or CoreAudio TapGuard could not capture the probe tone. | Ask the user to enable permission in system settings. |
 | `restricted` | The OS, policy, platform, or app declaration blocks the requested permission. | Show a blocked-by-system message and direct the user/admin to OS policy/settings. |
-| `unsupported` | The platform, OS version, or runtime does not support the requested capture path. | Disable that feature or show an unsupported-platform message. |
-| `stale` | Permission state is inconsistent or outdated, most commonly after macOS Screen Recording changes. | Ask the user to re-grant permission and restart the app. |
 | `not-determined` | The permission has not been requested yet, or the OS reports a prompt-required state. | Ask from an explicit user action before calling a request API. |
-| `unknown` | The check failed in a way that cannot be safely classified. | Show `message`, inspect `error`, and retry or collect diagnostics. |
+| `unknown` | The check failed in a way that cannot be safely classified, or the path is unsupported/stale without a more specific public status. | Show `message`, inspect `error`, and retry or collect diagnostics. |
 
 Example results:
 
@@ -893,6 +893,7 @@ export {
   preloadModels,
   initLogging,
   listMicDevices,
+  listSpeakerDevices,
   isSpeakerCaptureSupported,
   probeMicCapture,
   checkMicCapturePermission,
@@ -954,20 +955,11 @@ class AudioCapture {
   setVadEnabled(enabled: boolean): void;
   setVadConfig(config: VadConfig): void;
   getVadConfig(): VadConfig;
-  setDenoiseAttenuation(db: number): void;
-  getDenoiseAttenuation(): number;
-  setMicDenoiseAttenuation(db: number): void;
-  getMicDenoiseAttenuation(): number;
-  setSpeakerDenoiseAttenuation(db: number): void;
-  getSpeakerDenoiseAttenuation(): number;
-  setMicOutputGainDb(db: number): void;
-  getMicOutputGainDb(): number;
 }
 ```
 
 Register `onError()` before `start()` so native source, mixer, or thread errors can be surfaced to
-your app. Denoise attenuation and microphone output gain setters update runtime DSP behavior without
-changing the operating system input or output volume.
+your app.
 
 ### Standalone Functions
 
@@ -977,6 +969,7 @@ changing the operating system input or output volume.
 | `preloadModels(config?)` | Preloads enabled FastEnhancer denoise and Silero VAD models after core init. |
 | `initLogging(level?)` | Initializes native tracing, for example `audio_capture=info`. |
 | `listMicDevices()` | Lists available microphone devices. |
+| `listSpeakerDevices()` | Lists available speaker/output devices. |
 | `isSpeakerCaptureSupported()` | Returns whether speaker/system-audio capture is supported on the current platform. |
 | `probeMicCapture()` | Legacy boolean microphone probe. Prefer `checkMicCapturePermissionInfo()` for new UI and diagnostics. |
 | `checkMicCapturePermission()` | Legacy boolean microphone permission check. |
@@ -1012,9 +1005,6 @@ interface AudioCaptureConfig {
   enableRawAudio?: boolean;
   denoiseEnabled?: boolean;
   vadEnabled?: boolean;
-  micDeviceName?: string;
-  microphoneLevelMode?: 'agc2' | 'microphone_level_max' | 'none';
-  micOutputGainDb?: number;
   processing?: AudioProcessingConfig;
   transport?: AudioTransportConfig;
 }
@@ -1037,9 +1027,6 @@ interface AudioTransportConfig {
 | `enableRawAudio` | `boolean` | `false` | Include synchronized PCM16 raw frames in `chunk.rawAudio`. |
 | `denoiseEnabled` | `boolean` | `true` | Enable FastEnhancer denoise for captured audio. |
 | `vadEnabled` | `boolean` | `false` | Enable the native Silero VAD gate and include VAD in model preload. |
-| `micDeviceName` | `string` | `undefined` | Optional microphone device name. Omit to use the OS default input device. |
-| `microphoneLevelMode` | `'agc2' \| 'microphone_level_max' \| 'none'` | Native default | Microphone level policy used by the native engine. |
-| `micOutputGainDb` | `number` | Native default | SDK-internal microphone output gain in dB. This does not change the OS input volume. |
 | `processing.sampleRate` | `number` | `16000` | Processing, mixer, and transport sample rate. |
 | `processing.chunkDurationMs` | `number` | `20` | Final transport chunk duration in milliseconds. |
 | `transport.codec` | `'opus' \| 'pcm_s16le' \| 'pcm_f32le'` | `'opus'` | Final transport payload codec/format. |
@@ -1063,6 +1050,11 @@ interface AudioEngineInitStatus {
 ```
 
 ```ts
+interface AudioEngineModelsPreloadStatus {
+  denoise: AudioEngineDenoiseInitStatus;
+  vad: AudioEngineVadInitStatus;
+}
+
 interface AudioEngineDenoiseInitStatus {
   enabled: boolean;
   active: boolean;
@@ -1196,8 +1188,6 @@ interface CaptureStatus {
   vadProbability: number;
   vadRms: number;
   vadIsSpeech: boolean;
-  denoiseAttenuationDb: number;
-  micOutputGainDb: number;
   vadPositiveThreshold: number;
   vadNegativeThreshold: number;
   vadRmsThreshold: number;
@@ -1309,8 +1299,9 @@ if (speaker.permissionScope === 'screen_recording' && !speaker.granted) {
 Do not assume the request/probe return value is the final Screen Recording state. macOS can require
 the app to be restarted or the permission to be re-checked after System Settings changes.
 
-If `status` is `stale`, ask the user to re-grant Screen Recording permission and restart the app.
-If `status` is `denied`, ask the user to enable the relevant permission in System Settings.
+If `status` is `unknown` and the message mentions stale Screen Recording state, ask the user to
+re-grant Screen Recording permission and restart the app. If `status` is `denied`, ask the user to
+enable the relevant permission in System Settings.
 
 For `electron-builder`, include both microphone and system-audio purpose strings when the app can
 capture both inputs:
