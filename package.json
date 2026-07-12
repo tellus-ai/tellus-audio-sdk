@@ -36,6 +36,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "test": "node --test scripts/permission-api-contract.test.js",
     "check:binary": "node dist/installer/check-binary-cli.js",
     "check:js": "npm run build && find dist -name '*.js' -print0 | xargs -0 -n1 node --check",
     "check:package": "npm run build && node dist/installer/check-package-contents.js",
