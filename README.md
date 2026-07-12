@@ -194,6 +194,8 @@ async function main() {
       rms: chunk.rms,
       vadRms: chunk.vadRms ?? null,
       gateEvent: chunk.gateEvent ?? null,
+      sequence: chunk.sequence ?? null,
+      discontinuity: chunk.discontinuity ?? null,
       rawMicBytes: chunk.rawAudio?.mic?.data.length ?? null,
       rawSpeakerBytes: chunk.rawAudio?.speaker?.data.length ?? null,
       rawMixedBytes: chunk.rawAudio?.mixed?.data.length ?? null,
@@ -250,6 +252,18 @@ current OS defaults for the relevant source path. Use `getDefaultInputDevice()` 
 
 For example, a 48kHz microphone can return `rawAudio.mic.sampleRate === 48000` even when the final
 transport payload uses `processing.sampleRate: 16000`.
+
+### Slow consumers and discontinuities
+
+The native engine keeps capture running when JavaScript temporarily falls behind. Its delivery
+queue is limited to 25 chunks and 500ms; if that queue fills, the oldest real-time chunks are
+removed so memory stays bounded. The next delivered chunk reports the missing processing-sample
+range in `chunk.discontinuity`. The range is `[fromSample, toSample)`, so
+`droppedSamples === toSample - fromSample`.
+
+Consumers should keep local raw archival separate from real-time transport and forward a
+discontinuity before the first audio frame after the gap. A `consumer_lag` discontinuity is a
+degraded real-time delivery signal, not a request to stop capture.
 
 ## Engine Initialization and Model Preload
 

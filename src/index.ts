@@ -84,6 +84,18 @@ export interface AudioData {
   mixed?: Buffer;
 }
 
+export type AudioDiscontinuityReason = 'consumer_lag' | 'native_overrun' | 'device_gap';
+
+export interface AudioDiscontinuity {
+  reason: AudioDiscontinuityReason;
+  droppedChunks: number;
+  droppedSamples: number;
+  /** First missing processing sample, inclusive. */
+  fromSample: number;
+  /** End of the missing processing sample range, exclusive. */
+  toSample: number;
+}
+
 export interface AudioChunk {
   /** Final transport payloads keyed by source. */
   data: AudioData;
@@ -105,6 +117,10 @@ export interface AudioChunk {
   vadRms?: number;
   /** Present only when enableRawAudio is true. */
   rawAudio?: RawAudioBundle;
+  /** Output order within the current capture session, starting at zero. */
+  sequence?: number;
+  /** Missing sample range immediately before this delivered chunk. */
+  discontinuity?: AudioDiscontinuity;
 }
 
 export interface CaptureStatus {
@@ -126,6 +142,17 @@ export interface CaptureStatus {
   vadRmsThreshold: number;
   vadSilenceDurationMs: number;
   vadPreSpeechBufferMs: number;
+  deliveryQueueCapacityChunks: number;
+  deliveryQueueSizeChunks: number;
+  deliveryQueueHighWatermarkChunks: number;
+  deliveryDroppedChunks: number;
+  deliveryDroppedSamples: number;
+  deliveryNotificationPending: boolean;
+  rawQueueCapacityMs: number;
+  rawMicQueueSamples: number;
+  rawSpeakerQueueSamples: number;
+  rawMicDroppedSamples: number;
+  rawSpeakerDroppedSamples: number;
 }
 
 export interface CaptureError {
@@ -386,7 +413,10 @@ function speakerPermissionDetails(): {
   };
 }
 
-function permissionStatus(granted: boolean, backend: CapturePermissionBackend): CapturePermissionStatus {
+function permissionStatus(
+  granted: boolean,
+  backend: CapturePermissionBackend,
+): CapturePermissionStatus {
   if (granted) {
     return 'granted';
   }
@@ -627,15 +657,19 @@ export const listSpeakerDevices: () => string[] = () =>
   typeof nativeListSpeakerDevices === 'function' ? nativeListSpeakerDevices() : [];
 export const isSpeakerCaptureSupported: () => boolean = nativeIsSpeakerCaptureSupported;
 export const probeMicCapture: () => boolean = () =>
-  typeof nativeProbeMicCapture === 'function' ? nativeProbeMicCapture() : checkMicCapturePermissionInfo().granted;
-export const checkMicCapturePermission: () => boolean = () => checkMicCapturePermissionInfo().granted;
+  typeof nativeProbeMicCapture === 'function'
+    ? nativeProbeMicCapture()
+    : checkMicCapturePermissionInfo().granted;
+export const checkMicCapturePermission: () => boolean = () =>
+  checkMicCapturePermissionInfo().granted;
 export const checkMicCapturePermissionInfo: () => CapturePermissionCheckResult = () =>
   callPermissionCheck('microphone', callNativeMicPermissionCheck);
 export const probeSpeakerCapture: () => boolean = () =>
   typeof nativeProbeSpeakerCapture === 'function'
     ? nativeProbeSpeakerCapture()
     : probeSpeakerCapturePermissionInfo().granted;
-export const checkSpeakerCapturePermission: () => boolean = () => checkSpeakerCapturePermissionInfo().granted;
+export const checkSpeakerCapturePermission: () => boolean = () =>
+  checkSpeakerCapturePermissionInfo().granted;
 export const checkSpeakerCapturePermissionInfo: () => CapturePermissionCheckResult = () =>
   callPermissionCheck('speaker', callNativeSpeakerPermissionCheck);
 export const probeSpeakerCapturePermissionInfo: () => CapturePermissionCheckResult = () =>
@@ -651,12 +685,12 @@ export const requestInitialMicrophonePermissionOpen: () => MicrophonePermissionO
   callPermissionOpen(nativeRequestInitialMicrophonePermissionOpen);
 export const requestMicrophonePermission: () => MicrophonePermissionOpenResult = () =>
   callPermissionOpen(nativeRequestMicrophonePermission);
+export const requestInitialSystemAudioPermissionOpen: () => SystemAudioPermissionOpenResult = () =>
+  callPermissionOpen(nativeRequestInitialSystemAudioPermissionOpen);
 export const requestInitialSystemAudioPermission: () => boolean = () =>
   typeof nativeRequestInitialSystemAudioPermission === 'function'
     ? Boolean(nativeRequestInitialSystemAudioPermission())
     : requestInitialSystemAudioPermissionOpen().opened;
-export const requestInitialSystemAudioPermissionOpen: () => SystemAudioPermissionOpenResult = () =>
-  callPermissionOpen(nativeRequestInitialSystemAudioPermissionOpen);
 export const requestSystemAudioPermission: () => SystemAudioPermissionOpenResult = () =>
   callPermissionOpen(nativeRequestSystemAudioPermission);
 export const requestScreenCapturePermission: () => ScreenCapturePermissionOpenResult = () =>
