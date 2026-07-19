@@ -1,6 +1,6 @@
 {
   "name": "@tellus-ai/audio-sdk",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "description": "Tellus Audio SDK wrapper for Electron and Node.js",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -35,7 +35,7 @@
     "release-assets.json"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "./scripts/run-with-build-storage.sh tsc -p tsconfig.json",
     "test": "node --test scripts/permission-api-contract.test.js",
     "check:binary": "node dist/installer/check-binary-cli.js",
     "check:js": "npm run build && find dist -name '*.js' -print0 | xargs -0 -n1 node --check",
