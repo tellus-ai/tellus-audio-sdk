@@ -35,7 +35,7 @@
     "release-assets.json"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "./scripts/run-with-build-storage.sh tsc -p tsconfig.json",
     "test": "node --test scripts/permission-api-contract.test.js",
     "check:binary": "node dist/installer/check-binary-cli.js",
     "check:js": "npm run build && find dist -name '*.js' -print0 | xargs -0 -n1 node --check",
