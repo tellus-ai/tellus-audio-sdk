@@ -251,6 +251,12 @@ export interface CapturePermissionCheckResult {
   status: CapturePermissionStatus;
   message: string;
   error?: string;
+  reason?: string;
+  probeStage?: string;
+  elapsedMs?: number;
+  captureHealth?: 'ready' | 'silent' | 'failed' | 'not-run' | null;
+  captureReady?: boolean;
+  captureError?: string;
   rawStatus?: string;
   rawResult?: CapturePermissionRawResult;
   capabilityStatus?: string;
@@ -279,14 +285,10 @@ const {
   probeMicCapture: nativeProbeMicCapture,
   checkMicCapturePermission: nativeCheckMicCapturePermission,
   checkMicCapturePermissionInfo: nativeCheckMicCapturePermissionInfo,
-  probeSpeakerCapture: nativeProbeSpeakerCapture,
-  checkSpeakerCapturePermission: nativeCheckSpeakerCapturePermission,
   checkSpeakerCapturePermissionInfo: nativeCheckSpeakerCapturePermissionInfo,
   probeSpeakerCapturePermissionInfo: nativeProbeSpeakerCapturePermissionInfo,
-  requestSystemAudioCapturePermission: nativeRequestSystemAudioCapturePermission,
   requestInitialMicrophonePermissionOpen: nativeRequestInitialMicrophonePermissionOpen,
   requestMicrophonePermission: nativeRequestMicrophonePermission,
-  requestInitialSystemAudioPermission: nativeRequestInitialSystemAudioPermission,
   requestInitialSystemAudioPermissionOpen: nativeRequestInitialSystemAudioPermissionOpen,
   requestSystemAudioPermission: nativeRequestSystemAudioPermission,
   requestScreenCapturePermission: nativeRequestScreenCapturePermission,
@@ -423,6 +425,31 @@ function permissionStatus(
   return backend === 'unsupported' ? 'unknown' : 'denied';
 }
 
+function speakerPermissionUnknownResult(
+  message: string,
+  reason: string,
+  api: string,
+): CapturePermissionCheckResult {
+  const details = speakerPermissionDetails();
+  return {
+    granted: false,
+    request: 'speaker',
+    permissionScope: details.permissionScope,
+    trackSource: null,
+    backend: details.backend,
+    status: 'unknown',
+    message,
+    reason,
+    captureHealth: 'not-run',
+    captureReady: false,
+    rawStatus: 'Unavailable',
+    rawResult: {
+      api,
+      value: null,
+    },
+  };
+}
+
 function normalizePermissionResult(
   request: CapturePermissionRequest,
   value: unknown,
@@ -452,24 +479,11 @@ function normalizePermissionResult(
     };
   }
 
-  const details = speakerPermissionDetails();
-  const status = permissionStatus(granted, details.backend);
-  return {
-    granted,
-    request,
-    permissionScope: details.permissionScope,
-    trackSource: granted ? details.trackSource : null,
-    backend: details.backend,
-    status,
-    message: granted
-      ? `Speaker capture permission is granted and the ${details.trackSource ?? 'speaker'} capture stream can be opened.`
-      : 'Speaker capture permission is denied, unsupported, or the speaker capture stream cannot be opened.',
-    rawStatus: granted ? 'BooleanTrue' : 'BooleanFalse',
-    rawResult: {
-      api: 'legacy.boolean_permission_check',
-      value: granted,
-    },
-  };
+  return speakerPermissionUnknownResult(
+    'The native speaker permission API returned an invalid structured result.',
+    'invalid-structured-permission-result',
+    'sdk.speaker.permission_check',
+  );
 }
 
 function permissionFailureResult(
@@ -486,7 +500,7 @@ function permissionFailureResult(
         ? 'restricted'
         : lower.includes('not determined') || lower.includes('not-determined')
           ? 'not-determined'
-          : lower.includes('denied') || lower.includes('permission')
+          : lower.includes('denied')
             ? 'denied'
             : 'unknown';
 
@@ -551,23 +565,22 @@ function callNativeSpeakerPermissionCheck(): unknown {
   if (typeof nativeCheckSpeakerCapturePermissionInfo === 'function') {
     return nativeCheckSpeakerCapturePermissionInfo();
   }
-  if (typeof nativeCheckSpeakerCapturePermission === 'function') {
-    return nativeCheckSpeakerCapturePermission();
-  }
-  throw new Error('Native speaker permission check is not available.');
+  return speakerPermissionUnknownResult(
+    'The native structured speaker permission check API is not available.',
+    'structured-permission-api-unavailable',
+    'sdk.speaker.permission_check',
+  );
 }
 
 function callNativeSpeakerPermissionProbe(): unknown {
   if (typeof nativeProbeSpeakerCapturePermissionInfo === 'function') {
     return nativeProbeSpeakerCapturePermissionInfo();
   }
-  if (typeof nativeRequestSystemAudioCapturePermission === 'function') {
-    return nativeRequestSystemAudioCapturePermission();
-  }
-  if (typeof nativeProbeSpeakerCapture === 'function') {
-    return nativeProbeSpeakerCapture();
-  }
-  throw new Error('Native speaker permission probe is not available.');
+  return speakerPermissionUnknownResult(
+    'The native structured speaker permission probe API is not available.',
+    'structured-permission-api-unavailable',
+    'sdk.speaker.permission_probe',
+  );
 }
 
 export class AudioCapture {
@@ -664,33 +677,16 @@ export const checkMicCapturePermission: () => boolean = () =>
   checkMicCapturePermissionInfo().granted;
 export const checkMicCapturePermissionInfo: () => CapturePermissionCheckResult = () =>
   callPermissionCheck('microphone', callNativeMicPermissionCheck);
-export const probeSpeakerCapture: () => boolean = () =>
-  typeof nativeProbeSpeakerCapture === 'function'
-    ? nativeProbeSpeakerCapture()
-    : probeSpeakerCapturePermissionInfo().granted;
-export const checkSpeakerCapturePermission: () => boolean = () =>
-  checkSpeakerCapturePermissionInfo().granted;
 export const checkSpeakerCapturePermissionInfo: () => CapturePermissionCheckResult = () =>
   callPermissionCheck('speaker', callNativeSpeakerPermissionCheck);
 export const probeSpeakerCapturePermissionInfo: () => CapturePermissionCheckResult = () =>
   callPermissionCheck('speaker', callNativeSpeakerPermissionProbe);
-/** @deprecated Use checkSpeakerCapturePermission(). */
-export const checkSystemAudioCapturePermission: () => boolean = checkSpeakerCapturePermission;
-/** @deprecated Use checkSpeakerCapturePermissionInfo(). */
-export const checkSystemAudioCapturePermissionInfo: () => CapturePermissionCheckResult =
-  checkSpeakerCapturePermissionInfo;
-export const requestSystemAudioCapturePermission: () => boolean =
-  nativeRequestSystemAudioCapturePermission;
 export const requestInitialMicrophonePermissionOpen: () => MicrophonePermissionOpenResult = () =>
   callPermissionOpen(nativeRequestInitialMicrophonePermissionOpen);
 export const requestMicrophonePermission: () => MicrophonePermissionOpenResult = () =>
   callPermissionOpen(nativeRequestMicrophonePermission);
 export const requestInitialSystemAudioPermissionOpen: () => SystemAudioPermissionOpenResult = () =>
   callPermissionOpen(nativeRequestInitialSystemAudioPermissionOpen);
-export const requestInitialSystemAudioPermission: () => boolean = () =>
-  typeof nativeRequestInitialSystemAudioPermission === 'function'
-    ? Boolean(nativeRequestInitialSystemAudioPermission())
-    : requestInitialSystemAudioPermissionOpen().opened;
 export const requestSystemAudioPermission: () => SystemAudioPermissionOpenResult = () =>
   callPermissionOpen(nativeRequestSystemAudioPermission);
 export const requestScreenCapturePermission: () => ScreenCapturePermissionOpenResult = () =>

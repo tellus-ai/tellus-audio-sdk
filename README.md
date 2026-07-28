@@ -386,14 +386,16 @@ These checks verify the active native permission scope for the selected backend:
 - macOS ScreenCaptureKit fallback checks use Apple's public Screen Recording preflight API.
 - macOS 14.2+ CoreAudio TapGuard `system_audio` passive checks return `unknown` when the permission
   cannot be known without opening a tap.
-- macOS 14.2+ CoreAudio TapGuard `system_audio` active probes play a short, quiet probe tone and
-  verify that the tone is captured through the tap.
+- macOS 14.2+ CoreAudio TapGuard `system_audio` active probes open an IOProc and verify Tap
+  description access to determine permission. They then play a short, quiet probe tone as a
+  separate capture-health check.
 - Windows and Linux speaker checks verify that the loopback/monitor stream can be opened.
 
 Use `checkSpeakerCapturePermissionInfo()` at app startup or on passive status screens. Use
 `probeSpeakerCapturePermissionInfo()` from an explicit user action such as a permission request
-button. For CoreAudio TapGuard active probes, `granted` means the SDK captured its own probe tone
-through the system-audio path. It does not require the user or another app to be playing audio.
+button. For CoreAudio TapGuard active probes, `granted` means the CoreAudio permission gate
+succeeded. Check `captureHealth` and `captureReady` separately to see whether the test tone was
+captured. The probe does not require the user or another app to be playing audio.
 
 Permission request/probe APIs should not be treated as a durable permission-state cache. After an
 explicit request or probe, re-run the relevant structured check when the UI needs to render current
@@ -421,9 +423,11 @@ if (!speaker.granted && speaker.status === 'unknown') {
 }
 ```
 
-Use `result.granted` for simple branching. Use `result.status`, `result.permissionScope`,
-`result.trackSource`, `result.backend`, `result.message`, and `result.error` when UI or logs need to
-explain what happened.
+Use `result.granted` for permission branching. Use `result.captureHealth` and
+`result.captureReady` for capture diagnostics. Use `result.status`, `result.reason`,
+`result.probeStage`, `result.elapsedMs`, `result.permissionScope`, `result.trackSource`,
+`result.backend`, `result.message`, and `result.error` when UI or logs need to explain what
+happened.
 
 ### Permission Result Type
 
@@ -443,6 +447,12 @@ type CapturePermissionCheckResult = {
   status: 'granted' | 'denied' | 'restricted' | 'not-determined' | 'unknown';
   message: string;
   error?: string;
+  reason?: string;
+  probeStage?: string;
+  elapsedMs?: number;
+  captureHealth?: 'ready' | 'silent' | 'failed' | 'not-run' | null;
+  captureReady?: boolean;
+  captureError?: string;
   rawStatus?: string;
   rawResult?: {
     api: string;
@@ -466,13 +476,19 @@ type CapturePermissionCheckResult = {
 
 | Field | Description |
 | --- | --- |
-| `granted` | `true` when the requested permission check succeeds. For CoreAudio TapGuard this means the probe tone was captured. |
+| `granted` | `true` when the requested permission check succeeds. For CoreAudio TapGuard this means the IOProc and Tap permission gate succeeded. |
 | `request` | SDK-level request: `microphone` or `speaker`. |
 | `permissionScope` | OS/platform permission scope involved in the check. |
 | `trackSource` | `AudioChunk.trackSource` used by successful capture. |
 | `backend` | Native backend used for the check. |
 | `status` | Stable machine-readable status for branching. |
 | `message` | Human-readable English explanation for logs or UI. |
+| `reason` | Stable diagnostic reason such as `permission-granted`, `permission-denied`, or `io-proc-timeout`. |
+| `probeStage` | CoreAudio or fallback stage that produced the permission result. |
+| `elapsedMs` | Time spent in the permission-sensitive IOProc operation when available. |
+| `captureHealth` | Separate capture-health result: `ready`, `silent`, `failed`, or `not-run`. |
+| `captureReady` | Whether the independent capture-health probe confirmed audio. This does not override `granted`. |
+| `captureError` | Capture-health diagnostic when permission succeeded but audio readiness was not confirmed. |
 | `rawStatus` | Original status string returned by the OS/API when one exists. |
 | `rawResult` | Original low-level result metadata for logs and diagnostics. |
 | `capabilityStatus` | Optional raw status from a prompt-free permission-state API, such as Windows `AppCapability.CheckAccess("microphone")`. Omitted when unavailable or unsupported. |
@@ -489,10 +505,10 @@ stream-open `rawResult`.
 | Status | Meaning | Typical action |
 | --- | --- | --- |
 | `granted` | Permission/backend checks succeeded. | Start capture. |
-| `denied` | The OS denied the requested permission, or CoreAudio TapGuard could not capture the probe tone. | Ask the user to enable permission in system settings. |
+| `denied` | The OS returned a permission-denied result. | Ask the user to enable permission in system settings. |
 | `restricted` | The OS, policy, platform, or app declaration blocks the requested permission. | Show a blocked-by-system message and direct the user/admin to OS policy/settings. |
 | `not-determined` | The permission has not been requested yet, or the OS reports a prompt-required state. | Ask from an explicit user action before calling a request API. |
-| `unknown` | The check failed in a way that cannot be safely classified, or the path is unsupported/stale without a more specific public status. | Show `message`, inspect `error`, and retry or collect diagnostics. |
+| `unknown` | The check timed out or failed in a way that cannot be safely classified, or the path is unsupported/stale without a more specific public status. | Do not treat it as denied. Show `message`, inspect diagnostics, and retry or collect logs. |
 
 Example results:
 
@@ -505,6 +521,11 @@ Example results:
   trackSource: 'system_audio',
   backend: 'core_audio_tap',
   status: 'granted',
+  reason: 'permission-granted',
+  probeStage: 'write-tap-description',
+  elapsedMs: 24,
+  captureHealth: 'ready',
+  captureReady: true,
   message: 'Speaker capture permission is granted and the system_audio capture stream can be opened.'
 }
 
@@ -912,16 +933,10 @@ export {
   probeMicCapture,
   checkMicCapturePermission,
   checkMicCapturePermissionInfo,
-  probeSpeakerCapture,
-  checkSpeakerCapturePermission,
   checkSpeakerCapturePermissionInfo,
   probeSpeakerCapturePermissionInfo,
-  checkSystemAudioCapturePermission,
-  checkSystemAudioCapturePermissionInfo,
-  requestSystemAudioCapturePermission,
   requestInitialMicrophonePermissionOpen,
   requestMicrophonePermission,
-  requestInitialSystemAudioPermission,
   requestInitialSystemAudioPermissionOpen,
   requestSystemAudioPermission,
   requestScreenCapturePermission,
@@ -988,16 +1003,10 @@ your app.
 | `probeMicCapture()` | Legacy boolean microphone probe. Prefer `checkMicCapturePermissionInfo()` for new UI and diagnostics. |
 | `checkMicCapturePermission()` | Legacy boolean microphone permission check. |
 | `checkMicCapturePermissionInfo()` | Checks microphone capture availability and returns structured permission/backend details. |
-| `probeSpeakerCapture()` | Legacy boolean speaker probe. Prefer `probeSpeakerCapturePermissionInfo()` for new UI and diagnostics. |
-| `checkSpeakerCapturePermission()` | Legacy boolean speaker permission check. |
 | `checkSpeakerCapturePermissionInfo()` | Passively checks speaker capture availability and returns structured permission/backend details. On macOS 14.2+ CoreAudio `system_audio`, this can return `unknown` without prompting. |
 | `probeSpeakerCapturePermissionInfo()` | Actively probes speaker capture and returns structured permission/backend details. On macOS 14.2+ CoreAudio `system_audio`, this can show the System Audio Recording prompt and verifies capture with a quiet test tone. |
-| `checkSystemAudioCapturePermission()` | Deprecated alias for `checkSpeakerCapturePermission()`. |
-| `checkSystemAudioCapturePermissionInfo()` | Deprecated alias for `checkSpeakerCapturePermissionInfo()`. |
-| `requestSystemAudioCapturePermission()` | Legacy boolean request/probe path for system-audio permission on supported macOS paths. |
 | `requestInitialMicrophonePermissionOpen()` | Opens the microphone permission path and returns `{ opened, error? }`. Use from an explicit user action when prompting is possible. |
 | `requestMicrophonePermission()` | Requests or opens microphone permission and returns `{ opened, error? }`. |
-| `requestInitialSystemAudioPermission()` | Legacy boolean initial system-audio request. |
 | `requestInitialSystemAudioPermissionOpen()` | Opens the initial system-audio permission path and returns `{ opened, error? }`. |
 | `requestSystemAudioPermission()` | Requests or opens system-audio permission and returns `{ opened, error? }`. |
 | `requestScreenCapturePermission()` | Requests or opens Screen Recording permission for ScreenCaptureKit fallback and returns `{ opened, error? }`. |
@@ -1274,19 +1283,25 @@ description in the final `.app` bundle:
 
 On macOS 14.2 and later, the CoreAudio tap path requests System Audio Recording permission when the
 tap-backed capture stream is first opened. `checkSpeakerCapturePermissionInfo()` does not open this
-tap. `probeSpeakerCapturePermissionInfo()`, `requestSystemAudioCapturePermission()`, or the first
-speaker-enabled `AudioCapture.start()` can trigger the prompt, depending on which call first opens
-the backend.
+tap. `probeSpeakerCapturePermissionInfo()` or the first speaker-enabled `AudioCapture.start()` can
+trigger the prompt, depending on which call first opens the backend.
 
 Because Apple doesn't expose a public authorization-status API for CoreAudio TapGuard system-audio
-permission, the passive check returns `unknown` for that path. The active probe opens the tap,
-plays a 997 Hz tone at about -70 dBFS for about one second, and detects that tone in the captured
-stream. This is intended to be below normal audibility, but users with high output volume or
-sensitive output devices may faintly hear it during active probes.
+permission, the passive check returns `unknown` for that path. The active probe opens the tap and
+uses IOProc creation plus Tap description read/write access as the permission gate. After
+permission succeeds, it plays a 997 Hz tone at about -70 dBFS for about one second and detects that
+tone as a separate capture-health check. This is intended to be below normal audibility, but users
+with high output volume or sensitive output devices may faintly hear it during active probes.
 
-`requestSystemAudioCapturePermission()` returns `true` when the system-audio probe succeeds and
-`false` when the permission is denied or blocked. Other setup failures are surfaced through the
-structured permission result or thrown by the native binding, depending on the API used.
+A silent or failed health check does not change a successful permission result to `denied`.
+Inspect `captureHealth`, `captureReady`, and `captureError` when `granted` is `true`. A probe that
+waits about 60 seconds without a conclusive CoreAudio result is returned as `status: 'unknown'`
+with `reason: 'io-proc-timeout'`; it must not be treated as a denial.
+
+Speaker permission checks intentionally expose no boolean compatibility API. If the structured
+native probe is unavailable or returns an invalid shape, the SDK returns `status: 'unknown'` with
+`reason: 'structured-permission-api-unavailable'` (or an invalid-result reason) instead of guessing
+that permission was denied.
 
 Older macOS versions can fall back to ScreenCaptureKit, where the active scope is Screen Recording
 permission. In that case the app must appear under System Settings > Privacy & Security > Screen
@@ -1386,9 +1401,9 @@ export ORT_DYLIB_PATH="/path/to/onnxruntime"
 
 ### Permission Check Succeeds But No Audio Is Heard
 
-Permission checks verify permission/backend readiness, not the loudness of the user's meeting audio.
-For CoreAudio TapGuard `system_audio`, the SDK injects its own quiet probe tone, so user playback is
-not required for the permission check. For microphone, Windows loopback, Linux monitor, and
+Permission and capture health are separate. For CoreAudio TapGuard `system_audio`, the permission
+gate uses IOProc and Tap access, while the SDK injects its own quiet probe tone for the subsequent
+health check. User playback is not required. For microphone, Windows loopback, Linux monitor, and
 ScreenCaptureKit fallback paths, a silent microphone or no system playback can still produce
 successful permission checks.
 
