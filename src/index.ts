@@ -65,7 +65,7 @@ export interface RawAudioFrame {
 export interface RawAudioBundle {
   /** Microphone PCM16 frame at the original microphone device sample rate, or null when inactive. */
   mic?: RawAudioFrame | null;
-  /** Speaker PCM16 frame at the original speaker device sample rate, or null when inactive. */
+  /** Speaker PCM16 frame at the original speaker device sample rate, or null when disabled or temporarily unavailable. */
   speaker?: RawAudioFrame | null;
   /** Mixed PCM16 frame at the configured processing sample rate, or null unless both sources are enabled. */
   mixed?: RawAudioFrame | null;
