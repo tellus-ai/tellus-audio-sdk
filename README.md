@@ -66,7 +66,7 @@ Set the private release token before installation:
 
 ```bash
 export TELLUS_AUDIO_ENGINE_TOKEN="..."
-npm install git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.1.19
+npm install git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.1.20
 ```
 
 Installing from GitHub uses the public `tellus-ai/tellus-audio-sdk` repository. The package
@@ -82,9 +82,9 @@ The required native engine version is pinned in `release-assets.json`:
 
 ```json
 {
-  "sdkVersion": "0.1.19",
-  "nativeEngineVersion": "0.2.18",
-  "nativeEngineTag": "v0.2.18"
+  "sdkVersion": "0.1.20",
+  "nativeEngineVersion": "0.2.19",
+  "nativeEngineTag": "v0.2.19"
 }
 ```
 
@@ -247,11 +247,19 @@ current OS defaults for the relevant source path. Use `getDefaultInputDevice()` 
 `chunk.rawAudio` is present only when `enableRawAudio: true`. Raw frames are PCM16 little-endian:
 
 - `rawAudio.mic`: microphone PCM16 at the original microphone device sample rate.
-- `rawAudio.speaker`: speaker PCM16 at the original speaker device sample rate.
+- `rawAudio.speaker`: speaker PCM16 at the original speaker device sample rate when actual speaker PCM is available.
 - `rawAudio.mixed`: mixed PCM16 at `processing.sampleRate`.
 
 For example, a 48kHz microphone can return `rawAudio.mic.sampleRate === 48000` even when the final
 transport payload uses `processing.sampleRate: 16000`.
+
+When `speakerEnabled: true`, `rawAudio.speaker` can still be `null` during startup, device reopen,
+or a temporary speaker-source underrun before an actual speaker PCM frame arrives. This is a
+temporary unavailable state, not necessarily a capture failure. A real speaker callback whose
+samples are all zero is still represented by a non-null PCM frame. When both sources are enabled,
+`rawAudio.mixed` may remain present while `rawAudio.speaker` is `null`; the processed mixer
+zero-pads the missing speaker input, so that interval is effectively microphone-only and is not
+retroactively rewritten when speaker audio arrives.
 
 ### Slow consumers and discontinuities
 
@@ -1189,10 +1197,12 @@ interface RawAudioBundle {
 | Property | Source behavior |
 | --- | --- |
 | `mic` | Present when `micEnabled: true`; uses the original microphone device sample rate. |
-| `speaker` | Present when `speakerEnabled: true`; uses the original speaker device sample rate. |
+| `speaker` | Uses the original speaker device sample rate when actual speaker PCM is available; may be `null` temporarily even when `speakerEnabled: true`. |
 | `mixed` | Present when both mic and speaker are enabled; uses `processing.sampleRate`. |
 
-Disabled sources are `null`. Enabled but silent sources can still return PCM silence buffers.
+Disabled sources are `null`. An enabled speaker can also be temporarily `null` until actual PCM
+arrives. Once a source callback exists, a genuinely silent source is represented by a PCM frame
+whose samples may all be zero.
 
 ### `CaptureStatus`
 
