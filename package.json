@@ -9,6 +9,11 @@
       "types": "./dist/index.d.ts",
       "require": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./authorization": {
+      "types": "./dist/authorization/realtime.d.ts",
+      "require": "./dist/authorization/realtime.js",
+      "default": "./dist/authorization/realtime.js"
     }
   },
   "repository": {
@@ -32,7 +37,8 @@
     "dist/installer/check-binary-cli.d.ts",
     "README.md",
     "LICENSE",
-    "release-assets.json"
+    "release-assets.json",
+    "dist/authorization"
   ],
   "scripts": {
     "build": "node scripts/run-with-build-storage.js node node_modules/typescript/bin/tsc -p tsconfig.json",
