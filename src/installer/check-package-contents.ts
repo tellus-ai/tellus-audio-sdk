@@ -13,13 +13,11 @@ type PackInfo = {
 };
 
 type PackageJson = {
-  exports?: {
-    '.'?: {
+  exports?: Partial<Record<'.' | './authorization', {
       types?: string;
       require?: string;
       default?: string;
-    };
-  };
+  }>>;
 };
 
 const ROOT = join(__dirname, '..', '..');
@@ -55,6 +53,10 @@ export function checkPackageContents(): void {
     'README.md',
     'dist/index.js',
     'dist/index.d.ts',
+    'dist/authorization/contracts.js',
+    'dist/authorization/contracts.d.ts',
+    'dist/authorization/realtime.js',
+    'dist/authorization/realtime.d.ts',
     'dist/runtime/engine-runtime.js',
     'dist/runtime/engine-runtime.d.ts',
     'dist/platform/asset-key.js',
@@ -99,6 +101,12 @@ export function checkPackageContents(): void {
     pkg.exports?.['.']?.default !== './dist/index.js'
   ) {
     throw new Error('Package exports must expose only the built public entrypoint');
+  }
+
+  if (pkg.exports?.['./authorization']?.types !== './dist/authorization/realtime.d.ts' ||
+      pkg.exports?.['./authorization']?.require !== './dist/authorization/realtime.js' ||
+      pkg.exports?.['./authorization']?.default !== './dist/authorization/realtime.js') {
+    throw new Error('Package authorization export must expose the built transport entrypoint');
   }
 
   if (

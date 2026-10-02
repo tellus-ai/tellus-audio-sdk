@@ -118,6 +118,7 @@ starts a meeting, recording, or live audio session.
 ```javascript
 const {
   AudioEngine,
+  attachEngineAuthorization,
   checkMicCapturePermissionInfo,
   checkSpeakerCapturePermissionInfo,
   initLogging,
@@ -142,7 +143,7 @@ const audioConfig = {
   },
 };
 
-async function main() {
+async function main({ audioSocket, conversationId, getAccessToken }) {
   initLogging('audio_capture=info');
 
   console.log('Microphones:', listMicDevices());
@@ -162,6 +163,10 @@ async function main() {
 
   const engine = await AudioEngine.init(audioConfig);
   const capture = engine.createCapture();
+  const authorization = attachEngineAuthorization(audioSocket, capture, {
+    conversationId, getAccessToken, onError: console.error,
+  });
+  await authorization.ready;
 
   capture.onError((err, captureError) => {
     console.error('Capture error:', {
@@ -201,10 +206,87 @@ async function main() {
       rawMixedBytes: chunk.rawAudio?.mixed?.data.length ?? null,
     });
   });
+  return authorization;
 }
 
-main().catch(console.error);
+// Call main({ audioSocket, conversationId, getAccessToken }) from your application session.
+// Dispose its authorization controller when that session ends.
 ```
+
+## Realtime engine authorization
+
+Captures using an authorization-enabled native build require a short-lived approval from Tellus
+Realtime Speech before `start()` or `resume()`. The native engine verifies the server's Ed25519
+signature and stops processing and
+output at expiry, including while paused or when the JavaScript event loop is blocked. An approval
+is bound to one native capture instance and conversation; copying it to another capture fails.
+The `/audio` execution token is a custom Ed25519-signed permit, not a JWT. Issued permits and
+permit hashes are not stored in a database or Redis. The server checks your existing access
+credentials and connection permissions before signing; Rust verifies the returned permit locally.
+No additional temporary session-token endpoint or session table is required for this flow.
+Pending challenges and active authorization metadata live only in native instance memory.
+
+Bind your existing `/audio?conversation_id=...` WebSocket to the capture before sending audio:
+
+```javascript
+const { attachEngineAuthorization } = require('@tellus-ai/audio-sdk/authorization');
+
+const authorization = attachEngineAuthorization(audioSocket, capture, {
+  conversationId,
+  getAccessToken: () => authSession.getCurrentAccessToken(),
+  onError: error => console.error('Audio authorization:', error),
+});
+await authorization.ready;
+capture.start((error, chunk) => {
+  if (!error && audioSocket.readyState === 1) {
+    audioSocket.send(chunk.data.mixed ?? chunk.data.microphone);
+  }
+});
+
+// Session teardown:
+authorization.dispose(); // invalidates permission and stops this capture
+capture.stop();
+audioSocket.close();
+```
+
+`audioSocket`, `conversationId`, and `authSession` come from your application's authenticated
+Realtime Speech session. The socket must expose `addEventListener`/`removeEventListener`, as
+browser WebSocket and modern `ws` do. The adapter supports a connecting or already open socket.
+It checks native authorization support before registering socket listeners; an unsupported build
+throws `engine_authorization_unsupported` immediately.
+It sends the first `audio.authenticate` message, applies the native approval, and renews every
+8 minutes with fresh credentials even during silence, leaving a two-minute retry margin. The server limits each approval to
+10 minutes or the remaining access-token lifetime, whichever is shorter. Shorter credentials or
+delayed approval delivery advance renewal to 90% of the native remaining lifetime. Register the adapter
+before sending audio or other control frames. Use a new socket and adapter after reconnecting.
+
+On disconnect or a terminal denial, the adapter invalidates the native capture. Renewal timeouts,
+retryable denials, and failures to obtain current credentials retry with a fresh challenge while the
+existing native permission remains valid; they never extend its deadline. The adapter never closes
+the audio socket: authorization failures only stop the native engine. `ready` covers the initial approval; later failures are delivered through `onError`.
+A capture that stopped at expiry must receive a new approval and be started again. Attach the same
+capture again on the same open socket to receive it; reconnecting is not required.
+
+Native approval requests require server `ENGINE_LICENSE_KEY_ID`, `ENGINE_LICENSE_PRIVATE_KEY_HEX`,
+and login verification settings. No company allowlist is required. Ordinary browser audio producers
+can use `/audio` without this native approval protocol or signing configuration. The matching public
+key is embedded in a new native build using
+`TELLUS_ENGINE_LICENSE_PUBLIC_KEYS`. The private signing key stays on the server. The existing
+release manifest still references the previously published native version. To distribute an engine
+that requires authorization, publish the authorized native build and update `release-assets.json`.
+This SDK continues to support ordinary capture with older native binaries. Only explicit authorization
+API calls and `attachEngineAuthorization()` reject those binaries with `engine_authorization_unsupported`.
+Using the SDK with a newly authorized native build still requires approval enforced by Rust.
+
+Installation/download credentials (`TELLUS_AUDIO_ENGINE_TOKEN`) and runtime approvals are separate.
+This feature controls runtime capture; it does not prevent downloading or reverse engineering a
+binary. The remaining capture examples assume the capture has completed the approval above.
+
+To verify real server-to-native interoperability, build this SDK and provide the integration
+client `scripts/engine-authorization-client.js` as `TELLUS_AUDIO_SDK_TEST_CLIENT` and a native debug
+binary trusting the dedicated test public key as `TELLUS_ENGINE_TEST_BINARY` when running the
+Realtime Speech engine-authorization integration tests. The client uses the real SDK and native
+instance, verifies the eight-minute renewal timer, and exercises its callback without waiting.
 
 ## Core Concepts
 
@@ -227,8 +309,9 @@ You can still construct `new AudioCapture(config)` directly, but the preferred a
 2. Call `AudioEngine.init(audioConfig)` during app startup.
 3. Call `engine.createCapture()` when capture is needed.
 4. Register `capture.onError(...)`.
-5. Call `capture.start(...)`.
-6. Call `capture.stop()` when the session ends.
+5. Attach engine authorization to the audio WebSocket and await `authorization.ready`.
+6. Call `capture.start(...)`.
+7. Dispose authorization and stop capture when the session ends.
 
 ### Default Devices
 
@@ -980,6 +1063,10 @@ class AudioEngine {
 ```ts
 class AudioCapture {
   constructor(config?: AudioCaptureConfig | null);
+  createAuthorizationRequest(conversationId: string): EngineAuthorizationRequest;
+  applyAuthorization(token: string): EngineAuthorizationStatus;
+  getAuthorizationStatus(): EngineAuthorizationStatus;
+  invalidateAuthorization(): void;
   onError(callback: (err: Error | null, arg: CaptureError) => unknown): void;
   start(callback: (err: Error | null, arg: AudioChunk) => unknown): void;
   pause(): void;
