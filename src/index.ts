@@ -1,6 +1,7 @@
 import { release as osRelease } from 'node:os';
 
 import { prepareEngineRuntime } from './runtime/engine-runtime';
+import type { EngineAuthorizationRequest, EngineAuthorizationStatus } from './authorization/contracts';
 
 export interface AudioProcessingConfig {
   sampleRate?: number;
@@ -590,6 +591,35 @@ export class AudioCapture {
     this.#native = new NativeAudioCapture(config);
   }
 
+  #requireAuthorizationSupport(): void {
+    if (typeof this.#native.createAuthorizationRequest !== 'function' ||
+        typeof this.#native.applyAuthorization !== 'function' ||
+        typeof this.#native.getAuthorizationStatus !== 'function' ||
+        typeof this.#native.invalidateAuthorization !== 'function') {
+      throw new Error('engine_authorization_unsupported: install an authorization-enabled native engine');
+    }
+  }
+
+  createAuthorizationRequest(conversationId: string): EngineAuthorizationRequest {
+    this.#requireAuthorizationSupport();
+    return this.#native.createAuthorizationRequest(conversationId);
+  }
+
+  applyAuthorization(token: string): EngineAuthorizationStatus {
+    this.#requireAuthorizationSupport();
+    return this.#native.applyAuthorization(token);
+  }
+
+  getAuthorizationStatus(): EngineAuthorizationStatus {
+    this.#requireAuthorizationSupport();
+    return this.#native.getAuthorizationStatus();
+  }
+
+  invalidateAuthorization(): void {
+    this.#requireAuthorizationSupport();
+    this.#native.invalidateAuthorization();
+  }
+
   onError(callback: ErrorCallback): void {
     this.#native.onError(callback);
   }
@@ -711,3 +741,9 @@ export const preloadModels: (config?: AudioCaptureConfig | null) => AudioEngineM
   };
 };
 export const initLogging: (level?: string | null) => void = nativeInitLogging;
+
+export { attachEngineAuthorization } from './authorization/realtime';
+export type {
+  AuthorizableAudioCapture, EngineAuthorizationController, EngineAuthorizationOptions,
+  EngineAuthorizationRequest, EngineAuthorizationSocket, EngineAuthorizationStatus,
+} from './authorization/contracts';
