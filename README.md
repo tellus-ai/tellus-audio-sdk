@@ -255,15 +255,17 @@ browser WebSocket and modern `ws` do. The adapter supports a connecting or alrea
 It checks native authorization support before registering socket listeners; an unsupported build
 throws `engine_authorization_unsupported` immediately.
 It sends the first `audio.authenticate` message, applies the native approval, and renews every
-9 minutes with fresh credentials even during silence. The server limits each approval to
+8 minutes with fresh credentials even during silence, leaving a two-minute retry margin. The server limits each approval to
 10 minutes or the remaining access-token lifetime, whichever is shorter. Shorter credentials or
 delayed approval delivery advance renewal to 90% of the native remaining lifetime. Register the adapter
 before sending audio or other control frames. Use a new socket and adapter after reconnecting.
 
-On disconnect or a terminal denial, the adapter invalidates the native capture. Temporary renewal
-failures can retry while the existing native permission remains valid; they never extend its
-deadline. `ready` covers the initial approval; later failures are delivered through `onError`.
-A capture that stopped at expiry must receive a new approval and be started again.
+On disconnect or a terminal denial, the adapter invalidates the native capture. Renewal timeouts,
+retryable denials, and failures to obtain current credentials retry with a fresh challenge while the
+existing native permission remains valid; they never extend its deadline. The adapter never closes
+the audio socket: authorization failures only stop the native engine. `ready` covers the initial approval; later failures are delivered through `onError`.
+A capture that stopped at expiry must receive a new approval and be started again. Attach the same
+capture again on the same open socket to receive it; reconnecting is not required.
 
 Native approval requests require server `ENGINE_LICENSE_KEY_ID`, `ENGINE_LICENSE_PRIVATE_KEY_HEX`,
 and login verification settings. No company allowlist is required. Ordinary browser audio producers
@@ -284,7 +286,7 @@ To verify real server-to-native interoperability, build this SDK and provide the
 client `scripts/engine-authorization-client.js` as `TELLUS_AUDIO_SDK_TEST_CLIENT` and a native debug
 binary trusting the dedicated test public key as `TELLUS_ENGINE_TEST_BINARY` when running the
 Realtime Speech engine-authorization integration tests. The client uses the real SDK and native
-instance, verifies the nine-minute renewal timer, and exercises its callback without waiting.
+instance, verifies the eight-minute renewal timer, and exercises its callback without waiting.
 
 ## Core Concepts
 

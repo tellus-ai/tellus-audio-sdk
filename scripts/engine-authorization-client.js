@@ -43,7 +43,7 @@ input.on('line', line => {
   const message = JSON.parse(line);
   if (message.action === 'renew') {
     assert.equal(typeof renew, 'function');
-    renew(); // Exercise the real timer callback without waiting nine minutes in the test.
+    renew(); // Exercise the real timer callback without waiting eight minutes in the test.
   } else {
     socket.receive(message);
     if (message.type === 'engine.renewed') status();

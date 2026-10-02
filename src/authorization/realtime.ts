@@ -14,7 +14,7 @@ export type {
   EngineAuthorizationStatus,
 } from './contracts';
 
-const MAX_RENEW_INTERVAL_MS = 540_000;
+const MAX_RENEW_INTERVAL_MS = 480_000;
 const RETRY_DELAY_MS = 1_000;
 
 /** Bind authorization and renewal to an existing /audio WebSocket. No audio frames are required. */
@@ -32,7 +32,7 @@ export function attachEngineAuthorization(
   let disposed = false;
   let approved = false;
   let pendingSequence: number | null = null;
-  let requesting = false;
+  let attempt = 0;
   let responseTimer: ReturnType<typeof setTimeout> | undefined;
   let renewalTimer: ReturnType<typeof setTimeout> | undefined;
   let resolveReady!: () => void;
@@ -61,13 +61,13 @@ export function attachEngineAuthorization(
     if (!approved) rejectReady(new Error('engine_authorization_disposed'));
   }
 
+  // Authorization failures stop only the native engine; the caller's socket stays open.
   function fail(value: unknown): void {
     if (disposed) return;
     const error = value instanceof Error ? value : new Error('engine_authorization_failed');
     const wasApproved = approved;
     if (!approved) rejectReady(error);
     dispose();
-    if (socket.readyState < 2) socket.close(1008, 'engine_authorization_failed');
     if (wasApproved) options.onError?.(error);
   }
 
@@ -81,35 +81,40 @@ export function attachEngineAuthorization(
       Math.max(1, Math.min(delayMs, MAX_RENEW_INTERVAL_MS, Math.floor(status.remainingMs * 9 / 10))));
   }
 
-  function onResponseTimeout(): void {
-    if (disposed) return;
+  // Abandons the current attempt. Once approved, renewal retries until native permission expires.
+  function retryOrFail(error: unknown): void {
+    attempt++;
+    clearTimeout(responseTimer);
     pendingSequence = null;
-    if (!approved || requesting) {
-      fail(new Error('engine_authorization_timeout'));
+    if (!approved) {
+      fail(error);
       return;
     }
     try { scheduleRenewal(RETRY_DELAY_MS); }
-    catch (error) { fail(error); }
+    catch (expired) { fail(expired); }
+  }
+
+  function onResponseTimeout(): void {
+    if (disposed) return;
+    retryOrFail(new Error('engine_authorization_timeout'));
   }
 
   async function request(type: 'audio.authenticate' | 'engine.renew'): Promise<void> {
-    if (disposed || requesting || pendingSequence !== null) return;
-    requesting = true;
+    if (disposed || pendingSequence !== null) return;
+    const current = ++attempt;
     responseTimer = setTimeout(onResponseTimeout, requestTimeoutMs);
     try {
       const challenge = capture.createAuthorizationRequest(options.conversationId);
       pendingSequence = challenge.sequence;
       const accessToken = await options.getAccessToken();
-      if (disposed) return;
+      if (disposed || current !== attempt) return;
       if (socket.readyState !== 1 || !accessToken) throw new Error('engine_authentication_required');
       socket.send(JSON.stringify({
         type, version: 1, access_token: accessToken,
         engine: { native_instance_id: challenge.nativeInstanceId, nonce: challenge.nonce, sequence: challenge.sequence },
       }));
     } catch (error) {
-      fail(error);
-    } finally {
-      requesting = false;
+      if (!disposed && current === attempt) retryOrFail(error);
     }
   }
 

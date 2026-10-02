@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const { mock } = test;
 const { attachEngineAuthorization } = require('../dist/authorization/realtime.js');
 
 class Socket extends EventTarget {
@@ -42,7 +43,8 @@ async function waitFor(predicate) {
 }
 
 for (const { name, remainingMs, renewAfterMs, expectedDelayMs } of [
-  { name: 'ten-minute approval renews at nine minutes', remainingMs: 600000, renewAfterMs: 540000, expectedDelayMs: 540000 },
+  { name: 'ten-minute approval renews at eight minutes', remainingMs: 600000, renewAfterMs: 480000, expectedDelayMs: 480000 },
+  { name: 'renewal keeps a two-minute margin even when the server asks to wait longer', remainingMs: 600000, renewAfterMs: 540000, expectedDelayMs: 480000 },
   { name: 'short-lived credentials renew before their earlier deadline', remainingMs: 10000, renewAfterMs: 9000, expectedDelayMs: 9000 },
   { name: 'delayed approval receipt advances renewal within native remaining time', remainingMs: 250000, renewAfterMs: 540000, expectedDelayMs: 225000 },
 ]) {
@@ -119,7 +121,7 @@ test('native signature rejection fails readiness and invalidates capture', async
   socket.receive({ type: 'engine.authorized', version: 1, sequence: 1, token: 'forged', renew_after_ms: 540000 });
   await rejected;
   assert.equal(capture.invalidations, 1);
-  assert.equal(socket.closed, true);
+  assert.equal(socket.closed, false);
 });
 
 test('disconnect invalidates native permission and removes renewal listeners', async () => {
@@ -145,6 +147,7 @@ test('missing server approval times out and blocks readiness', async () => {
   });
   await assert.rejects(controller.ready, /engine_authorization_timeout/);
   assert.equal(capture.invalidations, 1);
+  assert.equal(socket.closed, false);
 });
 
 test('renewal timeout retries with a new challenge and ignores the abandoned reply', async () => {
@@ -181,5 +184,116 @@ test('revocation after initial approval invalidates native capture and reports t
   socket.receive({ type: 'engine.denied', version: 1, sequence: 2, code: 'engine_access_denied', retryable: false });
   assert.equal(capture.invalidations, 1);
   assert.equal(errors[0].message, 'engine_access_denied');
-  assert.equal(socket.closed, true);
+  assert.equal(socket.closed, false);
+});
+
+test('after authorization stops the engine, attaching again re-approves on the same socket', async () => {
+  const socket = new Socket();
+  const capture = new Capture();
+  const first = attachEngineAuthorization(socket, capture, {
+    conversationId: 'conversation-1', getAccessToken: () => 'login-token', onError: () => {},
+  });
+  await waitFor(() => socket.sent.length === 1);
+  socket.receive({ type: 'engine.authorized', version: 1, sequence: 1, token: 'signed-permit', renew_after_ms: 2 });
+  await first.ready;
+  await waitFor(() => socket.sent.length === 2);
+  socket.receive({ type: 'engine.denied', version: 1, sequence: 2, code: 'engine_access_denied', retryable: false });
+  assert.equal(capture.invalidations, 1);
+
+  const second = attachEngineAuthorization(socket, capture, {
+    conversationId: 'conversation-1', getAccessToken: () => 'login-token',
+  });
+  await waitFor(() => socket.sent.length === 3);
+  assert.equal(socket.sent[2].type, 'audio.authenticate');
+  assert.equal(socket.sent[2].engine.sequence, 3);
+  socket.receive({ type: 'engine.authorized', version: 1, sequence: 3, token: 'signed-permit', renew_after_ms: 480000 });
+  await second.ready;
+  assert.equal(capture.applied.length, 2);
+  assert.equal(socket.closed, false);
+  second.dispose();
+});
+
+test('renewal retries when current login credentials cannot be obtained', async () => {
+  const socket = new Socket();
+  const capture = new Capture();
+  const errors = [];
+  let credentials = 0;
+  const controller = attachEngineAuthorization(socket, capture, {
+    conversationId: 'conversation-1', onError: error => errors.push(error),
+    getAccessToken: () => {
+      if (++credentials === 2) throw new Error('login_refresh_failed');
+      return `login-${credentials}`;
+    },
+  });
+  await waitFor(() => socket.sent.length === 1);
+  socket.receive({ type: 'engine.authorized', version: 1, sequence: 1, token: 'signed-permit', renew_after_ms: 2 });
+  await controller.ready;
+  await new Promise(resolve => setTimeout(resolve, 1050));
+  await waitFor(() => socket.sent.length === 2);
+  assert.deepEqual(errors, []);
+  assert.equal(capture.invalidations, 0);
+  assert.equal(socket.sent[1].access_token, 'login-3');
+  assert.equal(socket.sent[1].engine.sequence, 3);
+  socket.receive({ type: 'engine.renewed', version: 1, sequence: 3, token: 'signed-permit', renew_after_ms: 480000 });
+  assert.equal(capture.applied.length, 2);
+  controller.dispose();
+});
+
+test('renewal retries with a fresh challenge when obtaining credentials outlasts the response timeout', async () => {
+  const socket = new Socket();
+  const capture = new Capture();
+  const errors = [];
+  let credentials = 0;
+  const controller = attachEngineAuthorization(socket, capture, {
+    conversationId: 'conversation-1', requestTimeoutMs: 10, onError: error => errors.push(error),
+    getAccessToken: () => (++credentials === 2
+      ? new Promise(resolve => setTimeout(() => resolve('late-login'), 50))
+      : `login-${credentials}`),
+  });
+  await waitFor(() => socket.sent.length === 1);
+  socket.receive({ type: 'engine.authorized', version: 1, sequence: 1, token: 'signed-permit', renew_after_ms: 2 });
+  await controller.ready;
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(socket.sent.length, 1, 'the abandoned challenge must not be sent after its timeout');
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  await waitFor(() => socket.sent.length === 2);
+  assert.deepEqual(errors, []);
+  assert.equal(socket.sent[1].access_token, 'login-3');
+  assert.equal(socket.sent[1].engine.sequence, 3);
+  controller.dispose();
+});
+
+test('unanswered renewal retries until native expiry, then stops only the engine', async (t) => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  t.after(() => mock.timers.reset());
+  let now = 0;
+  const flush = async () => { for (let i = 0; i < 3; i++) await new Promise(resolve => setImmediate(resolve)); };
+  const advance = async ms => { for (let step = 0; step < ms; step += 100) { now += 100; mock.timers.tick(100); await flush(); } };
+  const socket = new Socket();
+  const capture = new Capture();
+  capture.getAuthorizationStatus = () => (now < 600000
+    ? { state: 'authorized', remainingMs: 600000 - now }
+    : { state: 'expired', remainingMs: 0 });
+  const errors = [];
+  const sentAt = [];
+  const send = socket.send.bind(socket);
+  socket.send = data => { sentAt.push(now); send(data); };
+  const controller = attachEngineAuthorization(socket, capture, {
+    conversationId: 'conversation-1', getAccessToken: () => 'login-token', onError: error => errors.push(error),
+  });
+  await flush();
+  socket.receive({ type: 'engine.authorized', version: 1, sequence: 1, token: 'signed-permit', renew_after_ms: 480000 });
+  await controller.ready;
+  await advance(700000);
+  const renewals = sentAt.slice(1);
+  assert.equal(renewals[0], 480000);
+  assert.ok(renewals.length >= 10, `renewal attempts: ${renewals.length}`);
+  for (let i = 1; i < renewals.length; i++) assert.equal(renewals[i] - renewals[i - 1], 11000);
+  assert.ok(renewals.at(-1) < 600000);
+  const sequences = socket.sent.slice(1).map(message => message.engine.sequence);
+  assert.equal(new Set(sequences).size, sequences.length);
+  assert.deepEqual(errors.map(error => error.message), ['engine_authorization_expired']);
+  assert.equal(capture.invalidations, 1);
+  assert.equal(socket.closed, false);
+  controller.dispose();
 });
