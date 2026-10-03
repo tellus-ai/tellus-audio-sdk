@@ -1,8 +1,8 @@
 name: Publish SDK to S3
 
 on:
-  push:
-    tags: ['v*']
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       environment:
@@ -22,6 +22,7 @@ concurrency:
 
 jobs:
   publish:
+    if: github.event_name != 'release' || github.event.release.prerelease == false
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment || 'prod' }}
     env:
