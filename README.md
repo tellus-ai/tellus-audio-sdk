@@ -10,8 +10,8 @@ Native binaries are installed into `vendor/<platform>/` during package installat
 ## Requirements
 
 - Node.js 18 or later.
-- A current Tellus login access token and the Realtime Speech URL for your environment.
-  The optional GitHub installation path requires a GitHub release token instead.
+- A Tellus-issued customer installation token and the Realtime Speech URL for your environment.
+  The legacy engine download path requires a GitHub release token instead.
 - macOS, Windows x64, or Linux x64 glibc. Linux musl builds are not currently supported.
 - `tar` available on `PATH` during installation.
 
@@ -63,64 +63,55 @@ Native binaries are installed into `vendor/<platform>/` during package installat
 
 ## Install
 
-### CloudFront distribution through Realtime Speech
+### GitHub SDK installation with private CloudFront engine downloads
 
-Use SDK **0.2.1 or later** for download-token authentication. Set the Realtime Speech
-service URL for your environment and a current Tellus login access token. The
-following Bash example downloads and verifies the built SDK before installation
-(requires Node.js, curl and shasum):
+Install the SDK from GitHub. Its postinstall script downloads the pinned native
+engine through CloudFront using a customer installation token issued by Tellus.
+An app account, app login, and a login access JWT are not required for installation.
 
 ```bash
 export TELLUS_AUDIO_DOWNLOAD_BASE_URL="https://<realtime-speech-host>"
-export TELLUS_AUDIO_ENGINE_TOKEN="<short-lived-login-access-token>"
-SDK_FILE="tellus-ai-audio-sdk-0.2.1.tgz"
-SDK_API="$TELLUS_AUDIO_DOWNLOAD_BASE_URL/v1/audio-artifacts/sdk/0.2.1"
-download_sdk_file() {
-  local file="$1" grant url token
-  grant="$(curl --fail --silent --show-error --proto '=https' --request POST \
-    -H "Authorization: Bearer $TELLUS_AUDIO_ENGINE_TOKEN" "$SDK_API/$file/token")" || return
-  url="$(printf '%s' "$grant" | node -pe "JSON.parse(require('fs').readFileSync(0, 'utf8')).url")" || return
-  token="$(printf '%s' "$grant" | node -pe "JSON.parse(require('fs').readFileSync(0, 'utf8')).token")" || return
-  case "$url" in https://download.tellus.ai.kr/*) ;; *) return 1 ;; esac
-  curl --fail --silent --show-error --proto '=https' \
-    -H "Authorization: Bearer $token" "$url" -o "$file"
-}
-download_sdk_file "$SDK_FILE" &&
-download_sdk_file "$SDK_FILE.sha256" &&
-shasum -a 256 -c "$SDK_FILE.sha256" &&
-npm install "./$SDK_FILE"
+export TELLUS_AUDIO_ENGINE_TOKEN="<Tellus-issued-30-day-installation-token>"
+npm install "git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.2.1"
 ```
 
-The API returns JSON `{url, token, expires_at, token_type: "Bearer"}`. The URL is
-fixed and contains no authentication query. The separate download JWT is valid
-for one exact file in one environment for at most five minutes, bounded by the
-login expiration. Send it in `Authorization: Bearer <download token>` to CloudFront.
-Do not use `--location` or `--location-trusted` with the CDN request.
+Use the SDK tag or commit approved for your integration and keep it pinned in
+package.json and package-lock.json. The SDK repository stays on GitHub; the engine
+S3 publishing workflow is still needed to provide the private native artifacts.
+The SDK tarball publishing workflow is not used by this GitHub installation flow.
 
-Postinstall requests a new token using
-`POST /v1/audio-artifacts/engine/<version>/<filename>/token` immediately before
-downloading each native checksum/archive. The login token goes only to Realtime
-Speech. A distinct download token goes only to `https://download.tellus.ai.kr`.
-The installer rejects other destinations, query credentials and all CDN redirects.
-On CDN 401 it requests one fresh token and retries once; an expired login requires
-new login credentials and a new installation attempt. SHA-256 is checked before
-replacing the engine. Failed downloads never switch to GitHub automatically.
+Tellus issues a separate RS256 installation JWT for each customer and environment.
+It expires **30 days (2,592,000 seconds) after issuance**, not after first use.
+It is a Bearer credential: sharing it allows other holders to install until expiry.
+Customer identity in the token does not prevent copying it to another machine.
+Ask Tellus for a replacement after expiry; the installer cannot extend the deadline.
 
-The server maps `ENVIRONMENT` (development/staging/production) to dev/stg/prod.
-Clients select the matching Realtime Speech host. Every CloudFront request,
-including cache hits and Range requests, is checked by the environment verifier.
-Sharing only the URL grants no access. Sharing its bearer token permits access
-to the same file until it expires; this is not a single-use token.
+Postinstall sends the installation token only to Realtime Speech using
+`POST /v1/audio-artifacts/engine/<version>/<filename>/token`, once per checksum
+and archive. The API returns `{url, token, expires_at, token_type: "Bearer"}`.
+The distinct download token is valid for one exact file and environment, for at
+most 30 days and never beyond the installation token's expiration. No app login
+JWT is sent or accepted by this installation API.
+The fixed download URL does not expire after 30 days. An older URL remains usable
+with a valid token for that file; CDN cache expiration is separate from authorization.
 
-The previous GET/307 signed-URL API is removed in the matching server release;
-SDK 0.2.1 must be upgraded for this distribution path. Deploy the server token API,
-SDK 0.2.1, and CloudFront token verifier together. Keep the verified local SDK tarball
-available for subsequent `npm ci`; CI should acquire it through the same token API.
-Do not store tokens in package.json, package-lock.json, installation state or logs.
+The installer sends only the file download token to `https://download.tellus.ai.kr`.
+It rejects other destinations, query credentials and all CDN redirects. CloudFront
+checks every request, including cache hits and Range requests. An installation
+token cannot be used directly at the CDN because it has a different audience.
+On CDN 401 the installer requests one fresh grant and retries once; this does not
+extend the original installation token's expiry. SHA-256 is checked before replacing
+the engine. Failed downloads never switch to GitHub automatically.
+
+Deploy the CloudFront verifier supporting 30-day tokens before the matching
+Realtime Speech customer-token API. Existing SDK token-download clients can send
+the new installation token through the same environment variable. Existing login
+JWTs must be replaced in local and CI installation environments. Do not store tokens
+in package.json, package-lock.json, installation state, logs or source control.
 
 Download authorization is separate from native execution: `attachEngineAuthorization()`
 continues to renew execution approval over `/audio`. No AWS credentials are shipped
-to clients. `TELLUS_AUDIO_DOWNLOAD_BASE_URL` always points to Realtime Speech, not the CDN.
+to clients. `TELLUS_AUDIO_DOWNLOAD_BASE_URL` points to Realtime Speech, not the CDN.
 
 ### Publishing SDK packages to the shared bucket
 
@@ -138,7 +129,7 @@ A matching `vX.Y.Z` tag publishes to `prod/audio/sdk/vX.Y.Z/`. Manual
 invocations must also set that variable explicitly to dev, stg, or prod.
 Missing or invalid environments are rejected before any S3 write.
 
-### GitHub release installation
+### Legacy engine downloads from GitHub Releases
 
 When `TELLUS_AUDIO_DOWNLOAD_BASE_URL` is unset, the existing private GitHub Release
 installation remains available and `TELLUS_AUDIO_ENGINE_TOKEN` must be a GitHub
@@ -185,8 +176,8 @@ TELLUS_AUDIO_ENGINE_TOKEN=...
 
 | Name | Description |
 | --- | --- |
-| `TELLUS_AUDIO_ENGINE_TOKEN` | Tellus login access token for CloudFront distribution, or a GitHub token for the legacy release path. The installer also reads this single key from the installing project's `.env` file. |
-| `TELLUS_AUDIO_DOWNLOAD_BASE_URL` | HTTPS Realtime Speech base URL for authenticated CloudFront distribution. When set, `TELLUS_AUDIO_ENGINE_TOKEN` is a Tellus login access token instead of a GitHub token. Export this URL in the process environment. |
+| `TELLUS_AUDIO_ENGINE_TOKEN` | Tellus-issued 30-day customer installation token for CloudFront distribution, or a GitHub token for the legacy release path. The installer also reads this single key from the installing project's `.env` file. |
+| `TELLUS_AUDIO_DOWNLOAD_BASE_URL` | HTTPS Realtime Speech base URL for authenticated CloudFront distribution. When set, `TELLUS_AUDIO_ENGINE_TOKEN` is a customer installation token instead of a GitHub token. Export this URL in the process environment. |
 | `TELLUS_AUDIO_ENGINE_MODEL_DIR` | Optional override for the native model directory. When omitted, the SDK looks for bundled `models/` next to the installed native binary. |
 | `ORT_DYLIB_PATH` | Optional override for the ONNX Runtime dynamic library path. When omitted, the SDK resolves the bundled ONNX Runtime for the current platform. |
 

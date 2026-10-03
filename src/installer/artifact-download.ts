@@ -28,10 +28,10 @@ function validateGrant(raw: unknown, serviceUrl: string): DownloadGrant {
   }
 }
 
-function requestGrant(serviceUrl: string, loginToken: string): Promise<DownloadGrant> {
+function requestGrant(serviceUrl: string, installationToken: string): Promise<DownloadGrant> {
   return new Promise((resolve, reject) => {
     const req = request(serviceUrl, { method: 'POST', headers: {
-      Authorization: `Bearer ${loginToken}`, Accept: 'application/json',
+      Authorization: `Bearer ${installationToken}`, Accept: 'application/json',
       'User-Agent': 'tellus-audio-sdk-installer',
     } }, (response) => {
       if (response.statusCode !== 200) {
@@ -83,13 +83,13 @@ function downloadGrantedFile(grant: DownloadGrant, destination: string): Promise
   });
 }
 
-export async function downloadArtifact(serviceUrl: string, destination: string, loginToken: string): Promise<void> {
-  const grant = await requestGrant(serviceUrl, loginToken);
+export async function downloadArtifact(serviceUrl: string, destination: string, installationToken: string): Promise<void> {
+  const grant = await requestGrant(serviceUrl, installationToken);
   try {
     await downloadGrantedFile(grant, destination);
   } catch (error) {
     if (!(error instanceof DownloadHttpError) || error.statusCode !== 401) throw error;
     // A token that expires before the CDN request gets one fresh issuance, never an unbounded retry.
-    await downloadGrantedFile(await requestGrant(serviceUrl, loginToken), destination);
+    await downloadGrantedFile(await requestGrant(serviceUrl, installationToken), destination);
   }
 }
