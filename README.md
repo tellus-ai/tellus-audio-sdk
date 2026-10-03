@@ -65,7 +65,7 @@ Native binaries are installed into `vendor/<platform>/` during package installat
 
 ### CloudFront distribution through Realtime Speech
 
-Use SDK **0.2.2 or later** for download-token authentication. Set the Realtime Speech
+Use SDK **0.2.1 or later** for download-token authentication. Set the Realtime Speech
 service URL for your environment and a current Tellus login access token. The
 following Bash example downloads and verifies the built SDK before installation
 (requires Node.js, curl and shasum):
@@ -73,8 +73,8 @@ following Bash example downloads and verifies the built SDK before installation
 ```bash
 export TELLUS_AUDIO_DOWNLOAD_BASE_URL="https://<realtime-speech-host>"
 export TELLUS_AUDIO_ENGINE_TOKEN="<short-lived-login-access-token>"
-SDK_FILE="tellus-ai-audio-sdk-0.2.2.tgz"
-SDK_API="$TELLUS_AUDIO_DOWNLOAD_BASE_URL/v1/audio-artifacts/sdk/0.2.2"
+SDK_FILE="tellus-ai-audio-sdk-0.2.1.tgz"
+SDK_API="$TELLUS_AUDIO_DOWNLOAD_BASE_URL/v1/audio-artifacts/sdk/0.2.1"
 download_sdk_file() {
   local file="$1" grant url token
   grant="$(curl --fail --silent --show-error --proto '=https' --request POST \
@@ -114,7 +114,7 @@ to the same file until it expires; this is not a single-use token.
 
 The previous GET/307 signed-URL API is removed in the matching server release;
 SDK 0.2.1 must be upgraded for this distribution path. Deploy the server token API,
-SDK 0.2.2, and CloudFront token verifier together. Keep the verified local SDK tarball
+SDK 0.2.1, and CloudFront token verifier together. Keep the verified local SDK tarball
 available for subsequent `npm ci`; CI should acquire it through the same token API.
 Do not store tokens in package.json, package-lock.json, installation state or logs.
 
@@ -164,7 +164,7 @@ The required native engine version is pinned in `release-assets.json`:
 
 ```json
 {
-  "sdkVersion": "0.2.2",
+  "sdkVersion": "0.2.1",
   "nativeEngineVersion": "0.3.0",
   "nativeEngineTag": "v0.3.0"
 }
