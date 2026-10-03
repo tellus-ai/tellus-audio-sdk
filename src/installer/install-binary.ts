@@ -15,6 +15,8 @@ import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pipeline } from 'node:stream/promises';
 
+import { downloadArtifact } from './artifact-download';
+
 import { currentAssetKey } from '../platform/asset-key';
 
 type ReleaseAsset = {
@@ -36,6 +38,7 @@ type DownloadOptions = {
   destination: string;
   token: string;
   authorizationOrigin: string;
+  artifactTokenService: boolean;
   manifest: ReleaseManifest;
   key: string;
 };
@@ -217,7 +220,7 @@ function getJson<T>(url: string, token: string): Promise<T> {
   });
 }
 
-async function resolveReleaseAssetUrls(manifest: ReleaseManifest, asset: ReleaseAsset): Promise<{ archiveUrl: string; sha256Url: string; authorizationOrigin: string }> {
+async function resolveReleaseAssetUrls(manifest: ReleaseManifest, asset: ReleaseAsset): Promise<{ archiveUrl: string; sha256Url: string; authorizationOrigin: string; artifactTokenService: boolean }> {
   if (!asset.file || !asset.sha256File) {
     fail('Release asset manifest must include file and sha256File for the current platform');
   }
@@ -240,9 +243,10 @@ async function resolveReleaseAssetUrls(manifest: ReleaseManifest, asset: Release
     }
     const releaseBase = `${base.toString().replace(/\/$/, '')}/v1/audio-artifacts/engine/${manifest.nativeEngineVersion}`;
     return {
-      archiveUrl: `${releaseBase}/${encodeURIComponent(asset.file)}`,
-      sha256Url: `${releaseBase}/${encodeURIComponent(asset.sha256File)}`,
+      archiveUrl: `${releaseBase}/${encodeURIComponent(asset.file)}/token`,
+      sha256Url: `${releaseBase}/${encodeURIComponent(asset.sha256File)}/token`,
       authorizationOrigin: base.origin,
+      artifactTokenService: true,
     };
   }
 
@@ -263,6 +267,7 @@ async function resolveReleaseAssetUrls(manifest: ReleaseManifest, asset: Release
     archiveUrl: archive.url,
     sha256Url: checksum.url,
     authorizationOrigin: 'https://api.github.com',
+    artifactTokenService: false,
   };
 }
 
@@ -330,7 +335,11 @@ function alreadyInstalled(targetDir: string, expectedSha: string): boolean {
 
 async function downloadRequiredFile(options: DownloadOptions): Promise<void> {
   try {
-    await downloadToFile(options.url, options.destination, options.token, options.authorizationOrigin);
+    if (options.artifactTokenService) {
+      await downloadArtifact(options.url, options.destination, options.token);
+    } else {
+      await downloadToFile(options.url, options.destination, options.token, options.authorizationOrigin);
+    }
   } catch (error) {
     fail(
       [
@@ -355,7 +364,7 @@ export async function installBinary(): Promise<void> {
   }
   assertAssetVersion(asset, manifest);
 
-  const { archiveUrl, sha256Url, authorizationOrigin } = await resolveReleaseAssetUrls(manifest, asset);
+  const { archiveUrl, sha256Url, authorizationOrigin, artifactTokenService } = await resolveReleaseAssetUrls(manifest, asset);
 
   const platformDir = asset.platform || key;
   const targetDir = join(ROOT, 'vendor', platformDir);
@@ -374,6 +383,7 @@ export async function installBinary(): Promise<void> {
       destination: shaPath,
       token,
       authorizationOrigin,
+      artifactTokenService,
       manifest,
       key,
     });
@@ -391,6 +401,7 @@ export async function installBinary(): Promise<void> {
       destination: archivePath,
       token,
       authorizationOrigin,
+      artifactTokenService,
       manifest,
       key,
     });

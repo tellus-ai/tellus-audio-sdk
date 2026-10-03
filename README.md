@@ -65,49 +65,62 @@ Native binaries are installed into `vendor/<platform>/` during package installat
 
 ### CloudFront distribution through Realtime Speech
 
-Use the Realtime Speech service URL for the intended environment and a current Tellus
-login access token. Download the built SDK package and checksum, then install it:
+Use SDK **0.2.2 or later** for download-token authentication. Set the Realtime Speech
+service URL for your environment and a current Tellus login access token. The
+following Bash example downloads and verifies the built SDK before installation
+(requires Node.js, curl and shasum):
 
 ```bash
 export TELLUS_AUDIO_DOWNLOAD_BASE_URL="https://<realtime-speech-host>"
 export TELLUS_AUDIO_ENGINE_TOKEN="<short-lived-login-access-token>"
-SDK_FILE="tellus-ai-audio-sdk-0.2.1.tgz"
-SDK_URL="$TELLUS_AUDIO_DOWNLOAD_BASE_URL/v1/audio-artifacts/sdk/0.2.1/$SDK_FILE"
-curl --fail --location --proto '=https' --proto-redir '=https' \
-  -H "Authorization: Bearer $TELLUS_AUDIO_ENGINE_TOKEN" "$SDK_URL" -o "$SDK_FILE" &&
-curl --fail --location --proto '=https' --proto-redir '=https' \
-  -H "Authorization: Bearer $TELLUS_AUDIO_ENGINE_TOKEN" "$SDK_URL.sha256" -o "$SDK_FILE.sha256" &&
+SDK_FILE="tellus-ai-audio-sdk-0.2.2.tgz"
+SDK_API="$TELLUS_AUDIO_DOWNLOAD_BASE_URL/v1/audio-artifacts/sdk/0.2.2"
+download_sdk_file() {
+  local file="$1" grant url token
+  grant="$(curl --fail --silent --show-error --proto '=https' --request POST \
+    -H "Authorization: Bearer $TELLUS_AUDIO_ENGINE_TOKEN" "$SDK_API/$file/token")" || return
+  url="$(printf '%s' "$grant" | node -pe "JSON.parse(require('fs').readFileSync(0, 'utf8')).url")" || return
+  token="$(printf '%s' "$grant" | node -pe "JSON.parse(require('fs').readFileSync(0, 'utf8')).token")" || return
+  case "$url" in https://download.tellus.ai.kr/*) ;; *) return 1 ;; esac
+  curl --fail --silent --show-error --proto '=https' \
+    -H "Authorization: Bearer $token" "$url" -o "$file"
+}
+download_sdk_file "$SDK_FILE" &&
+download_sdk_file "$SDK_FILE.sha256" &&
 shasum -a 256 -c "$SDK_FILE.sha256" &&
 npm install "./$SDK_FILE"
 ```
 
-Both the SDK package and the pinned native archive/checksum are downloaded from
-CloudFront. Realtime Speech authenticates the login token and returns a signed
-URL valid for at most five minutes, bounded by the login credential expiration.
-The download domain is `download.tellus.ai.kr`; during DNS setup the server may
-use the distribution's `*.cloudfront.net` domain. Do not put that CDN domain in
-`TELLUS_AUDIO_DOWNLOAD_BASE_URL`: this variable must point to Realtime Speech,
-which issues a fresh signed URL for each file request.
+The API returns JSON `{url, token, expires_at, token_type: "Bearer"}`. The URL is
+fixed and contains no authentication query. The separate download JWT is valid
+for one exact file in one environment for at most five minutes, bounded by the
+login expiration. Send it in `Authorization: Bearer <download token>` to CloudFront.
+Do not use `--location` or `--location-trusted` with the CDN request.
 
-The installer requests `/v1/audio-artifacts/engine/<version>/<filename>`.
-The login token is sent only to the configured service origin and is not forwarded
-to CloudFront. Curl 7.58+ likewise strips Authorization on cross-host redirects;
-do not use `--location-trusted`. SHA-256 is checked before installation. A denied
-or failed download fails installation without automatically switching to GitHub.
+Postinstall requests a new token using
+`POST /v1/audio-artifacts/engine/<version>/<filename>/token` immediately before
+downloading each native checksum/archive. The login token goes only to Realtime
+Speech. A distinct download token goes only to `https://download.tellus.ai.kr`.
+The installer rejects other destinations, query credentials and all CDN redirects.
+On CDN 401 it requests one fresh token and retries once; an expired login requires
+new login credentials and a new installation attempt. SHA-256 is checked before
+replacing the engine. Failed downloads never switch to GitHub automatically.
 
-The server maps its existing `ENVIRONMENT` (development/staging/production) to
-`dev/audio/`, `stg/audio/`, or `prod/audio/` in the shared artifact bucket. Each
-CloudFront path trusts only that environment's signing key. Clients select the
-matching Realtime Speech host, not an S3 prefix or environment parameter.
-The stable API routes stay unchanged when moving from S3 to CloudFront.
-Do not save the expiring CloudFront URL in package.json or package-lock.json.
-Keep the verified local SDK tarball available for subsequent `npm ci` installs;
-CI should download it through the same authenticated API before installing.
+The server maps `ENVIRONMENT` (development/staging/production) to dev/stg/prod.
+Clients select the matching Realtime Speech host. Every CloudFront request,
+including cache hits and Range requests, is checked by the environment verifier.
+Sharing only the URL grants no access. Sharing its bearer token permits access
+to the same file until it expires; this is not a single-use token.
 
-If login credentials expire during installation, obtain a new login token and
-rerun installation. Download authorization is separate from the native execution
-permit: after installation, `attachEngineAuthorization()` must keep renewing
-the execution permit over `/audio`. No AWS access keys are shipped to clients.
+The previous GET/307 signed-URL API is removed in the matching server release;
+SDK 0.2.1 must be upgraded for this distribution path. Deploy the server token API,
+SDK 0.2.2, and CloudFront token verifier together. Keep the verified local SDK tarball
+available for subsequent `npm ci`; CI should acquire it through the same token API.
+Do not store tokens in package.json, package-lock.json, installation state or logs.
+
+Download authorization is separate from native execution: `attachEngineAuthorization()`
+continues to renew execution approval over `/audio`. No AWS credentials are shipped
+to clients. `TELLUS_AUDIO_DOWNLOAD_BASE_URL` always points to Realtime Speech, not the CDN.
 
 ### Publishing SDK packages to the shared bucket
 
@@ -151,7 +164,7 @@ The required native engine version is pinned in `release-assets.json`:
 
 ```json
 {
-  "sdkVersion": "0.2.1",
+  "sdkVersion": "0.2.2",
   "nativeEngineVersion": "0.3.0",
   "nativeEngineTag": "v0.3.0"
 }

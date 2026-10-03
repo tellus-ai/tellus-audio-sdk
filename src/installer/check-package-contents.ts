@@ -61,6 +61,8 @@ export function checkPackageContents(): void {
     'dist/runtime/engine-runtime.d.ts',
     'dist/platform/asset-key.js',
     'dist/platform/asset-key.d.ts',
+    'dist/installer/artifact-download.js',
+    'dist/installer/artifact-download.d.ts',
     'dist/installer/install-binary.js',
     'dist/installer/install-binary.d.ts',
     'dist/installer/install-binary-cli.js',
