@@ -30,7 +30,7 @@ function installerFixture(t, { corrupt = false, denied = false, baseUrl = 'https
   const oldBase = process.env.TELLUS_AUDIO_DOWNLOAD_BASE_URL;
   const oldToken = process.env.TELLUS_AUDIO_ENGINE_TOKEN;
   process.env.TELLUS_AUDIO_DOWNLOAD_BASE_URL = baseUrl;
-  process.env.TELLUS_AUDIO_ENGINE_TOKEN = 'login-access-token';
+  process.env.TELLUS_AUDIO_ENGINE_TOKEN = 'customer-installation-token';
   t.after(() => {
     https.get = originalGet;
     https.request = originalRequest;
@@ -56,7 +56,7 @@ function installerFixture(t, { corrupt = false, denied = false, baseUrl = 'https
         body = Buffer.from(malformedGrant ? '{invalid' : JSON.stringify({
           url: grantUrl || `https://download.tellus.ai.kr/dev/audio/engine/v${manifest.nativeEngineVersion}/${filename}`,
           token: `download.${Buffer.from(filename).toString('base64url')}.signature`,
-          expires_at: Math.floor(Date.now() / 1000) + 300,
+          expires_at: Math.floor(Date.now() / 1000) + 2_592_000,
           token_type: 'Bearer',
         }));
       } else if (parsed.hostname === 'download.tellus.ai.kr') {
@@ -87,7 +87,7 @@ function installerFixture(t, { corrupt = false, denied = false, baseUrl = 'https
   return { root, installBinary, requests, asset, manifest };
 }
 
-test('installs the pinned CloudFront artifact through dedicated bearer tokens without forwarding the login token', async (t) => {
+test('installs the pinned CloudFront artifact through dedicated bearer tokens without forwarding the installation token', async (t) => {
   const { root, installBinary, requests, asset, manifest } = installerFixture(t);
   await installBinary();
   const serviceRequests = requests.filter(({ url }) => new URL(url).hostname === 'speech.example.test');
@@ -95,7 +95,7 @@ test('installs the pinned CloudFront artifact through dedicated bearer tokens wi
     `https://speech.example.test/v1/audio-artifacts/engine/${manifest.nativeEngineVersion}/${asset.sha256File}/token`,
     `https://speech.example.test/v1/audio-artifacts/engine/${manifest.nativeEngineVersion}/${asset.file}/token`,
   ]);
-  assert.ok(serviceRequests.every(({ headers, method }) => method === 'POST' && headers.Authorization === 'Bearer login-access-token'));
+  assert.ok(serviceRequests.every(({ headers, method }) => method === 'POST' && headers.Authorization === 'Bearer customer-installation-token'));
   const cdnRequests = requests.filter(({ url }) => new URL(url).hostname === 'download.tellus.ai.kr');
   assert.equal(cdnRequests.length, 2);
   assert.ok(cdnRequests.every(({ headers }) => headers.Authorization.startsWith("Bearer download.")));
@@ -104,7 +104,7 @@ test('installs the pinned CloudFront artifact through dedicated bearer tokens wi
   const state = fs.readFileSync(path.join(target, '.install-state.json'), 'utf8');
   assert.ok(!state.includes('download.'));
   assert.ok(cdnRequests.every(({ url }) => new URL(url).search === ''));
-  assert.ok(!state.includes('login-access-token'));
+  assert.ok(!state.includes('customer-installation-token'));
 });
 
 test('rejects a corrupt CloudFront archive before replacing the installed engine', async (t) => {
