@@ -64,7 +64,7 @@ installed into `vendor/<platform>/` during package installation.
 
 ### Private S3 distribution through Realtime Speech
 
-Use the Realtime Speech service URL and a current Tellus login access token:
+Use the Realtime Speech service URL for the intended environment and a current Tellus login access token:
 
 ```bash
 export TELLUS_AUDIO_DOWNLOAD_BASE_URL="https://<realtime-speech-host>"
@@ -78,7 +78,10 @@ the login token and redirects to a private S3 URL valid for at most five minutes
 and no longer than the login credential. The login token is sent only to the
 configured service origin; it is not forwarded to S3. The installer verifies
 SHA-256 before replacing the existing engine. A denied or failed S3 download
-fails installation; it never switches to GitHub automatically.
+fails installation; it never switches to GitHub automatically. The server selects
+`dev/audio/`, `stg/audio/`, or `prod/audio/` inside one shared artifact bucket
+using `AUDIO_ARTIFACTS_ENVIRONMENT`. Clients do not set an S3 prefix or environment
+parameter; use the matching Realtime Speech host.
 
 The built SDK package is also published to S3. To install that package, download
 it and its checksum through the authenticated endpoint before running npm:
@@ -98,6 +101,22 @@ If login credentials expire during installation, obtain a new login token and
 rerun installation. Download authorization is separate from the native execution
 permit: after installation, `attachEngineAuthorization()` must keep renewing
 the execution permit over `/audio`. No AWS access keys are shipped to clients.
+
+### Publishing SDK packages to the shared bucket
+
+Set repository Actions Variables `AUDIO_ARTIFACTS_S3_BUCKET` to
+`tellus-audio-artifacts-374604322840` and `AUDIO_ARTIFACTS_S3_REGION` to
+`ap-northeast-2`. Create GitHub Environments `dev`, `stg`, and `prod`; in each, set
+`AWS_AUDIO_ARTIFACTS_ROLE_ARN` to its SDK publisher role from Terraform's
+`publisher_role_arns.<environment>.sdk` output. Restrict deployment refs to the
+`main` branch and `v*` tags. The OIDC trust subject includes the environment.
+
+A matching `vX.Y.Z` tag publishes to `prod/audio/sdk/vX.Y.Z/`. Manual
+`publish-s3.yml` runs require an environment choice (default dev), and accept
+`main` or a tag matching package.json. The workflow sets
+`AUDIO_ARTIFACTS_ENVIRONMENT` from the selected environment. Local publisher
+invocations must also set that variable explicitly to dev, stg, or prod.
+Missing or invalid environments are rejected before any S3 write.
 
 ### GitHub release installation
 
