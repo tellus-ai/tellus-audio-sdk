@@ -49,8 +49,8 @@ function installerFixture(t, { corrupt = false, denied = false, baseUrl = 'https
       const headers = {};
       if (parsed.origin === 'https://speech.example.test') {
         statusCode = denied ? 401 : 307;
-        headers.location = redirectLocation ?? `https://bucket.s3.ap-northeast-2.amazonaws.com${parsed.pathname}?X-Amz-Signature=private-signature`;
-      } else if (parsed.hostname.endsWith('.amazonaws.com')) {
+        headers.location = redirectLocation ?? `https://download.tellus.ai.kr/dev/audio/engine/v${parsed.pathname.slice("/v1/audio-artifacts/engine/".length)}?Expires=2000000000&Key-Pair-Id=artifact-dev&Signature=private-signature`;
+      } else if (parsed.hostname === 'download.tellus.ai.kr') {
         body = parsed.pathname.endsWith('.sha256')
           ? Buffer.from(`${corrupt ? '0'.repeat(64) : digest}  ${asset.file}\n`)
           : archive;
@@ -68,7 +68,7 @@ function installerFixture(t, { corrupt = false, denied = false, baseUrl = 'https
   return { root, installBinary, requests, asset, manifest };
 }
 
-test('installs the pinned S3 artifact through authenticated Speech redirects without forwarding the login token', async (t) => {
+test('installs the pinned CloudFront artifact through authenticated Speech redirects without forwarding the login token', async (t) => {
   const { root, installBinary, requests, asset, manifest } = installerFixture(t);
   await installBinary();
   const serviceRequests = requests.filter(({ url }) => new URL(url).hostname === 'speech.example.test');
@@ -77,9 +77,9 @@ test('installs the pinned S3 artifact through authenticated Speech redirects wit
     `https://speech.example.test/v1/audio-artifacts/engine/${manifest.nativeEngineVersion}/${asset.file}`,
   ]);
   assert.ok(serviceRequests.every(({ headers }) => headers.Authorization === 'Bearer login-access-token'));
-  const s3Requests = requests.filter(({ url }) => new URL(url).hostname.endsWith('.amazonaws.com'));
-  assert.equal(s3Requests.length, 2);
-  assert.ok(s3Requests.every(({ headers }) => headers.Authorization === undefined));
+  const cdnRequests = requests.filter(({ url }) => new URL(url).hostname === 'download.tellus.ai.kr');
+  assert.equal(cdnRequests.length, 2);
+  assert.ok(cdnRequests.every(({ headers }) => headers.Authorization === undefined));
   const target = path.join(root, 'vendor', asset.platform);
   assert.equal(fs.readFileSync(path.join(target, 'installed.txt'), 'utf8'), 'verified native archive');
   const state = fs.readFileSync(path.join(target, '.install-state.json'), 'utf8');
@@ -87,7 +87,7 @@ test('installs the pinned S3 artifact through authenticated Speech redirects wit
   assert.ok(!state.includes('login-access-token'));
 });
 
-test('rejects a corrupt S3 archive before replacing the installed engine', async (t) => {
+test('rejects a corrupt CloudFront archive before replacing the installed engine', async (t) => {
   const { root, installBinary, asset } = installerFixture(t, { corrupt: true });
   const target = path.join(root, 'vendor', asset.platform);
   fs.mkdirSync(target, { recursive: true });
