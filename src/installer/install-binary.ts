@@ -13,6 +13,7 @@ import {
 import { get } from 'node:https';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { pipeline } from 'node:stream/promises';
 
 import { currentAssetKey } from '../platform/asset-key';
 
@@ -34,6 +35,7 @@ type DownloadOptions = {
   url: string;
   destination: string;
   token: string;
+  authorizationOrigin: string;
   manifest: ReleaseManifest;
   key: string;
 };
@@ -50,7 +52,7 @@ type GitHubRelease = {
 const ROOT = join(__dirname, '..', '..');
 const NATIVE_ENGINE_REPOSITORY = 'tellus-ai/Tellus-audio-engine';
 const MISSING_TOKEN_MESSAGE =
-  'TELLUS_AUDIO_ENGINE_TOKEN is required for GitHub release asset downloads. ' +
+  'TELLUS_AUDIO_ENGINE_TOKEN is required for authenticated release downloads. ' +
   'Set TELLUS_AUDIO_ENGINE_TOKEN in your project .env file or export it in your terminal before installing. ' +
   'For more details, contact lucas@tellus.ai.kr.';
 
@@ -132,20 +134,21 @@ function assertAssetVersion(asset: ReleaseAsset, manifest: ReleaseManifest): voi
   }
 }
 
-function requestHeaders(url: string, token: string, accept = 'application/octet-stream'): Record<string, string> {
+function requestHeaders(url: string, token: string, accept = 'application/octet-stream', authorizationOrigin = 'https://api.github.com'): Record<string, string> {
   const headers: Record<string, string> = {
     'User-Agent': 'tellus-audio-sdk-installer',
     Accept: accept,
   };
-  if (token && new URL(url).hostname === 'api.github.com') {
+  if (token && new URL(url).origin === authorizationOrigin) {
     headers.Authorization = `Bearer ${token}`;
   }
   return headers;
 }
 
-function downloadToFile(url: string, destination: string, token: string, redirectCount = 0): Promise<void> {
-  if (url.startsWith('file://')) {
-    return Promise.reject(new Error('local file URLs are not supported for binary downloads'));
+function downloadToFile(url: string, destination: string, token: string, authorizationOrigin: string, redirectCount = 0): Promise<void> {
+  const parsedUrl = new URL(url);
+  if (parsedUrl.protocol !== 'https:' || parsedUrl.username || parsedUrl.password) {
+    return Promise.reject(new Error('binary downloads require HTTPS URLs without embedded credentials'));
   }
 
   if (redirectCount > 5) {
@@ -153,7 +156,7 @@ function downloadToFile(url: string, destination: string, token: string, redirec
   }
 
   return new Promise((resolvePromise, reject) => {
-    const request = get(url, { headers: requestHeaders(url, token) }, (response) => {
+    const request = get(url, { headers: requestHeaders(url, token, 'application/octet-stream', authorizationOrigin) }, (response) => {
       const statusCode = response.statusCode || 0;
       if ([301, 302, 303, 307, 308].includes(statusCode)) {
         response.resume();
@@ -162,8 +165,14 @@ function downloadToFile(url: string, destination: string, token: string, redirec
           reject(new Error(`redirect without Location header: ${statusCode}`));
           return;
         }
-        const nextUrl = new URL(location, url).toString();
-        downloadToFile(nextUrl, destination, token, redirectCount + 1).then(resolvePromise, reject);
+        let nextUrl: string;
+        try {
+          nextUrl = new URL(location, url).toString();
+        } catch {
+          reject(new Error('invalid download redirect'));
+          return;
+        }
+        downloadToFile(nextUrl, destination, token, authorizationOrigin, redirectCount + 1).then(resolvePromise, reject);
         return;
       }
 
@@ -174,12 +183,11 @@ function downloadToFile(url: string, destination: string, token: string, redirec
       }
 
       const output = createWriteStream(destination, { mode: 0o600 });
-      response.pipe(output);
-      output.on('finish', () => output.close(() => resolvePromise()));
-      output.on('error', reject);
+      pipeline(response, output).then(resolvePromise, reject);
     });
 
     request.on('error', reject);
+    request.setTimeout(30_000, () => request.destroy(new Error('binary download timed out')));
   });
 }
 
@@ -209,7 +217,7 @@ function getJson<T>(url: string, token: string): Promise<T> {
   });
 }
 
-async function resolveReleaseAssetUrls(manifest: ReleaseManifest, asset: ReleaseAsset): Promise<{ archiveUrl: string; sha256Url: string }> {
+async function resolveReleaseAssetUrls(manifest: ReleaseManifest, asset: ReleaseAsset): Promise<{ archiveUrl: string; sha256Url: string; authorizationOrigin: string }> {
   if (!asset.file || !asset.sha256File) {
     fail('Release asset manifest must include file and sha256File for the current platform');
   }
@@ -217,6 +225,25 @@ async function resolveReleaseAssetUrls(manifest: ReleaseManifest, asset: Release
   const token = tokenForDownload();
   if (!token) {
     fail(MISSING_TOKEN_MESSAGE);
+  }
+
+  const downloadBaseUrl = process.env.TELLUS_AUDIO_DOWNLOAD_BASE_URL;
+  if (downloadBaseUrl !== undefined) {
+    let base: URL;
+    try {
+      base = new URL(downloadBaseUrl);
+    } catch {
+      fail('TELLUS_AUDIO_DOWNLOAD_BASE_URL must be an HTTPS service URL');
+    }
+    if (base.protocol !== 'https:' || base.username || base.password || base.search || base.hash) {
+      fail('TELLUS_AUDIO_DOWNLOAD_BASE_URL must use HTTPS without credentials, a query, or a fragment');
+    }
+    const releaseBase = `${base.toString().replace(/\/$/, '')}/v1/audio-artifacts/engine/${manifest.nativeEngineVersion}`;
+    return {
+      archiveUrl: `${releaseBase}/${encodeURIComponent(asset.file)}`,
+      sha256Url: `${releaseBase}/${encodeURIComponent(asset.sha256File)}`,
+      authorizationOrigin: base.origin,
+    };
   }
 
   const releaseUrl = `https://api.github.com/repos/${NATIVE_ENGINE_REPOSITORY}/releases/tags/${encodeURIComponent(
@@ -235,6 +262,7 @@ async function resolveReleaseAssetUrls(manifest: ReleaseManifest, asset: Release
   return {
     archiveUrl: archive.url,
     sha256Url: checksum.url,
+    authorizationOrigin: 'https://api.github.com',
   };
 }
 
@@ -302,12 +330,12 @@ function alreadyInstalled(targetDir: string, expectedSha: string): boolean {
 
 async function downloadRequiredFile(options: DownloadOptions): Promise<void> {
   try {
-    await downloadToFile(options.url, options.destination, options.token);
+    await downloadToFile(options.url, options.destination, options.token, options.authorizationOrigin);
   } catch (error) {
     fail(
       [
         `failed to download ${options.label} for ${options.key}: ${errorMessage(error)}`,
-        `url: ${options.url}`,
+        `source: ${new URL(options.url).origin}${new URL(options.url).pathname}`,
         `sdkVersion: ${options.manifest.sdkVersion}`,
         `nativeEngineVersion: ${options.manifest.nativeEngineVersion}`,
         `nativeEngineTag: ${options.manifest.nativeEngineTag}`,
@@ -327,7 +355,7 @@ export async function installBinary(): Promise<void> {
   }
   assertAssetVersion(asset, manifest);
 
-  const { archiveUrl, sha256Url } = await resolveReleaseAssetUrls(manifest, asset);
+  const { archiveUrl, sha256Url, authorizationOrigin } = await resolveReleaseAssetUrls(manifest, asset);
 
   const platformDir = asset.platform || key;
   const targetDir = join(ROOT, 'vendor', platformDir);
@@ -345,6 +373,7 @@ export async function installBinary(): Promise<void> {
       url: sha256Url,
       destination: shaPath,
       token,
+      authorizationOrigin,
       manifest,
       key,
     });
@@ -361,6 +390,7 @@ export async function installBinary(): Promise<void> {
       url: archiveUrl,
       destination: archivePath,
       token,
+      authorizationOrigin,
       manifest,
       key,
     });

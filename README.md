@@ -62,6 +62,49 @@ installed into `vendor/<platform>/` during package installation.
 
 ## Install
 
+### Private S3 distribution through Realtime Speech
+
+Use the Realtime Speech service URL and a current Tellus login access token:
+
+```bash
+export TELLUS_AUDIO_DOWNLOAD_BASE_URL="https://<realtime-speech-host>"
+export TELLUS_AUDIO_ENGINE_TOKEN="<short-lived-login-access-token>"
+npm install git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.2.1
+```
+
+The installer requests the pinned native archive and checksum from
+`/v1/audio-artifacts/engine/<version>/<filename>`. Realtime Speech authenticates
+the login token and redirects to a private S3 URL valid for at most five minutes
+and no longer than the login credential. The login token is sent only to the
+configured service origin; it is not forwarded to S3. The installer verifies
+SHA-256 before replacing the existing engine. A denied or failed S3 download
+fails installation; it never switches to GitHub automatically.
+
+The built SDK package is also published to S3. To install that package, download
+it and its checksum through the authenticated endpoint before running npm:
+
+```bash
+SDK_FILE="tellus-ai-audio-sdk-0.2.1.tgz"
+SDK_URL="$TELLUS_AUDIO_DOWNLOAD_BASE_URL/v1/audio-artifacts/sdk/0.2.1/$SDK_FILE"
+curl --fail --location --proto '=https' --proto-redir '=https' \
+  -H "Authorization: Bearer $TELLUS_AUDIO_ENGINE_TOKEN" "$SDK_URL" -o "$SDK_FILE"
+curl --fail --location --proto '=https' --proto-redir '=https' \
+  -H "Authorization: Bearer $TELLUS_AUDIO_ENGINE_TOKEN" "$SDK_URL.sha256" -o "$SDK_FILE.sha256"
+shasum -a 256 -c "$SDK_FILE.sha256"
+npm install "./$SDK_FILE"
+```
+
+If login credentials expire during installation, obtain a new login token and
+rerun installation. Download authorization is separate from the native execution
+permit: after installation, `attachEngineAuthorization()` must keep renewing
+the execution permit over `/audio`. No AWS access keys are shipped to clients.
+
+### GitHub release installation
+
+When `TELLUS_AUDIO_DOWNLOAD_BASE_URL` is unset, the existing private GitHub Release
+installation remains available and `TELLUS_AUDIO_ENGINE_TOKEN` must be a GitHub
+token. Set the S3 service URL explicitly to use the S3 distribution path.
+
 Set the private release token before installation:
 
 ```bash
@@ -82,7 +125,7 @@ The required native engine version is pinned in `release-assets.json`:
 
 ```json
 {
-  "sdkVersion": "0.2.0",
+  "sdkVersion": "0.2.1",
   "nativeEngineVersion": "0.3.0",
   "nativeEngineTag": "v0.3.0"
 }
@@ -104,6 +147,7 @@ TELLUS_AUDIO_ENGINE_TOKEN=...
 | Name | Description |
 | --- | --- |
 | `TELLUS_AUDIO_ENGINE_TOKEN` | Bearer token for private GitHub Release asset downloads. The installer also reads this single key from the installing project's `.env` file. |
+| `TELLUS_AUDIO_DOWNLOAD_BASE_URL` | Optional HTTPS Realtime Speech base URL for private S3 distribution. When set, `TELLUS_AUDIO_ENGINE_TOKEN` is a Tellus login access token instead of a GitHub token. Export this URL in the process environment. |
 | `TELLUS_AUDIO_ENGINE_MODEL_DIR` | Optional override for the native model directory. When omitted, the SDK looks for bundled `models/` next to the installed native binary. |
 | `ORT_DYLIB_PATH` | Optional override for the ONNX Runtime dynamic library path. When omitted, the SDK resolves the bundled ONNX Runtime for the current platform. |
 
@@ -271,9 +315,9 @@ Native approval requests require server `ENGINE_LICENSE_KEY_ID`, `ENGINE_LICENSE
 and login verification settings. No company allowlist is required. Ordinary browser audio producers
 can use `/audio` without this native approval protocol or signing configuration. The matching public
 key is embedded in a new native build using
-`TELLUS_ENGINE_LICENSE_PUBLIC_KEYS`. The private signing key stays on the server. The existing
-release manifest still references the previously published native version. To distribute an engine
-that requires authorization, publish the authorized native build and update `release-assets.json`.
+`TELLUS_ENGINE_LICENSE_PUBLIC_KEYS` as a single 64-character Ed25519 public key hex.
+The private signing key stays on the server. The release manifest pins native engine v0.3.0,
+whose capture requires runtime approval. Publish a new native version before changing that pin.
 This SDK continues to support ordinary capture with older native binaries. Only explicit authorization
 API calls and `attachEngineAuthorization()` reject those binaries with `engine_authorization_unsupported`.
 Using the SDK with a newly authorized native build still requires approval enforced by Rust.

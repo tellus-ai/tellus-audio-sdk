@@ -37,3 +37,6 @@ jobs:
 
       - name: Verify package contents
         run: npm run check:package
+
+      - name: Verify download and authorization contracts
+        run: npm test
