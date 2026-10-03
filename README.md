@@ -80,7 +80,8 @@ configured service origin; it is not forwarded to S3. The installer verifies
 SHA-256 before replacing the existing engine. A denied or failed S3 download
 fails installation; it never switches to GitHub automatically. The server selects
 `dev/audio/`, `stg/audio/`, or `prod/audio/` inside one shared artifact bucket
-using `AUDIO_ARTIFACTS_ENVIRONMENT`. Clients do not set an S3 prefix or environment
+using the server's existing `ENVIRONMENT` (development/staging/production).
+Clients do not set an S3 prefix or environment
 parameter; use the matching Realtime Speech host.
 
 The built SDK package is also published to S3. To install that package, download
