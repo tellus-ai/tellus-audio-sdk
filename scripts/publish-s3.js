@@ -9,11 +9,14 @@ function runAws(args) {
   return execFileSync('aws', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
-function publishRelease({ directory, version, bucket, runAws: execute = runAws }) {
+function publishRelease({ directory, version, bucket, environment, runAws: execute = runAws }) {
   if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(version)) {
     throw new Error('A stable release version X.Y.Z is required');
   }
   if (!bucket || !directory) throw new Error('AUDIO_ARTIFACTS_S3_BUCKET and release directory are required');
+  if (!['dev', 'stg', 'prod'].includes(environment)) {
+    throw new Error('AUDIO_ARTIFACTS_ENVIRONMENT must be dev, stg, or prod');
+  }
   const files = [];
   for (const filename of [`tellus-ai-audio-sdk-${version}.tgz`]) {
     const body = fs.readFileSync(path.join(directory, filename));
@@ -27,7 +30,7 @@ function publishRelease({ directory, version, bucket, runAws: execute = runAws }
   for (const filename of files) {
     const bodyPath = path.join(directory, filename);
     const digest = createHash('sha256').update(fs.readFileSync(bodyPath)).digest('base64');
-    const key = `audio/sdk/v${version}/${filename}`;
+    const key = `${environment}/audio/sdk/v${version}/${filename}`;
     try {
       execute([
         's3api', 'put-object', '--bucket', bucket, '--key', key, '--body', bodyPath,
@@ -55,6 +58,7 @@ if (require.main === module) {
       version: process.argv[2],
       directory: process.argv[3],
       bucket: process.env.AUDIO_ARTIFACTS_S3_BUCKET,
+      environment: process.env.AUDIO_ARTIFACTS_ENVIRONMENT,
     });
   } catch (error) {
     console.error(error.message);

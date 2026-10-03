@@ -4,19 +4,28 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      environment:
+        description: Destination prefix in the shared artifact bucket
+        required: true
+        default: dev
+        type: choice
+        options: [dev, stg, prod]
 
 permissions:
   contents: read
   id-token: write
 
 concurrency:
-  group: audio-sdk-s3-${{ github.ref }}
+  group: audio-sdk-s3-${{ inputs.environment || 'prod' }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    environment: ${{ inputs.environment || 'prod' }}
     env:
+      AUDIO_ARTIFACTS_ENVIRONMENT: ${{ inputs.environment || 'prod' }}
       AUDIO_ARTIFACTS_S3_BUCKET: ${{ vars.AUDIO_ARTIFACTS_S3_BUCKET }}
       AWS_REGION: ${{ vars.AUDIO_ARTIFACTS_S3_REGION }}
     steps:
@@ -36,6 +45,7 @@ jobs:
             echo 'Publish from main or the tag matching package.json'
             exit 1
           fi
+          [[ "$AUDIO_ARTIFACTS_ENVIRONMENT" =~ ^(dev|stg|prod)$ ]]
           test -n "$AUDIO_ARTIFACTS_S3_BUCKET"
           test -n "$AWS_REGION"
           test -n "$ROLE_ARN"
