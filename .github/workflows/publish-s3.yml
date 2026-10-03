@@ -1,0 +1,58 @@
+name: Publish SDK to S3
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: audio-sdk-s3-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      AUDIO_ARTIFACTS_S3_BUCKET: ${{ vars.AUDIO_ARTIFACTS_S3_BUCKET }}
+      AWS_REGION: ${{ vars.AUDIO_ARTIFACTS_S3_REGION }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Validate release configuration
+        env:
+          ROLE_ARN: ${{ vars.AWS_AUDIO_ARTIFACTS_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p 'require("./package.json").version')"
+          [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          if [ "$GITHUB_REF" != refs/heads/main ] && [ "$GITHUB_REF" != "refs/tags/v${VERSION}" ]; then
+            echo 'Publish from main or the tag matching package.json'
+            exit 1
+          fi
+          test -n "$AUDIO_ARTIFACTS_S3_BUCKET"
+          test -n "$AWS_REGION"
+          test -n "$ROLE_ARN"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - run: npm run check:package
+      - name: Pack SDK and checksum
+        run: |
+          set -euo pipefail
+          mkdir release-files
+          npm pack --pack-destination release-files
+          cd release-files
+          sha256sum "tellus-ai-audio-sdk-${VERSION}.tgz" > "tellus-ai-audio-sdk-${VERSION}.tgz.sha256"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_AUDIO_ARTIFACTS_ROLE_ARN }}
+          aws-region: ${{ vars.AUDIO_ARTIFACTS_S3_REGION }}
+      - name: Publish immutable SDK package
+        run: node scripts/publish-s3.js "$VERSION" release-files
