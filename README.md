@@ -131,9 +131,10 @@ Set repository Actions Variables `AUDIO_ARTIFACTS_S3_BUCKET` to
 `publisher_role_arns.<environment>.sdk` output. Restrict deployment refs to the
 `main` branch and `v*` tags. The OIDC trust subject includes the environment.
 
-A matching `vX.Y.Z` tag publishes to `prod/audio/sdk/vX.Y.Z/`. Manual
-`publish-s3.yml` runs require an environment choice (default dev), and accept
-`main` or a tag matching package.json. The workflow sets
+Publishing a non-prerelease GitHub Release with a matching `vX.Y.Z` tag uploads
+the SDK to `prod/audio/sdk/vX.Y.Z/`. Tag pushes and draft releases do not trigger
+automatic uploads. Manual `publish-s3.yml` runs require an environment choice
+(default dev), and accept `main` or a tag matching package.json. The workflow sets
 `AUDIO_ARTIFACTS_ENVIRONMENT` from the selected environment. Local publisher
 invocations must also set that variable explicitly to dev, stg, or prod.
 Missing or invalid environments are rejected before any S3 write.
