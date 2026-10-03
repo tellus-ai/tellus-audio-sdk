@@ -1,6 +1,6 @@
 {
   "name": "@tellus-ai/audio-sdk",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Tellus Audio SDK wrapper for Electron and Node.js",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -27,6 +27,8 @@
     "dist/runtime/engine-runtime.d.ts",
     "dist/platform/asset-key.js",
     "dist/platform/asset-key.d.ts",
+    "dist/installer/artifact-download.js",
+    "dist/installer/artifact-download.d.ts",
     "dist/installer/install-binary.js",
     "dist/installer/install-binary.d.ts",
     "dist/installer/install-binary-cli.js",
