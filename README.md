@@ -72,7 +72,7 @@ An app account, app login, and a login access JWT are not required for installat
 ```bash
 export TELLUS_AUDIO_DOWNLOAD_BASE_URL="https://<realtime-speech-host>"
 export TELLUS_AUDIO_ENGINE_TOKEN="<Tellus-issued-30-day-installation-token>"
-npm install "git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.2.1"
+npm install "git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.2.2"
 ```
 
 Use the SDK tag or commit approved for your integration and keep it pinned in
@@ -155,9 +155,9 @@ The required native engine version is pinned in `release-assets.json`:
 
 ```json
 {
-  "sdkVersion": "0.2.1",
-  "nativeEngineVersion": "0.3.0",
-  "nativeEngineTag": "v0.3.0"
+  "sdkVersion": "0.2.2",
+  "nativeEngineVersion": "0.3.1",
+  "nativeEngineTag": "v0.3.1"
 }
 ```
 
@@ -346,7 +346,7 @@ and login verification settings. No company allowlist is required. Ordinary brow
 can use `/audio` without this native approval protocol or signing configuration. The matching public
 key is embedded in a new native build using
 `TELLUS_ENGINE_LICENSE_PUBLIC_KEYS` as a single 64-character Ed25519 public key hex.
-The private signing key stays on the server. The release manifest pins native engine v0.3.0,
+The private signing key stays on the server. The release manifest pins native engine v0.3.1,
 whose capture requires runtime approval. Publish a new native version before changing that pin.
 This SDK continues to support ordinary capture with older native binaries. Only explicit authorization
 API calls and `attachEngineAuthorization()` reject those binaries with `engine_authorization_unsupported`.
