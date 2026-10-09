@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 
 import { currentAssetKey, nativeFileCandidates, ortRuntimeKeys } from '../platform/asset-key';
@@ -65,7 +65,26 @@ function requiredOrtRuntimePaths(): string[] {
   ];
 }
 
-export function checkBinary(): void {
+export function checkBinary(platform?: string): void {
+  const packagePlatform = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { tellusPlatform?: string }).tellusPlatform;
+  if (packagePlatform === 'web' || packagePlatform === 'mobile') {
+    const manifest = JSON.parse(readFileSync(join(ROOT, 'release-assets.json'), 'utf8')) as { assets: Record<string, { requiredFiles: string[] }> };
+    const selectedPlatform = platform ?? process.env.TELLUS_AUDIO_ENGINE_PLATFORM;
+    const targets = selectedPlatform !== undefined ? [selectedPlatform] :
+      packagePlatform === 'web' ? ['web'] : ['ios', 'android'];
+    for (const target of targets) {
+      const asset = manifest.assets[target];
+      if (!asset?.requiredFiles.length) fail(`Release asset does not include the installation target: ${target}`);
+      const missing = asset.requiredFiles.filter(file => {
+        const filename = join(ROOT, 'vendor', target, file);
+        return !existsSync(filename) || !statSync(filename).isFile();
+      });
+      if (missing.length) fail(`Binary asset is missing required files: ${target}: ${missing.join(', ')}`);
+    }
+    console.log(`[tellus-audio-sdk] binary assets verified: ${targets.join(', ')}`);
+    return;
+  }
+  if (platform !== undefined) fail('Desktop binary verification selects the current host platform');
   const platformDir = currentPlatformDir();
   const root = join(ROOT, 'vendor', platformDir);
   const nativeFiles = requiredNativeFiles();

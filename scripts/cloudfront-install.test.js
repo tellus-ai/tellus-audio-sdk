@@ -20,7 +20,7 @@ const platformFiles = {
     'models/fe-s16.temc', 'models/fe-s48.temc', 'models/silero-vad.temc'],
 };
 
-function installerFixture(t, { corrupt = false, denied = false, baseUrl = 'https://speech.example.test', redirectLocation, grantUrl, malformedGrant = false, cdnDenials = 0, platform, missingFile } = {}) {
+function installerFixture(t, { corrupt = false, denied = false, baseUrl = 'https://speech.example.test', redirectLocation, grantUrl, malformedGrant = false, cdnDenials = 0, platform, missingFile, packagePlatform } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellus-install-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.cpSync(path.join(__dirname, '../dist'), path.join(root, 'dist'), { recursive: true });
@@ -31,7 +31,7 @@ function installerFixture(t, { corrupt = false, denied = false, baseUrl = 'https
     manifest.assets[platform] = { platform, file, sha256File: `${file}.sha256`, requiredFiles: platformFiles[platform] };
   }
   fs.writeFileSync(path.join(root, 'release-assets.json'), JSON.stringify(manifest));
-  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: manifest.sdkVersion }));
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: manifest.sdkVersion, tellusPlatform: packagePlatform }));
   const key = platform || require(path.join(root, 'dist/platform/asset-key')).currentAssetKey();
   const asset = manifest.assets[key];
   const content = path.join(root, 'content');
@@ -220,5 +220,19 @@ for (const platform of ['ios', 'android', 'web']) {
     await installBinary();
     assert.ok(fs.statSync(installed).isFile());
     assert.equal(requests.length, 8);
+  });
+}
+
+
+test('web package chooses web artifacts on a desktop host', async (t) => {
+  const { installBinary, requests } = installerFixture(t, { platform: 'web', packagePlatform: 'web' });
+  await installBinary();
+  assert.ok(requests.every(({ url }) => !url.includes('darwin') && !url.includes('linux') && !url.includes('win32')));
+});
+for (const [packagePlatform, target] of [['desktop', 'web'], ['web', 'ios'], ['mobile', undefined], ['mobile', 'web']]) {
+  test(`${packagePlatform} rejects the wrong target ${String(target)} before downloading`, async (t) => {
+    const { installBinary, requests } = installerFixture(t, { packagePlatform });
+    await assert.rejects(installBinary(target), /only installs|requires/);
+    assert.equal(requests.length, 0);
   });
 }

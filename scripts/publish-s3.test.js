@@ -9,7 +9,7 @@ const { publishRelease } = require('./publish-s3');
 function releaseFixture(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tellus-s3-release-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
-  for (const file of ['tellus-ai-audio-sdk-0.3.0.tgz']) {
+  for (const file of ['desktop', 'web', 'mobile'].map(platform => `tellus-ai-audio-sdk-${platform}-0.3.0.tgz`)) {
     const body = Buffer.from('SDK package archive fixture');
     fs.writeFileSync(path.join(directory, file), body);
     fs.writeFileSync(path.join(directory, `${file}.sha256`), `${createHash('sha256').update(body).digest('hex')}  ${file}\n`);
@@ -21,7 +21,7 @@ test('publishes all verified release files with conditional writes and S3 SHA-25
   const directory = releaseFixture(t);
   const requests = [];
   publishRelease({ directory, version: '0.3.0', bucket: 'private-artifacts', environment: 'dev', runAws: (args) => { requests.push(args); return '{}'; } });
-  assert.equal(requests.length, 2);
+  assert.equal(requests.length, 6);
   for (const args of requests) {
     assert.deepEqual(args.slice(0, 2), ['s3api', 'put-object']);
     assert.equal(args[args.indexOf('--if-none-match') + 1], '*');
@@ -33,7 +33,7 @@ test('publishes all verified release files with conditional writes and S3 SHA-25
 
 test('validates the entire release before uploading any file', (t) => {
   const directory = releaseFixture(t);
-  fs.writeFileSync(path.join(directory, 'tellus-ai-audio-sdk-0.3.0.tgz'), 'corrupt');
+  fs.writeFileSync(path.join(directory, 'tellus-ai-audio-sdk-mobile-0.3.0.tgz'), 'corrupt');
   const requests = [];
   assert.throws(() => publishRelease({ directory, version: '0.3.0', bucket: 'private-artifacts', environment: 'dev', runAws: (args) => { requests.push(args); return '{}'; } }), /checksum mismatch/);
   assert.equal(requests.length, 0);
@@ -51,7 +51,7 @@ test('can retry an interrupted release without overwriting existing files', (t) 
     reused += 1;
     return JSON.stringify({ ChecksumSHA256: lastDigest });
   } });
-  assert.equal(reused, 2);
+  assert.equal(reused, 6);
 });
 
 test('refuses to replace different bytes under an existing release version', (t) => {

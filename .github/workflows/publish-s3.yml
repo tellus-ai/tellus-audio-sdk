@@ -51,15 +51,24 @@ jobs:
           test -n "$ROLE_ARN"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
       - run: npm ci --ignore-scripts
+      - name: Assemble from the pinned engine implementation
+        uses: ./.github/actions/assemble
+        with:
+          engine-ref: ${{ vars.TELLUS_AUDIO_ENGINE_REF }}
+          token: ${{ secrets.TELLUS_CI_REPOSITORY_TOKEN }}
       - run: npm test
       - run: npm run check:package
       - name: Pack SDK and checksum
         run: |
           set -euo pipefail
           mkdir release-files
-          npm pack --pack-destination release-files
+          for PLATFORM in desktop web mobile; do
+            npm pack --workspace "@tellus-ai/audio-sdk-${PLATFORM}" --pack-destination release-files
+          done
           cd release-files
-          sha256sum "tellus-ai-audio-sdk-${VERSION}.tgz" > "tellus-ai-audio-sdk-${VERSION}.tgz.sha256"
+          for ARCHIVE in *.tgz; do
+            sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
+          done
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_AUDIO_ARTIFACTS_ROLE_ARN }}

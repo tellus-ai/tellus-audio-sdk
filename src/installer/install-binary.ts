@@ -370,7 +370,15 @@ async function downloadRequiredFile(options: DownloadOptions): Promise<void> {
 export async function installBinary(platform?: string): Promise<void> {
   const manifest = loadManifest();
   assertManifestVersion(manifest);
-  const selectedPlatform = platform ?? process.env.TELLUS_AUDIO_ENGINE_PLATFORM;
+  const packagePlatform = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { tellusPlatform?: string }).tellusPlatform;
+  const selectedPlatform = platform ?? process.env.TELLUS_AUDIO_ENGINE_PLATFORM ?? (packagePlatform === 'web' ? 'web' : undefined);
+  if (packagePlatform === 'mobile' && selectedPlatform !== 'ios' && selectedPlatform !== 'android') {
+    fail('Mobile installation requires the ios or android target');
+  }
+  if (packagePlatform === 'web' && selectedPlatform !== 'web') fail('Web package only installs the web target');
+  if (packagePlatform === 'desktop' && ['ios', 'android', 'web'].includes(selectedPlatform ?? '')) {
+    fail('Desktop package only installs desktop targets');
+  }
   const key = currentAssetKey(selectedPlatform);
   const asset = manifest.assets?.[key];
   if (!asset) {

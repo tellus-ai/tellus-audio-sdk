@@ -1,0 +1,55 @@
+{
+  "name": "@tellus-ai/audio-sdk-mobile",
+  "version": "0.2.1",
+  "description": "Tellus Audio SDK for mobile",
+  "tellusPlatform": "mobile",
+  "main": "runtime/platforms/mobile/react-native/index.js",
+  "types": "runtime/platforms/mobile/react-native/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./runtime/platforms/mobile/react-native/index.d.ts",
+      "default": "./runtime/platforms/mobile/react-native/index.js"
+    },
+    "./authorization": {
+      "types": "./runtime/bindings/typescript/authorization/realtime.d.ts",
+      "default": "./runtime/bindings/typescript/authorization/realtime.js"
+    },
+    "./app.plugin.js": "./app.plugin.js"
+  },
+  "files": [
+    "runtime",
+    "dist",
+    "release-assets.json",
+    "README.md",
+    "LICENSE",
+    "cpp",
+    "ios",
+    "android/build.gradle",
+    "android/gradle.properties",
+    "android/CMakeLists.txt",
+    "android/README.md",
+    "android/src",
+    "nitrogen/generated",
+    "TellusAudioSdk.podspec",
+    "react-native.config.js",
+    "app.plugin.js"
+  ],
+  "scripts": {
+    "postinstall": "node dist/installer/install-binary-cli.js",
+    "install:binary": "node dist/installer/install-binary-cli.js",
+    "check:binary": "node dist/installer/check-binary-cli.js"
+  },
+  "engines": {
+    "node": ">= 18"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tellus-ai/tellus-audio-sdk.git"
+  },
+  "react-native": "runtime/platforms/mobile/react-native/index.js",
+  "peerDependencies": {
+    "react-native": "*",
+    "react-native-nitro-modules": "0.35.4"
+  }
+}

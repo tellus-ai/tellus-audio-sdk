@@ -1,0 +1,38 @@
+{
+  "name": "@tellus-ai/audio-sdk-desktop",
+  "version": "0.2.1",
+  "description": "Tellus Audio SDK for desktop",
+  "tellusPlatform": "desktop",
+  "main": "runtime/platforms/desktop/electron/index.js",
+  "types": "runtime/platforms/desktop/electron/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./runtime/platforms/desktop/electron/index.d.ts",
+      "default": "./runtime/platforms/desktop/electron/index.js"
+    },
+    "./authorization": {
+      "types": "./runtime/bindings/typescript/authorization/realtime.d.ts",
+      "default": "./runtime/bindings/typescript/authorization/realtime.js"
+    }
+  },
+  "files": [
+    "runtime",
+    "dist",
+    "release-assets.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "postinstall": "node dist/installer/install-binary-cli.js",
+    "install:binary": "node dist/installer/install-binary-cli.js",
+    "check:binary": "node dist/installer/check-binary-cli.js"
+  },
+  "engines": {
+    "node": ">= 18"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tellus-ai/tellus-audio-sdk.git"
+  }
+}

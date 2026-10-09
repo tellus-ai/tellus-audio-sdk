@@ -9,13 +9,13 @@ export function copyWebAssets(destination: string): void {
   const manifest = JSON.parse(readFileSync(join(ROOT, 'release-assets.json'), 'utf8')) as {
     assets: { web: { requiredFiles: string[] } };
   };
-  const browser = join(ROOT, 'dist-browser');
+  const browser = join(ROOT, 'runtime');
   const ort = dirname(require.resolve('onnxruntime-web'));
   const ortNotices = join(ROOT, 'licenses', 'onnxruntime-web');
   const runtimeFiles = ['ort.wasm.bundle.min.mjs', 'ort-wasm-simd-threaded.mjs', 'ort-wasm-simd-threaded.wasm'];
   const required = [
     ...manifest.assets.web.requiredFiles.map((file) => join(source, file)),
-    join(browser, 'browser', 'worker.js'), join(browser, 'browser', 'worklet.js'),
+    join(browser, 'platforms', 'web', 'worker.js'), join(browser, 'platforms', 'web', 'worklet.js'),
     ...runtimeFiles.map((file) => join(ort, file)),
     ...['LICENSE', 'ThirdPartyNotices.txt'].map((file) => join(ortNotices, file)),
   ];

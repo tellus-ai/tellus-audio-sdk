@@ -18,7 +18,7 @@ function publishRelease({ directory, version, bucket, environment, runAws: execu
     throw new Error('AUDIO_ARTIFACTS_ENVIRONMENT must be dev, stg, or prod');
   }
   const files = [];
-  for (const filename of [`tellus-ai-audio-sdk-${version}.tgz`]) {
+  for (const filename of ['desktop', 'web', 'mobile'].map(platform => `tellus-ai-audio-sdk-${platform}-${version}.tgz`)) {
     const body = fs.readFileSync(path.join(directory, filename));
     const digest = createHash('sha256').update(body).digest('hex');
     const checksum = fs.readFileSync(path.join(directory, `${filename}.sha256`), 'utf8').trim();

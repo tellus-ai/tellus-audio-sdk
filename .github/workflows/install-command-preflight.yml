@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  postinstall-build-command:
-    name: Postinstall build command (${{ matrix.os }})
+  platform-packages:
+    name: Platform packages (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -32,11 +32,11 @@ jobs:
       - name: Install dependencies without lifecycle scripts
         run: npm ci --ignore-scripts
 
-      - name: Verify postinstall build command
-        run: node scripts/check-postinstall-build-command.js
+      - name: Assemble from the pinned engine implementation
+        uses: ./.github/actions/assemble
+        with:
+          engine-ref: ${{ vars.TELLUS_AUDIO_ENGINE_REF }}
+          token: ${{ secrets.TELLUS_CI_REPOSITORY_TOKEN }}
 
-      - name: Verify package contents
-        run: npm run check:package
-
-      - name: Verify download and authorization contracts
-        run: npm test
+      - name: Verify installers and platform packages
+        run: npm run verify:pre-commit

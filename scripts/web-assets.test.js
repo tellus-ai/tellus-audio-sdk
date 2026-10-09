@@ -9,13 +9,14 @@ const { test } = require('node:test');
 function webFixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellus-web-assets-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, 'package.json'), '{}');
   fs.cpSync(path.join(__dirname, '../dist'), path.join(root, 'dist'), { recursive: true });
   const requiredFiles = ['tellus-audio-engine.mjs', 'tellus-audio-engine.wasm', 'models/manifest.json', 'models/fe-s16.temc'];
   fs.writeFileSync(path.join(root, 'release-assets.json'), JSON.stringify({ assets: { web: { requiredFiles } } }));
   const payload = requiredFiles.map((file) => `vendor/web/${file}`).concat([
     'vendor/web/licenses/NOTICE', 'vendor/web/build-manifest.json',
     'licenses/onnxruntime-web/LICENSE', 'licenses/onnxruntime-web/ThirdPartyNotices.txt',
-    'dist-browser/browser/worker.js', 'dist-browser/browser/worklet.js', 'dist-browser/authorization/contracts.js',
+    'runtime/platforms/web/worker.js', 'runtime/platforms/web/worklet.js', 'runtime/bindings/typescript/authorization/contracts.js',
     'node_modules/onnxruntime-web/dist/ort.wasm.bundle.min.mjs',
     'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs',
     'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm',
@@ -35,7 +36,7 @@ test('copies engine, encrypted models, relative browser graph and pinned ORT fil
   const { output, copyWebAssets } = webFixture(t);
   copyWebAssets(output);
   for (const file of ['tellus-audio-engine.mjs', 'tellus-audio-engine.wasm', 'models/fe-s16.temc',
-    'browser/worker.js', 'browser/worklet.js', 'authorization/contracts.js',
+    'platforms/web/worker.js', 'platforms/web/worklet.js', 'bindings/typescript/authorization/contracts.js',
     'ort/ort.wasm.bundle.min.mjs', 'ort/ort-wasm-simd-threaded.mjs', 'ort/ort-wasm-simd-threaded.wasm',
     'licenses/NOTICE', 'licenses/onnxruntime-web/LICENSE',
     'licenses/onnxruntime-web/ThirdPartyNotices.txt', 'build-manifest.json']) assert.ok(fs.statSync(path.join(output, file)).isFile());

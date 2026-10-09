@@ -1,0 +1,47 @@
+{
+  "name": "@tellus-ai/audio-sdk-web",
+  "version": "0.2.1",
+  "description": "Tellus Audio SDK for web",
+  "tellusPlatform": "web",
+  "main": "runtime/platforms/web/index.js",
+  "types": "runtime/platforms/web/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./runtime/platforms/web/index.d.ts",
+      "default": "./runtime/platforms/web/index.js"
+    },
+    "./authorization": {
+      "types": "./runtime/bindings/typescript/authorization/realtime.d.ts",
+      "default": "./runtime/bindings/typescript/authorization/realtime.js"
+    },
+    "./installer": {
+      "types": "./dist/installer/copy-web-assets.d.ts",
+      "require": "./dist/installer/copy-web-assets.js",
+      "default": "./dist/installer/copy-web-assets.js"
+    }
+  },
+  "files": [
+    "runtime",
+    "dist",
+    "release-assets.json",
+    "README.md",
+    "LICENSE",
+    "licenses"
+  ],
+  "scripts": {
+    "postinstall": "node dist/installer/install-binary-cli.js",
+    "install:binary": "node dist/installer/install-binary-cli.js",
+    "check:binary": "node dist/installer/check-binary-cli.js"
+  },
+  "engines": {
+    "node": ">= 18"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tellus-ai/tellus-audio-sdk.git"
+  },
+  "dependencies": {
+    "onnxruntime-web": "1.24.1"
+  }
+}

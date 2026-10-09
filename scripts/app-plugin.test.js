@@ -5,7 +5,7 @@ const { test, after } = require('node:test');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const withTellusAudio = require('../app.plugin');
+const withTellusAudio = require('../platforms/mobile/app.plugin');
 
 // 소비 앱의 Expo re-export 경계만 구성하며 Mods는 실제 SDK 개발 의존성을 사용한다.
 const host = fs.mkdtempSync(path.join(os.tmpdir(), 'tellus-expo-plugin-'));
