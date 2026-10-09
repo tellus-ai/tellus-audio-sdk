@@ -297,3 +297,175 @@ test('unanswered renewal retries until native expiry, then stops only the engine
   assert.equal(socket.closed, false);
   controller.dispose();
 });
+
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((done, failed) => { resolve = done; reject = failed; });
+  return { promise, resolve, reject };
+}
+
+const modelRequest = { modelId: 'fe-s16', keyId: 'release-1', publicKey: 'b'.repeat(64) };
+const modelReply = { model_id: 'fe-s16', key_id: 'release-1', wrapped_key: Buffer.alloc(80, 1).toString('base64url') };
+const authorizedReply = extra => ({ type: 'engine.authorized', version: 1, sequence: 1,
+  token: 'signed-permit', renew_after_ms: 480000, ...extra });
+
+test('async approval and model keys both finish before readiness', async () => {
+  const socket = new Socket();
+  const capture = new Capture();
+  const permit = deferred(), keys = deferred();
+  const order = [];
+  capture.createAuthorizationRequest = async () => Capture.prototype.createAuthorizationRequest.call(capture);
+  capture.getAuthorizationStatus = async () => Capture.prototype.getAuthorizationStatus.call(capture);
+  capture.createModelKeyRequests = async () => [modelRequest];
+  capture.applyAuthorization = () => { order.push('permit'); return permit.promise; };
+  capture.applyModelKeys = values => { order.push(values); return keys.promise; };
+  const controller = attachEngineAuthorization(socket, capture, { conversationId: 'conversation-1', getAccessToken: () => 'login-token' });
+  let ready = false;
+  controller.ready.then(() => { ready = true; });
+  await waitFor(() => socket.sent.length === 1);
+  assert.deepEqual(socket.sent[0].model_keys, [{ model_id: 'fe-s16', key_id: 'release-1', public_key: 'b'.repeat(64) }]);
+  socket.receive(authorizedReply({ model_keys: [modelReply] }));
+  assert.deepEqual(order, ['permit']);
+  assert.equal(ready, false);
+  permit.resolve({ state: 'authorized', remainingMs: 600000 });
+  await waitFor(() => order.length === 2);
+  assert.deepEqual(order[1], [{ modelId: 'fe-s16', keyId: 'release-1', wrappedKey: modelReply.wrapped_key }]);
+  assert.equal(ready, false);
+  keys.resolve();
+  await controller.ready;
+  controller.dispose();
+});
+
+for (const reply of [
+  undefined,
+  [{ ...modelReply, key_id: 'another-key' }],
+  [{ ...modelReply, model_id: 'silero-vad' }],
+  [modelReply, modelReply],
+  [{ ...modelReply, wrapped_key: `${modelReply.wrapped_key}=` }],
+  [{ ...modelReply, wrapped_key: Buffer.alloc(79).toString('base64url') }],
+]) {
+  test(`model-key mismatch never applies native permission: ${JSON.stringify(reply)}`, async () => {
+    const socket = new Socket(), capture = new Capture();
+    capture.createModelKeyRequests = () => [modelRequest];
+    capture.applyModelKeys = () => assert.fail('invalid key reply reached native');
+    const controller = attachEngineAuthorization(socket, capture, { conversationId: 'conversation-1', getAccessToken: () => 'login-token' });
+    const rejected = assert.rejects(controller.ready, /engine_model_key_response_invalid/);
+    await waitFor(() => socket.sent.length === 1);
+    socket.receive(authorizedReply({ model_keys: reply }));
+    await rejected;
+    assert.deepEqual(capture.applied, []);
+    assert.equal(capture.invalidations, 1);
+  });
+}
+
+for (const step of ['permit', 'keys']) {
+  test(`close while async ${step} apply never completes readiness`, async () => {
+    const socket = new Socket(), capture = new Capture(), pending = deferred();
+    let appliedKeys = 0;
+    capture.createModelKeyRequests = () => [modelRequest];
+    capture.applyModelKeys = () => { appliedKeys++; return step === 'keys' ? pending.promise : undefined; };
+    if (step === 'permit') capture.applyAuthorization = () => pending.promise;
+    const controller = attachEngineAuthorization(socket, capture, { conversationId: 'conversation-1', getAccessToken: () => 'login-token' });
+    const rejected = assert.rejects(controller.ready, /engine_authorization_connection_closed/);
+    await waitFor(() => socket.sent.length === 1);
+    socket.receive(authorizedReply({ model_keys: [modelReply] }));
+    socket.dispatchEvent(new Event('close'));
+    await rejected;
+    pending.resolve(step === 'permit' ? { state: 'authorized', remainingMs: 600000 } : undefined);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(appliedKeys, step === 'keys' ? 1 : 0);
+    assert.ok(capture.invalidations >= 1);
+    assert.equal(socket.sent.length, 1);
+  });
+}
+
+test('pending async challenge blocks duplicate open and timeout blocks its late completion', async () => {
+  const socket = new Socket(), capture = new Capture(), challenge = deferred();
+  let requests = 0;
+  capture.createAuthorizationRequest = () => { requests++; return challenge.promise; };
+  const controller = attachEngineAuthorization(socket, capture, {
+    conversationId: 'conversation-1', getAccessToken: () => 'login-token', requestTimeoutMs: 10,
+  });
+  const rejected = assert.rejects(controller.ready, /engine_authorization_timeout/);
+  await waitFor(() => requests === 1);
+  socket.dispatchEvent(new Event('open'));
+  assert.equal(requests, 1);
+  await rejected;
+  challenge.resolve({ nativeInstanceId: 'a'.repeat(64), nonce: '1'.padStart(64, '0'), sequence: 1 });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(socket.sent, []);
+});
+
+test('renewal omits keys and does not race pending async approval', async () => {
+  const socket = new Socket(), capture = new Capture(), pending = deferred();
+  let keyRequests = 0, keyApplies = 0;
+  capture.createModelKeyRequests = async () => { keyRequests++; return [modelRequest]; };
+  capture.applyModelKeys = async () => { keyApplies++; };
+  const controller = attachEngineAuthorization(socket, capture, { conversationId: 'conversation-1', getAccessToken: () => 'login-token' });
+  await waitFor(() => socket.sent.length === 1);
+  socket.receive(authorizedReply({ model_keys: [modelReply], renew_after_ms: 5 }));
+  await controller.ready;
+  await waitFor(() => socket.sent.length === 2);
+  assert.equal('model_keys' in socket.sent[1], false);
+  capture.applyAuthorization = () => pending.promise;
+  socket.receive({ type: 'engine.renewed', version: 1, sequence: 2, token: 'signed-permit', renew_after_ms: 5 });
+  socket.dispatchEvent(new Event('open'));
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(socket.sent.length, 2);
+  pending.resolve({ state: 'authorized', remainingMs: 600000 });
+  await waitFor(() => socket.sent.length === 3);
+  assert.equal(keyRequests, 1);
+  assert.equal(keyApplies, 1);
+  controller.dispose();
+});
+
+test('terminal denial while native permit is pending revokes the late approval', async () => {
+  const socket = new Socket(), capture = new Capture(), pending = deferred();
+  let nativeAuthorized = false;
+  capture.applyAuthorization = () => pending.promise.then(status => { nativeAuthorized = true; return status; });
+  capture.invalidateAuthorization = () => { capture.invalidations++; nativeAuthorized = false; };
+  const controller = attachEngineAuthorization(socket,capture, {
+    conversationId:'conversation-1',getAccessToken:()=>'login-token',requestTimeoutMs:30,
+  });
+  const rejected = assert.rejects(controller.ready,/engine_access_denied/);
+  await waitFor(()=>socket.sent.length===1);
+  socket.receive(authorizedReply({}));
+  socket.receive({type:'engine.denied',version:1,sequence:1,code:'engine_access_denied',retryable:false});
+  await rejected;
+  pending.resolve({state:'authorized',remainingMs:600000});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(nativeAuthorized,false);
+  controller.dispose();
+});
+
+for (const requests of [
+  [modelRequest,modelRequest],
+  [{...modelRequest,publicKey:'B'.repeat(64)}],
+  [{...modelRequest,keyId:'release-1\n'}],
+  [{...modelRequest,modelId:'unsupported'}],
+  [modelRequest,{...modelRequest,modelId:'fe-s48'},{...modelRequest,modelId:'silero-vad'},modelRequest],
+]) {
+  test(`invalid model requests fail before sending: ${JSON.stringify(requests)}`, async()=>{
+    const socket=new Socket(),capture=new Capture();
+    capture.createModelKeyRequests=()=>requests;
+    capture.applyModelKeys=()=>{};
+    const controller=attachEngineAuthorization(socket,capture,{conversationId:'conversation-1',getAccessToken:()=>'login-token'});
+    await assert.rejects(controller.ready,/engine_model_key_request_invalid/);
+    assert.deepEqual(socket.sent,[]);
+  });
+}
+
+test('async model-key rejection blocks ready and async invalidation rejection is handled',async()=>{
+  const socket=new Socket(),capture=new Capture(),errors=[];
+  capture.createModelKeyRequests=async()=>[modelRequest];
+  capture.applyModelKeys=async()=>{throw new Error('native-key-rejected');};
+  capture.invalidateAuthorization=async()=>{capture.invalidations++;throw new Error('native-invalidation-rejected');};
+  const controller=attachEngineAuthorization(socket,capture,{conversationId:'conversation-1',getAccessToken:()=>'login-token',onError:e=>errors.push(e.message)});
+  const rejected=assert.rejects(controller.ready,/native-key-rejected/);
+  await waitFor(()=>socket.sent.length===1);
+  socket.receive(authorizedReply({model_keys:[modelReply]}));
+  await rejected;
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(errors,['native-invalidation-rejected']);
+  assert.equal(capture.invalidations,1);
+});

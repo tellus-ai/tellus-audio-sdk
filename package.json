@@ -1,20 +1,41 @@
 {
   "name": "@tellus-ai/audio-sdk",
   "version": "0.2.1",
-  "description": "Tellus Audio SDK wrapper for Electron and Node.js",
+  "description": "Tellus Audio SDK for Electron, React Native and browsers",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
+      "react-native": {
+        "types": "./dist-native/react-native/index.d.ts",
+        "default": "./dist-native/react-native/index.js"
+      },
+      "browser": {
+        "types": "./dist-browser/browser/index.d.ts",
+        "default": "./dist-browser/browser/index.js"
+      },
       "types": "./dist/index.d.ts",
       "require": "./dist/index.js",
       "default": "./dist/index.js"
     },
     "./authorization": {
+      "browser": {
+        "types": "./dist-browser/authorization/realtime.d.ts",
+        "default": "./dist-browser/authorization/realtime.js"
+      },
       "types": "./dist/authorization/realtime.d.ts",
       "require": "./dist/authorization/realtime.js",
       "default": "./dist/authorization/realtime.js"
-    }
+    },
+    "./browser": {
+      "types": "./dist-browser/browser/index.d.ts",
+      "default": "./dist-browser/browser/index.js"
+    },
+    "./react-native": {
+      "types": "./dist-native/react-native/index.d.ts",
+      "default": "./dist-native/react-native/index.js"
+    },
+    "./app.plugin.js": "./app.plugin.js"
   },
   "repository": {
     "type": "git",
@@ -33,6 +54,8 @@
     "dist/installer/install-binary.d.ts",
     "dist/installer/install-binary-cli.js",
     "dist/installer/install-binary-cli.d.ts",
+    "dist/installer/copy-web-assets.js",
+    "dist/installer/copy-web-assets.d.ts",
     "dist/installer/check-binary.js",
     "dist/installer/check-binary.d.ts",
     "dist/installer/check-binary-cli.js",
@@ -40,18 +63,39 @@
     "README.md",
     "LICENSE",
     "release-assets.json",
-    "dist/authorization"
+    "dist/authorization",
+    "dist-browser",
+    "dist-native",
+    "cpp",
+    "ios",
+    "android/build.gradle",
+    "android/gradle.properties",
+    "android/CMakeLists.txt",
+    "android/README.md",
+    "android/src",
+    "nitrogen",
+    "nitro.json",
+    "TellusAudioSdk.podspec",
+    "react-native.config.js",
+    "licenses",
+    "app.plugin.js"
   ],
   "scripts": {
-    "build": "node scripts/run-with-build-storage.js node node_modules/typescript/bin/tsc -p tsconfig.json",
-    "test": "npm run build && node --test scripts/*.test.js",
+    "build": "npm run build:node && npm run build:browser && npm run build:native",
+    "test": "npm run build && node --test scripts/*.test.js src/browser/*.test.mjs src/react-native/*.test.mjs",
     "check:binary": "node dist/installer/check-binary-cli.js",
-    "check:js": "npm run build && find dist -name '*.js' -print0 | xargs -0 -n1 node --check",
+    "check:js": "npm run build && find dist dist-browser dist-native -name '*.js' -print0 | xargs -0 -n1 node --check",
     "check:package": "npm run build && node dist/installer/check-package-contents.js",
     "check:postinstall-build": "node scripts/check-postinstall-build-command.js",
     "install:binary": "node dist/installer/install-binary-cli.js",
     "prepare": "npm run build",
-    "postinstall": "node -e \"const fs=require('node:fs');const cp=require('node:child_process');const runBuild=()=>{const npmExec=process.env.npm_execpath;if(npmExec){cp.execFileSync(process.execPath,[npmExec,'run','build'],{stdio:'inherit'});return;}if(process.platform==='win32'){cp.execFileSync('cmd.exe',['/d','/s','/c','npm run build'],{stdio:'inherit'});return;}cp.execFileSync('npm',['run','build'],{stdio:'inherit'});};if(!fs.existsSync('dist/installer/install-binary-cli.js')&&fs.existsSync('src/installer/install-binary-cli.ts'))runBuild();cp.execFileSync(process.execPath,['dist/installer/install-binary-cli.js'],{stdio:'inherit'});\""
+    "postinstall": "node -e \"const fs=require('node:fs');const cp=require('node:child_process');const runBuild=()=>{const npmExec=process.env.npm_execpath;if(npmExec){cp.execFileSync(process.execPath,[npmExec,'run','build'],{stdio:'inherit'});return;}if(process.platform==='win32'){cp.execFileSync('cmd.exe',['/d','/s','/c','npm run build'],{stdio:'inherit'});return;}cp.execFileSync('npm',['run','build'],{stdio:'inherit'});};if(!fs.existsSync('dist/installer/install-binary-cli.js')&&fs.existsSync('src/installer/install-binary-cli.ts'))runBuild();cp.execFileSync(process.execPath,['dist/installer/install-binary-cli.js'],{stdio:'inherit'});\"",
+    "build:node": "node scripts/run-with-build-storage.js node node_modules/typescript/bin/tsc -p tsconfig.json",
+    "build:browser": "node scripts/run-with-build-storage.js node scripts/build-platform.js browser",
+    "build:native": "node scripts/run-with-build-storage.js node scripts/build-platform.js native",
+    "generate:native": "nitrogen",
+    "test:browser": "npm run build:browser && node --test src/browser/*.test.mjs",
+    "test:native": "npm run build:native && node --test src/react-native/*.test.mjs"
   },
   "engines": {
     "node": ">= 18"
@@ -59,6 +103,24 @@
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^25.9.3",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "react-native-nitro-modules": "0.35.4",
+    "nitrogen": "0.35.4",
+    "@expo/config-plugins": "55.0.11"
+  },
+  "dependencies": {
+    "onnxruntime-web": "1.24.1"
+  },
+  "peerDependencies": {
+    "react-native": "*",
+    "react-native-nitro-modules": "0.35.4"
+  },
+  "peerDependenciesMeta": {
+    "react-native": {
+      "optional": true
+    },
+    "react-native-nitro-modules": {
+      "optional": true
+    }
   }
 }

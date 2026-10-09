@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2020", "DOM", "WebWorker"],
+    "rootDir": "src",
+    "outDir": "dist-browser",
+    "declaration": true,
+    "strict": true,
+    "types": [],
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/browser/**/*.ts", "src/platform/capture-types.ts", "src/authorization/**/*.ts"]
+}

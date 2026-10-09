@@ -1,11 +1,105 @@
 # Tellus Audio SDK
 
-Node.js/Electron SDK for the Tellus native audio engine.
+Electron, React Native 및 브라우저에서 같은 Tellus 오디오 엔진을 사용하는 SDK.
 
 This package provides a public JavaScript/TypeScript entrypoint for low-latency microphone,
 speaker/system-audio capture, denoise model preload, Silero VAD gating, transport encoding, and
 runtime capture control. SDK packages and native binaries are delivered through authenticated CloudFront downloads.
 Native binaries are installed into `vendor/<platform>/` during package installation.
+
+## React Native·브라우저
+
+기본 Node/Electron API는 아래 문서를 따른다. 모바일과 브라우저에서는 다음 엔트리를 사용한다.
+
+| 환경 | 엔트리 | 캡처 |
+| --- | --- | --- |
+| React Native | `@tellus-ai/audio-sdk/react-native` | iOS AVAudioEngine / Android AudioRecord |
+| 브라우저 | `@tellus-ai/audio-sdk/browser` | AudioWorklet → Worker의 WASM |
+
+두 환경 모두 마이크 mono 16/48kHz·20ms, 엔진 AEC·FastEnhancer·Silero VAD, Opus/PCM을 지원한다. 모델은 암호화 `.temc`만 설치하며 `/audio`의 실행 승인과 HPKE 모델 키가 적용된 뒤 캡처를 시작한다. 모바일·브라우저 제어 API는 Promise를 반환한다.
+
+### 플랫폼 설치
+
+고객 설치 토큰과 다운로드 URL을 설정한 뒤 설치 대상 하나를 지정한다. 두 모바일 플랫폼을 빌드하면 각각 설치한다.
+
+```sh
+TELLUS_AUDIO_ENGINE_PLATFORM=ios npm install @tellus-ai/audio-sdk
+npm run install:binary --prefix node_modules/@tellus-ai/audio-sdk -- --platform android
+# 웹: 런타임·암호화 모델·라이선스를 앱 정적 디렉터리에 복사한다.
+npm run install:binary --prefix node_modules/@tellus-ai/audio-sdk -- --platform web --out /absolute/path/to/public/tellus-audio
+```
+
+이미 설치된 웹 자산을 다시 복사할 때는 빌드 스크립트에서 `require('./node_modules/@tellus-ai/audio-sdk/dist/installer/copy-web-assets.js').copyWebAssets('./public/tellus-audio')`를 호출한다. 패키지의 내부 상대 ESM 경로와 `ort/`, `models/`, `licenses/`를 함께 배포한다. 각 플랫폼의 정확한 엔진 버전과 파일은 `release-assets.json`에 고정되어 있다.
+
+### 승인과 캡처
+
+```ts
+import { AudioEngine } from '@tellus-ai/audio-sdk/react-native';
+import { attachEngineAuthorization } from '@tellus-ai/audio-sdk/authorization';
+
+const engine = await AudioEngine.init({
+  processing: { sampleRate: 16000, chunkDurationMs: 20 },
+  transport: { codec: 'opus' }, denoiseEnabled: true, vadEnabled: true,
+});
+const capture = engine.createCapture();
+const authorization = attachEngineAuthorization(audioSocket, capture, {
+  conversationId, getAccessToken: () => accessToken, onError: handleError,
+});
+await authorization.ready;
+await capture.start((error, chunk) => {
+  if (error) handleError(error);
+  else if (chunk) sendAudio(chunk); // Uint8Array payload, validSampleCount로 마지막 유효 범위를 확인한다.
+});
+```
+
+`audioSocket`은 서버의 `/audio` WebSocket이다. 앱이 연결·재연결을 관리하고 새 socket에는 승인을 다시 연결한다. `pause()`/`resume()`은 같은 capture를 유지한다. `stop()`은 마지막 유효 청크를 flush하며 같은 capture를 다시 시작할 수 있다. 세션 종료에는 `authorization.dispose()`와 `await capture.dispose()`를 호출한다. `reset()`은 승인과 캡처를 유지하며 처리 이력을 비운다. `setDenoiseEnabled()`는 현재 모델의 준비와 실행 승인이 필요하다.
+
+TTS는 같은 capture의 `playback(Float32Array, sampleRate)` 또는 `playbackEncoded(ArrayBuffer)`로 재생한다. MP3/WAV를 OS가 디코딩하고 실제 재생 PCM을 엔진 AEC에 전달한다. 반환 Promise는 재생 완료를 기다리며 `cancelPlayback()`으로 취소한다. SDK 밖에서 재생한 소리에는 이 기준 신호가 적용되지 않는다.
+
+### Expo / CNG 개발 앱
+
+고객 앱은 TypeScript의 `AudioEngine.init()`과 `createCapture()`를 사용한다. Expo [설정 플러그인](https://docs.expo.dev/config-plugins/introduction/)이 마이크 권한 안내, 선택한 iOS background audio, Android 지원 ABI를 생성하고 React Native autolinking이 SDK를 연결하므로 Swift·Kotlin·Podfile·Gradle을 직접 수정할 필요가 없다.
+
+위 플랫폼 설치 안내에 따라 SDK와 대상 엔진을 설치한 뒤 Nitro를 추가한다.
+
+```sh
+npm install react-native-nitro-modules@0.35.4
+```
+
+`app.json`의 plugin 목록에 SDK를 추가한다. `microphonePermission`을 생략하면 앱의 기존 안내 문구를 보존하며, 설정이 없으면 기본 안내를 생성한다. `backgroundAudio`의 기본값은 false이고, 기존 앱의 다른 background 설정은 보존한다.
+
+```json
+{
+  "expo": {
+    "plugins": [["@tellus-ai/audio-sdk", {
+      "microphonePermission": "실시간 번역을 위해 마이크를 사용합니다.",
+      "backgroundAudio": false
+    }]]
+  }
+}
+```
+
+```sh
+npx expo run:android
+# macOS에서는 npx expo run:ios
+npx expo start --dev-client
+```
+
+SDK가 포함된 개발 앱을 한 번 빌드한 뒤에는 TypeScript 변경을 Metro로 반영한다. SDK native 버전 또는 app config가 바뀌면 CNG 프로젝트에서 `npx expo prebuild --clean` 후 다시 빌드한다. 기존 native 파일을 직접 관리하는 프로젝트에 이 명령을 실행하면 해당 파일이 재생성되므로, 이 예제의 기존 tracked iOS 프로젝트는 유지한다. [Expo 개발 앱](https://docs.expo.dev/develop/development-builds/introduction/)에는 SDK의 native module이 포함되며 Expo Go에는 포함되지 않는다. `expo-dev-client` 설치 없이도 현재 예제처럼 `--dev-client`로 사용자 개발 앱을 실행할 수 있다.
+
+설치되는 암호화 모델과 라이브러리는 SDK installer가 준비한다. 앱 bundle에는 모델 CEK를 넣지 않으며, 캡처 시작 전에 서버 permit과 wrapped model key를 적용한다. 고객 프로젝트의 Expo·React Native·네이티브 의존성 버전을 맞춘 SDK 포함 개발 앱을 직접 빌드해 제공할 수 있다. Expo Go에 SDK를 등록할 필요는 없다.
+
+Android 13 이상에서 `setRecordingNotification()`의 pause/resume 버튼을 notification drawer에 표시하려면 앱 TypeScript에서 `PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS)`로 알림 승인을 요청한다. plugin이 manifest 선언을 생성하며 승인이 거절되어도 마이크 foreground service의 보호는 유지된다. 버튼 callback은 앱의 기존 pause/resume 제어를 호출한다. iOS에서는 이 알림 설정을 사용하지 않는다.
+
+### 플랫폼 실행 조건
+
+Expo 앱의 마이크 권한과 선택적 iOS background audio는 위 SDK 플러그인이 생성한다. Android는 API 24 이상, arm64-v8a/x86_64를 지원하며 SDK의 Gradle·manifest가 라이브러리·암호화 모델·microphone foreground service를 연결한다. 캡처 시작은 foreground에서 한다. interruption·포커스 손실·장치 경로 변경은 캡처를 중단하므로 앱이 오류를 처리하고 명시적으로 재시작한다.
+
+Android 녹음 알림은 선택적 `setRecordingNotification({ title, contentText, onPause, onResume })`으로 설정한다. callback에서 앱이 `pause()`/`resume()`를 제어한다. 사용자 pause 동안 단일 SDK foreground service를 유지하며 stop·dispose·승인 만료·오류에는 정리한다. 별도 녹음 service나 OS 음성 처리 graph를 동시에 시작하지 않는다.
+
+브라우저는 HTTPS 또는 localhost, 마이크 권한, AudioContext·AudioWorklet·module Worker·WASM SIMD/BigInt가 필요하다. `AudioEngine.init(config, assets)`의 `assets`에 `engineModuleUrl`, `wasmUrl`, `ortModuleUrl`, `ortWasmBaseUrl`, `encryptedModels` URL을 지정한다. `start()`는 사용자 입력에서 호출하며 SDK가 브라우저 내장 AEC·noise suppression·AGC를 끈다. 정적 파일을 같은 origin의 올바른 JS/WASM MIME으로 제공한다. 현재 단일 WASM thread 경로는 SharedArrayBuffer와 교차 출처 격리를 요구하지 않는다. 웹 메모리와 코드를 읽을 수 있으므로 모델 보호 범위는 암호화 배포와 승인된 세션의 키 발급까지다.
+
+공개 CI 서명 키를 신뢰하는 개발 artifact와 테스트 모델 키는 제품 릴리스에 사용하지 않는다. 실제 예제는 `Tellus-realtime-translate-example/mobile` 및 `web`을 참고한다.
 
 ## Requirements
 

@@ -12,3 +12,10 @@ pnpm-debug.log*
 .DS_Store
 
 /.build-cache/
+
+dist-browser/
+dist-native/
+
+android/build/
+android/.cxx/
+android/.gradle/

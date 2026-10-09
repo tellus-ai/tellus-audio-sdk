@@ -1,0 +1,10 @@
+{
+  "$schema": "https://nitro.margelo.com/nitro.schema.json",
+  "cxxNamespace": ["tellus"],
+  "ios": { "iosModuleName": "TellusAudioSdk" },
+  "android": { "androidNamespace": ["tellus"], "androidCxxLibName": "TellusAudioSdk" },
+  "autolinking": {
+    "TellusCapture": { "all": { "language": "c++", "implementationClassName": "HybridTellusCapture" } }
+  },
+  "ignorePaths": ["**/node_modules"]
+}

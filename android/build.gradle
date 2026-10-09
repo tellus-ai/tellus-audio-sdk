@@ -1,0 +1,49 @@
+def getExtOrDefault(name) {
+  rootProject.ext.has(name) ? rootProject.ext.get(name) : project.properties["TellusAudioSdk_" + name]
+}
+
+def engineDir = file("../vendor/android")
+if (!new File(engineDir, "include/tellus_audio_engine.h").exists()) {
+  throw new GradleException("[tellus-audio-sdk] Missing Android engine in ${engineDir}. Run install:binary with TELLUS_AUDIO_ENGINE_TARGETS=android.")
+}
+
+apply plugin: "com.android.library"
+apply plugin: "org.jetbrains.kotlin.android"
+apply from: "../nitrogen/generated/android/TellusAudioSdk+autolinking.gradle"
+
+def modelAssetsDir = layout.buildDirectory.dir("generated/tellus-model-assets")
+def syncModelAssets = tasks.register("syncTellusModelAssets", Sync) {
+  from(new File(engineDir, "models")) { include "*.temc" }
+  into(modelAssetsDir.map { it.dir("tellus-audio-sdk") })
+}
+
+android {
+  namespace "com.margelo.nitro.tellus"
+  ndkVersion getExtOrDefault("ndkVersion")
+  compileSdk getExtOrDefault("compileSdkVersion").toInteger()
+  defaultConfig {
+    minSdk getExtOrDefault("minSdkVersion").toInteger()
+    targetSdk getExtOrDefault("targetSdkVersion").toInteger()
+    externalNativeBuild {
+      cmake {
+        cppFlags "-frtti -fexceptions -Wall -Wextra -fstack-protector-all"
+        arguments "-DANDROID_STL=c++_shared"
+        abiFilters(*((rootProject.findProperty("reactNativeArchitectures") ?: "arm64-v8a").split(",")))
+      }
+    }
+  }
+  externalNativeBuild { cmake { path file("CMakeLists.txt") } }
+  sourceSets.main.assets.srcDir(modelAssetsDir)
+  sourceSets.main.jniLibs.srcDir(new File(engineDir, "jniLibs"))
+  buildFeatures { prefab true }
+}
+
+tasks.named("preBuild") { dependsOn(syncModelAssets) }
+
+repositories { google(); mavenCentral() }
+dependencies {
+  testImplementation "junit:junit:4.13.2"
+  implementation "com.facebook.react:react-android"
+  implementation project(":react-native-nitro-modules")
+  implementation "com.microsoft.onnxruntime:onnxruntime-android:${getExtOrDefault('onnxruntimeVersion')}"
+}
