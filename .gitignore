@@ -12,3 +12,23 @@ pnpm-debug.log*
 .DS_Store
 
 /.build-cache/
+
+dist-browser/
+dist-native/
+
+android/build/
+android/.cxx/
+android/.gradle/
+
+.generated/
+platforms/*/runtime/
+platforms/*/dist/
+platforms/*/vendor/
+platforms/*/LICENSE
+platforms/*/release-assets.json
+platforms/*/licenses/
+platforms/*/android/build/
+platforms/*/android/.cxx/
+platforms/*/android/.gradle/
+
+release-files/

@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.runtime.web.json",
+  "include": [
+    "src/platforms/mobile/react-native/**/*.ts",
+    "src/bindings/typescript/capture-types.ts",
+    "src/bindings/typescript/authorization/**/*.ts"
+  ]
+}

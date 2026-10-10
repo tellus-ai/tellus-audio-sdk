@@ -57,9 +57,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir release-files
-          npm pack --pack-destination release-files
+          for PLATFORM in desktop web mobile; do
+            npm pack --workspace "@tellus-ai/audio-sdk-${PLATFORM}" --pack-destination release-files
+          done
           cd release-files
-          sha256sum "tellus-ai-audio-sdk-${VERSION}.tgz" > "tellus-ai-audio-sdk-${VERSION}.tgz.sha256"
+          for ARCHIVE in *.tgz; do
+            sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
+          done
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_AUDIO_ARTIFACTS_ROLE_ARN }}

@@ -8,6 +8,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { get } from 'node:https';
@@ -23,6 +24,7 @@ type ReleaseAsset = {
   platform?: string;
   file?: string;
   sha256File?: string;
+  requiredFiles?: string[];
 };
 
 type ReleaseManifest = {
@@ -320,6 +322,17 @@ function moveDirectory(source: string, destination: string): void {
   }
 }
 
+// 모바일 ABI별 라이브러리를 포함한 필수 파일 경로는 릴리스 manifest에 고정한다.
+function missingRequiredFiles(root: string, asset: ReleaseAsset): string[] {
+  return (asset.requiredFiles || []).filter((file) => {
+    if (typeof file !== 'string' || !file || isAbsolute(file) || file.includes('\\') || file.split('/').includes('..')) {
+      fail('Release asset required file paths must stay inside the asset directory');
+    }
+    const path = join(root, file);
+    return !existsSync(path) || !statSync(path).isFile();
+  });
+}
+
 function alreadyInstalled(targetDir: string, expectedSha: string): boolean {
   const statePath = join(targetDir, '.install-state.json');
   if (!existsSync(statePath)) {
@@ -354,15 +367,27 @@ async function downloadRequiredFile(options: DownloadOptions): Promise<void> {
   }
 }
 
-export async function installBinary(): Promise<void> {
+export async function installBinary(platform?: string): Promise<void> {
   const manifest = loadManifest();
   assertManifestVersion(manifest);
-  const key = currentAssetKey();
+  const packagePlatform = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { tellusPlatform?: string }).tellusPlatform;
+  const selectedPlatform = platform ?? process.env.TELLUS_AUDIO_ENGINE_PLATFORM ?? (packagePlatform === 'web' ? 'web' : undefined);
+  if (packagePlatform === 'mobile' && selectedPlatform !== 'ios' && selectedPlatform !== 'android') {
+    fail('Mobile installation requires the ios or android target');
+  }
+  if (packagePlatform === 'web' && selectedPlatform !== 'web') fail('Web package only installs the web target');
+  if (packagePlatform === 'desktop' && ['ios', 'android', 'web'].includes(selectedPlatform ?? '')) {
+    fail('Desktop package only installs desktop targets');
+  }
+  const key = currentAssetKey(selectedPlatform);
   const asset = manifest.assets?.[key];
   if (!asset) {
     fail(`Release asset manifest does not include the current platform: ${key}`);
   }
   assertAssetVersion(asset, manifest);
+  if (selectedPlatform !== undefined && (asset.platform !== key || !asset.requiredFiles?.length)) {
+    fail(`Release asset manifest must pin its platform and required files: ${key}`);
+  }
 
   const { archiveUrl, sha256Url, authorizationOrigin, artifactTokenService } = await resolveReleaseAssetUrls(manifest, asset);
 
@@ -389,7 +414,7 @@ export async function installBinary(): Promise<void> {
     });
     const expectedSha = readExpectedSha256(shaPath);
 
-    if (alreadyInstalled(targetDir, expectedSha)) {
+    if (alreadyInstalled(targetDir, expectedSha) && missingRequiredFiles(targetDir, asset).length === 0) {
       log(`binary asset already installed: vendor/${platformDir}`);
       return;
     }
@@ -413,6 +438,8 @@ export async function installBinary(): Promise<void> {
 
     const extractDir = join(tempDir, 'extract');
     extractTarGz(archivePath, extractDir);
+    const missing = missingRequiredFiles(extractDir, asset);
+    if (missing.length > 0) fail(`Release asset is missing required files: ${missing.join(', ')}`);
     rmSync(targetDir, { recursive: true, force: true });
     mkdirSync(vendorDir, { recursive: true });
     moveDirectory(extractDir, targetDir);

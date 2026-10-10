@@ -7,9 +7,13 @@
     "outDir": "dist",
     "declaration": true,
     "strict": true,
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*.ts"]
+  "include": [
+    "src/installer/**/*.ts"
+  ]
 }

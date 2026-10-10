@@ -2,144 +2,71 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-type PackFile = {
-  path: string;
-};
-
-type PackInfo = {
-  files: PackFile[];
-  entryCount: number;
-  unpackedSize: number;
-};
-
+type ExportTarget = string | { [condition: string]: ExportTarget };
 type PackageJson = {
-  exports?: Partial<Record<'.' | './authorization', {
-      types?: string;
-      require?: string;
-      default?: string;
-  }>>;
+  tellusPlatform: 'desktop' | 'web' | 'mobile';
+  main: string;
+  types: string;
+  exports: Record<string, ExportTarget>;
+  dependencies?: Record<string, string>;
+  peerDependencies?: Record<string, string>;
 };
 
-const ROOT = join(__dirname, '..', '..');
-
-function npmPackDryRunJson(): string {
-  if (process.env.npm_execpath) {
-    return execFileSync(process.execPath, [process.env.npm_execpath, 'pack', '--dry-run', '--json'], {
-      encoding: 'utf8',
-    });
+function checkExports(target: ExportTarget, files: Set<string>): void {
+  if (typeof target === 'string') {
+    if ((target !== './app.plugin.js' && !/^\.\/(?:runtime|dist)\//.test(target)) || target.split('/').includes('..')) {
+      throw new Error(`Package export must expose a built entrypoint: ${target}`);
+    }
+    if (!files.has(target.slice(2))) throw new Error(`Package export target is missing: ${target}`);
+    return;
   }
-
-  if (process.platform === 'win32') {
-    return execFileSync('cmd.exe', ['/d', '/s', '/c', 'npm pack --dry-run --json'], {
-      encoding: 'utf8',
-    });
+  if (!target || typeof target !== 'object' || Array.isArray(target) || Object.keys(target).length === 0) {
+    throw new Error('Package exports must contain built entrypoints');
   }
-
-  return execFileSync('npm', ['pack', '--dry-run', '--json'], { encoding: 'utf8' });
+  for (const value of Object.values(target)) checkExports(value, files);
 }
 
-function loadPackageJson(): PackageJson {
-  return JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as PackageJson;
+// 실제 npm 배포 목록에서 플랫폼 경계와 공개 진입점을 검증한다.
+export function checkPackageContents(packageRoot = join(__dirname, '..', '..')): void {
+  const npm = process.env.npm_execpath;
+  const command = npm ? process.execPath : process.platform === 'win32' ? 'cmd.exe' : 'npm';
+  const args = npm ? [npm, 'pack', '--dry-run', '--json', '--ignore-scripts'] :
+    process.platform === 'win32' ? ['/d', '/s', '/c', 'npm pack --dry-run --json --ignore-scripts'] :
+      ['pack', '--dry-run', '--json', '--ignore-scripts'];
+  const raw = execFileSync(command, args, { cwd: packageRoot, encoding: 'utf8' });
+  const [pack] = JSON.parse(raw) as { files: { path: string }[]; entryCount: number; unpackedSize: number }[];
+  const files = new Set(pack.files.map(file => file.path));
+  const pkg = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')) as PackageJson;
+  if (!['desktop', 'web', 'mobile'].includes(pkg.tellusPlatform)) throw new Error('Package must declare its platform');
+  const required = ['package.json', 'README.md', 'LICENSE', 'release-assets.json', pkg.main, pkg.types,
+    'dist/installer/install-binary-cli.js', 'dist/installer/install-binary.js'];
+  if (pkg.tellusPlatform === 'mobile') required.push('app.plugin.js', 'TellusAudioSdk.podspec', 'react-native.config.js',
+    'cpp/CaptureSession.cpp', 'ios/IOSAudioDevice.mm', 'android/build.gradle', 'android/CMakeLists.txt',
+    'android/src/main/AndroidManifest.xml', 'nitrogen/generated/ios/TellusAudioSdk+autolinking.rb');
+  if (pkg.tellusPlatform === 'web') required.push('dist/installer/copy-web-assets.js',
+    'licenses/onnxruntime-web/LICENSE', 'licenses/onnxruntime-web/ThirdPartyNotices.txt');
+  const missing = required.filter(file => !files.has(file));
+  if (missing.length) throw new Error(`Package is missing required files: ${missing.join(', ')}`);
+  if (!pkg.exports?.['.'] || !pkg.exports['./authorization'] ||
+      (pkg.tellusPlatform === 'mobile' && pkg.exports['./app.plugin.js'] !== './app.plugin.js') ||
+      (pkg.tellusPlatform === 'web' && !pkg.exports['./installer'])) throw new Error('Package exports must expose its built public entrypoints');
+  checkExports(pkg.exports, files);
+  if (pkg.tellusPlatform !== 'web' && pkg.dependencies?.['onnxruntime-web']) throw new Error('Only web may depend on onnxruntime-web');
+  if (pkg.tellusPlatform !== 'mobile' && pkg.peerDependencies?.['react-native']) throw new Error('Only mobile may require React Native');
+  for (const file of files) {
+    if (/\.(?:node|a|lib|so|dylib|dll|wasm|onnx|temc|tellusmodel|aar|jar|class|zip|tar\.gz)$/i.test(file) ||
+        /^(?:vendor|onnxruntime|public\/models|web-assets)\//.test(file)) {
+      throw new Error(`Wrapper package must not include binaries or models: ${file}`);
+    }
+    if (/^(?:src|scripts|target|tests|test_data|rules|skills|docs|\.github)\//.test(file) || file.endsWith('.map')) {
+      throw new Error(`Package contains forbidden files: ${file}`);
+    }
+    const otherPlatforms = ['desktop', 'web', 'mobile'].filter(platform => platform !== pkg.tellusPlatform);
+    if (otherPlatforms.some(platform => file.startsWith(`runtime/platforms/${platform}/`))) {
+      throw new Error(`Package contains another platform runtime: ${file}`);
+    }
+  }
+  console.log(`${pkg.tellusPlatform} package content check passed: ${pack.entryCount} files, ${pack.unpackedSize} bytes unpacked.`);
 }
 
-export function checkPackageContents(): void {
-  const raw = npmPackDryRunJson();
-  const [pack] = JSON.parse(raw) as PackInfo[];
-  const files = new Set(pack.files.map((file) => file.path));
-  const pkg = loadPackageJson();
-
-  const required = [
-    'package.json',
-    'README.md',
-    'dist/index.js',
-    'dist/index.d.ts',
-    'dist/authorization/contracts.js',
-    'dist/authorization/contracts.d.ts',
-    'dist/authorization/realtime.js',
-    'dist/authorization/realtime.d.ts',
-    'dist/runtime/engine-runtime.js',
-    'dist/runtime/engine-runtime.d.ts',
-    'dist/platform/asset-key.js',
-    'dist/platform/asset-key.d.ts',
-    'dist/installer/artifact-download.js',
-    'dist/installer/artifact-download.d.ts',
-    'dist/installer/install-binary.js',
-    'dist/installer/install-binary.d.ts',
-    'dist/installer/install-binary-cli.js',
-    'dist/installer/install-binary-cli.d.ts',
-    'dist/installer/check-binary.js',
-    'dist/installer/check-binary.d.ts',
-    'dist/installer/check-binary-cli.js',
-    'dist/installer/check-binary-cli.d.ts',
-    'release-assets.json',
-  ];
-
-  const forbiddenPrefixes = [
-    '.claude/',
-    '.codex/',
-    '.github/',
-    'agents/',
-    'audio-test/',
-    'docs/',
-    'rules/',
-    'scripts/',
-    'skills/',
-    'src/',
-    'target/',
-    'test_data/',
-  ];
-
-  const forbiddenSuffixes = ['.map'];
-  const allowedDistFiles = new Set(required.filter((path) => path.startsWith('dist/')));
-
-  const missing = required.filter((path) => !files.has(path));
-  if (missing.length > 0) {
-    throw new Error(`Package is missing required files: ${missing.join(', ')}`);
-  }
-
-  if (
-    pkg.exports?.['.']?.types !== './dist/index.d.ts' ||
-    pkg.exports?.['.']?.require !== './dist/index.js' ||
-    pkg.exports?.['.']?.default !== './dist/index.js'
-  ) {
-    throw new Error('Package exports must expose only the built public entrypoint');
-  }
-
-  if (pkg.exports?.['./authorization']?.types !== './dist/authorization/realtime.d.ts' ||
-      pkg.exports?.['./authorization']?.require !== './dist/authorization/realtime.js' ||
-      pkg.exports?.['./authorization']?.default !== './dist/authorization/realtime.js') {
-    throw new Error('Package authorization export must expose the built transport entrypoint');
-  }
-
-  if (
-    [...files].some(
-      (path) =>
-        /^audio-capture\..+\.node$/.test(path) ||
-        path.startsWith('onnxruntime/') ||
-        path.startsWith('public/models/') ||
-        path.startsWith('vendor/'),
-    )
-  ) {
-    throw new Error('Wrapper package must not include native binaries, ORT runtimes, models, or vendor files');
-  }
-
-  const forbidden = [...files].filter(
-    (path) =>
-      (forbiddenPrefixes.some((prefix) => path.startsWith(prefix)) && !allowedDistFiles.has(path)) ||
-      forbiddenSuffixes.some((suffix) => path.endsWith(suffix)),
-  );
-  if (forbidden.length > 0) {
-    throw new Error(
-      `Package contains forbidden files:\n${forbidden
-        .sort()
-        .map((path) => `  - ${path}`)
-        .join('\n')}`,
-    );
-  }
-
-  console.log(`Package content check passed: ${pack.entryCount} files, ${pack.unpackedSize} bytes unpacked.`);
-}
-
-if (require.main === module) {
-  checkPackageContents();
-}
+if (require.main === module) checkPackageContents(process.argv[2]);

@@ -9,19 +9,39 @@ const path = require('node:path');
 const { Readable } = require('node:stream');
 const { test } = require('node:test');
 
-function installerFixture(t, { corrupt = false, denied = false, baseUrl = 'https://speech.example.test', redirectLocation, grantUrl, malformedGrant = false, cdnDenials = 0 } = {}) {
+// 실제 파일·압축·다운로드 경계는 기록된 플랫폼 경로의 고정 사례로 검증한다.
+const platformFiles = {
+  ios: ['TellusAudioEngine.xcframework/Info.plist', 'TellusAudioEngine.xcframework/ios-arm64/libtellus_audio_engine.a',
+    'TellusAudioEngine.xcframework/ios-arm64-simulator/libtellus_audio_engine.a', 'include/tellus_audio_engine.h',
+    'models/manifest.json', 'models/fe-s16.temc', 'models/fe-s48.temc', 'models/silero-vad.temc'],
+  android: ['jniLibs/arm64-v8a/libtellus_audio_engine.so', 'jniLibs/x86_64/libtellus_audio_engine.so',
+    'include/tellus_audio_engine.h', 'models/manifest.json', 'models/fe-s16.temc', 'models/fe-s48.temc', 'models/silero-vad.temc'],
+  web: ['tellus-audio-engine.mjs', 'tellus-audio-engine.wasm', 'models/manifest.json',
+    'models/fe-s16.temc', 'models/fe-s48.temc', 'models/silero-vad.temc'],
+};
+
+function installerFixture(t, { corrupt = false, denied = false, baseUrl = 'https://speech.example.test', redirectLocation, grantUrl, malformedGrant = false, cdnDenials = 0, platform, missingFile, packagePlatform } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellus-install-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.cpSync(path.join(__dirname, '../dist'), path.join(root, 'dist'), { recursive: true });
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '../release-assets.json')));
+  if (platform) {
+    const suffix = platform === 'web' ? 'wasm32-emscripten' : platform;
+    const file = `tellus-audio-engine-${manifest.nativeEngineTag}-${suffix}.tar.gz`;
+    manifest.assets[platform] = { platform, file, sha256File: `${file}.sha256`, requiredFiles: platformFiles[platform] };
+  }
   fs.writeFileSync(path.join(root, 'release-assets.json'), JSON.stringify(manifest));
-  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: manifest.sdkVersion }));
-  const key = require(path.join(root, 'dist/platform/asset-key')).currentAssetKey();
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: manifest.sdkVersion, tellusPlatform: packagePlatform }));
+  const key = platform || require(path.join(root, 'dist/platform/asset-key')).currentAssetKey();
   const asset = manifest.assets[key];
   const content = path.join(root, 'content');
   fs.mkdirSync(content);
-  fs.writeFileSync(path.join(content, 'installed.txt'), 'verified native archive');
-  execFileSync('tar', ['-czf', path.join(root, 'archive.tar.gz'), '-C', content, 'installed.txt']);
+  const payloadFiles = platform ? platformFiles[platform] : ['installed.txt'];
+  for (const file of payloadFiles.filter((file) => file !== missingFile)) {
+    fs.mkdirSync(path.dirname(path.join(content, file)), { recursive: true });
+    fs.writeFileSync(path.join(content, file), 'verified native archive');
+  }
+  execFileSync('tar', ['-czf', path.join(root, 'archive.tar.gz'), '-C', content, '.']);
   const archive = fs.readFileSync(path.join(root, 'archive.tar.gz'));
   const digest = createHash('sha256').update(archive).digest('hex');
   const requests = [];
@@ -164,3 +184,55 @@ test('stops after a second CDN authentication failure', async (t) => {
   await assert.rejects(installBinary(), /HTTP 401/);
   assert.equal(requests.length, 4);
 });
+
+for (const platform of ['ios', 'android', 'web']) {
+  test(`installs an explicitly selected ${platform} archive with its required payload`, async (t) => {
+    const { root, installBinary, requests, asset } = installerFixture(t, { platform });
+    await installBinary(platform);
+    const target = path.join(root, 'vendor', platform);
+    for (const file of platformFiles[platform]) assert.ok(fs.statSync(path.join(target, file)).isFile());
+    assert.ok(requests.some(({ url }) => url.endsWith(`/${asset.file}/token`)));
+    assert.equal(JSON.parse(fs.readFileSync(path.join(target, '.install-state.json'))).key, platform);
+  });
+  test(`rejects an incomplete ${platform} archive before replacing the installed asset`, async (t) => {
+    const missingFile = platformFiles[platform].at(-1);
+    const { root, installBinary } = installerFixture(t, { platform, missingFile });
+    const target = path.join(root, 'vendor', platform);
+    fs.mkdirSync(target, { recursive: true });
+    fs.writeFileSync(path.join(target, 'previous.txt'), 'previous engine');
+    await assert.rejects(installBinary(platform), /required.*file|missing.*file/i);
+    assert.equal(fs.readFileSync(path.join(target, 'previous.txt'), 'utf8'), 'previous engine');
+  });
+}
+
+for (const platform of ['ios', 'android', 'web']) {
+  test(`selects ${platform} through the explicit environment and repairs missing installed files`, async (t) => {
+    const { root, installBinary, requests } = installerFixture(t, { platform });
+    const previous = process.env.TELLUS_AUDIO_ENGINE_PLATFORM;
+    process.env.TELLUS_AUDIO_ENGINE_PLATFORM = platform;
+    t.after(() => {
+      if (previous === undefined) delete process.env.TELLUS_AUDIO_ENGINE_PLATFORM;
+      else process.env.TELLUS_AUDIO_ENGINE_PLATFORM = previous;
+    });
+    await installBinary();
+    const installed = path.join(root, 'vendor', platform, platformFiles[platform].at(-1));
+    fs.rmSync(installed);
+    await installBinary();
+    assert.ok(fs.statSync(installed).isFile());
+    assert.equal(requests.length, 8);
+  });
+}
+
+
+test('web package chooses web artifacts on a desktop host', async (t) => {
+  const { installBinary, requests } = installerFixture(t, { platform: 'web', packagePlatform: 'web' });
+  await installBinary();
+  assert.ok(requests.every(({ url }) => !url.includes('darwin') && !url.includes('linux') && !url.includes('win32')));
+});
+for (const [packagePlatform, target] of [['desktop', 'web'], ['web', 'ios'], ['mobile', undefined], ['mobile', 'web']]) {
+  test(`${packagePlatform} rejects the wrong target ${String(target)} before downloading`, async (t) => {
+    const { installBinary, requests } = installerFixture(t, { packagePlatform });
+    await assert.rejects(installBinary(target), /only installs|requires/);
+    assert.equal(requests.length, 0);
+  });
+}
