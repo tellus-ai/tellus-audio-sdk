@@ -1,6 +1,6 @@
 {
   "name": "@tellus-ai/audio-sdk-web",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Tellus Audio SDK for web",
   "tellusPlatform": "web",
   "main": "runtime/platforms/web/index.js",

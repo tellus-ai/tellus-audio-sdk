@@ -1,6 +1,6 @@
 {
   "name": "@tellus-ai/audio-sdk-desktop",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Tellus Audio SDK for desktop",
   "tellusPlatform": "desktop",
   "main": "runtime/platforms/desktop/electron/index.js",
