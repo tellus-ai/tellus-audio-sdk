@@ -1,6 +1,6 @@
 # Tellus Audio SDK — Desktop
 
-Electron용 설치 패키지입니다. 실행 구현 원본과 API 계약은 엔진 저장소 `src/platforms/desktop/electron`에 있으며 [엔진 문서](https://github.com/tellus-ai/Tellus-audio-engine/tree/main/docs)에서 관리합니다.
+Electron용 설치 패키지입니다. 실행 래퍼 원본은 이 SDK 저장소의 `src/platforms/desktop/electron`에 있습니다.
 
 ```sh
 npm install @tellus-ai/audio-sdk-desktop

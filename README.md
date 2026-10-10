@@ -1,6 +1,6 @@
 # Tellus Audio SDK
 
-이 저장소는 플랫폼별 설치·패키징·고객 프로젝트 자동 설정을 담당합니다. 실행 구현 원본은 `Tellus-audio-engine/src`에 있습니다.
+이 저장소는 플랫폼별 SDK 실행 래퍼·설치·패키징·고객 프로젝트 자동 설정을 담당합니다. 실행 래퍼 원본은 `src`에, 모바일 네이티브 연결 코드는 `platforms/mobile`에 있습니다.
 
 | 대상 | 설치 패키지 | 문서 |
 | --- | --- | --- |
@@ -18,14 +18,7 @@ Desktop은 OS·CPU에 맞는 엔진을 선택합니다. Web은 웹 엔진만 설
 
 ## 유지보수 빌드
 
-엔진 저장소에서 먼저 플랫폼 실행 산출물을 만듭니다.
-
-```sh
-npm ci --ignore-scripts
-npm run build:runtime
-```
-
-SDK 저장소에서 설치 코드를 빌드하고 해당 산출물로 세 패키지를 조립합니다.
+SDK 저장소의 실행 래퍼와 설치 코드를 빌드하고 세 플랫폼 패키지를 조립합니다.
 
 ```sh
 npm ci --ignore-scripts
@@ -33,9 +26,9 @@ npm run build
 npm run verify:pre-commit
 ```
 
-기본 산출물 경로는 형제 저장소 `../Tellus-audio-engine/dist`입니다. 다른 위치는 `TELLUS_AUDIO_ENGINE_DIST` 환경 변수 또는 `node scripts/assemble-platforms.js --engine-dist /absolute/path/to/dist`로 지정합니다. 엔진의 `engine-kit.json` 버전이 SDK pin과 다르면 조립을 중단합니다. SDK 빌드는 엔진 소스를 직접 참조하거나 엔진을 자동 빌드하지 않습니다.
+빌드는 SDK 저장소의 소스와 npm 의존성만 사용합니다. 비공개 엔진 저장소 checkout이나 별도 GitHub 토큰 없이 실행할 수 있습니다. 실제 엔진 바이너리·WASM·모델은 설치 시 인증된 release archive로 내려받습니다.
 
-`platforms/*/runtime`, 모바일 `cpp`·`ios`·`android/src`·`nitrogen/generated`, `dist`, 플랫폼별 release manifest·라이선스는 생성 산출물입니다. 이 파일을 SDK에서 수정하지 않습니다. 변경은 엔진 원본에서 수행합니다.
+`platforms/*/runtime`, `dist`, 플랫폼별 release manifest·라이선스는 생성 산출물입니다. 실행 래퍼 변경은 `src`에서, 모바일 연결 코드 변경은 `platforms/mobile`에서 수행합니다. Nitro 생성 파일도 저장소에 포함되어 있어 빌드 시 별도 생성 단계가 필요하지 않습니다.
 
 ## 배포 패키지 검증
 
@@ -51,4 +44,4 @@ npm pack --workspace @tellus-ai/audio-sdk-mobile
 
 ## CI 조립
 
-CI는 `TELLUS_AUDIO_ENGINE_REF` 저장소 변수의 40자리 commit SHA로 엔진 원본을 고정합니다. `TELLUS_CI_REPOSITORY_TOKEN`에는 엔진 저장소를 읽을 수 있는 최소 권한 토큰을 설정합니다. Checkout은 credentials를 저장하지 않습니다. CI는 해당 엔진의 실행 kit를 생성한 뒤 SDK를 조립하고 동일한 로컬 완료 검증을 실행합니다. 배포 workflow는 desktop·web·mobile의 세 tgz와 checksum을 검증한 뒤 기존 버전 파일을 덮어쓰지 않고 S3에 업로드합니다.
+CI는 SDK 저장소를 checkout하고 `npm ci --ignore-scripts` 뒤 동일한 로컬 완료 검증을 실행합니다. 별도 엔진 저장소 접근 설정이 필요하지 않습니다. 배포 workflow는 desktop·web·mobile의 세 tgz와 checksum을 검증한 뒤 기존 버전 파일을 덮어쓰지 않고 S3에 업로드합니다.

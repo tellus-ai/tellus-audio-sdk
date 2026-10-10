@@ -1,6 +1,6 @@
 # Tellus Audio SDK — Mobile
 
-React Native·Expo 개발 앱에서 사용하는 설치 패키지입니다. 실행 구현과 Nitro 생성 입력은 엔진 저장소 `src/platforms/mobile`에 있습니다. 배포 패키지는 생성된 네이티브 연결 파일과 TypeScript 산출물을 포함합니다.
+React Native·Expo 개발 앱에서 사용하는 설치 패키지입니다. 실행 래퍼는 이 SDK 저장소의 `src/platforms/mobile/react-native`에, 네이티브 연결 코드와 Nitro 생성 파일은 `platforms/mobile`에 있습니다. 배포 패키지는 네이티브 연결 파일과 TypeScript 산출물을 포함합니다.
 
 ```sh
 npm install @tellus-ai/audio-sdk-mobile react-native-nitro-modules@0.35.4

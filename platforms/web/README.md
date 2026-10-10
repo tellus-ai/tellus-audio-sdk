@@ -1,6 +1,6 @@
 # Tellus Audio SDK — Web
 
-브라우저 설치 패키지입니다. 구현 원본은 엔진 저장소 `src/platforms/web`에 있으며 ORT Web 의존성은 이 패키지만 설치합니다.
+브라우저 설치 패키지입니다. 구현 원본은 이 SDK 저장소의 `src/platforms/web`에 있으며 ORT Web 의존성은 이 패키지만 설치합니다.
 
 ```sh
 npm install @tellus-ai/audio-sdk-web

@@ -8,7 +8,7 @@
   "description": "Tellus platform installers and package assembly",
   "scripts": {
     "build": "node scripts/assemble-platforms.js",
-    "test": "npm run build && node --test scripts/*.test.js",
+    "test": "npm run build && node --test scripts/*.test.js src/platforms/web/*.test.mjs src/platforms/mobile/react-native/*.test.mjs",
     "check:js": "npm run build && node scripts/check-javascript.js",
     "check:package": "npm run build && node scripts/check-platform-packages.js",
     "verify:pre-commit": "npm test && npm run check:js && npm run check:package"

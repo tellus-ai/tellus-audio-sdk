@@ -32,11 +32,5 @@ jobs:
       - name: Install dependencies without lifecycle scripts
         run: npm ci --ignore-scripts
 
-      - name: Assemble from the pinned engine implementation
-        uses: ./.github/actions/assemble
-        with:
-          engine-ref: ${{ vars.TELLUS_AUDIO_ENGINE_REF }}
-          token: ${{ secrets.TELLUS_CI_REPOSITORY_TOKEN }}
-
       - name: Verify installers and platform packages
         run: npm run verify:pre-commit

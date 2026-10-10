@@ -24,10 +24,6 @@ android/.gradle/
 platforms/*/runtime/
 platforms/*/dist/
 platforms/*/vendor/
-platforms/*/cpp/
-platforms/*/ios/
-platforms/*/android/src/
-platforms/*/nitrogen/
 platforms/*/LICENSE
 platforms/*/release-assets.json
 platforms/*/licenses/
@@ -35,5 +31,4 @@ platforms/*/android/build/
 platforms/*/android/.cxx/
 platforms/*/android/.gradle/
 
-.engine-source/
 release-files/
