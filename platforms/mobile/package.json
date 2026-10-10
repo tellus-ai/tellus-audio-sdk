@@ -1,6 +1,6 @@
 {
   "name": "@tellus-ai/audio-sdk-mobile",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Tellus Audio SDK for mobile",
   "tellusPlatform": "mobile",
   "main": "runtime/platforms/mobile/react-native/index.js",

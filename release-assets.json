@@ -1,32 +1,32 @@
 {
-  "sdkVersion": "0.2.1",
-  "nativeEngineVersion": "0.3.0",
-  "nativeEngineTag": "v0.3.0",
+  "sdkVersion": "0.2.2",
+  "nativeEngineVersion": "0.3.1",
+  "nativeEngineTag": "v0.3.1",
   "assets": {
     "darwin-arm64": {
       "platform": "darwin-universal",
-      "file": "tellus-audio-engine-v0.3.0-darwin-universal.tar.gz",
-      "sha256File": "tellus-audio-engine-v0.3.0-darwin-universal.tar.gz.sha256"
+      "file": "tellus-audio-engine-v0.3.1-darwin-universal.tar.gz",
+      "sha256File": "tellus-audio-engine-v0.3.1-darwin-universal.tar.gz.sha256"
     },
     "darwin-x64": {
       "platform": "darwin-universal",
-      "file": "tellus-audio-engine-v0.3.0-darwin-universal.tar.gz",
-      "sha256File": "tellus-audio-engine-v0.3.0-darwin-universal.tar.gz.sha256"
+      "file": "tellus-audio-engine-v0.3.1-darwin-universal.tar.gz",
+      "sha256File": "tellus-audio-engine-v0.3.1-darwin-universal.tar.gz.sha256"
     },
     "win32-x64-msvc": {
       "platform": "win32-x64-msvc",
-      "file": "tellus-audio-engine-v0.3.0-win32-x64-msvc.tar.gz",
-      "sha256File": "tellus-audio-engine-v0.3.0-win32-x64-msvc.tar.gz.sha256"
+      "file": "tellus-audio-engine-v0.3.1-win32-x64-msvc.tar.gz",
+      "sha256File": "tellus-audio-engine-v0.3.1-win32-x64-msvc.tar.gz.sha256"
     },
     "linux-x64-gnu": {
       "platform": "linux-x64-gnu",
-      "file": "tellus-audio-engine-v0.3.0-linux-x64-gnu.tar.gz",
-      "sha256File": "tellus-audio-engine-v0.3.0-linux-x64-gnu.tar.gz.sha256"
+      "file": "tellus-audio-engine-v0.3.1-linux-x64-gnu.tar.gz",
+      "sha256File": "tellus-audio-engine-v0.3.1-linux-x64-gnu.tar.gz.sha256"
     },
     "ios": {
       "platform": "ios",
-      "file": "tellus-audio-engine-v0.3.0-ios.tar.gz",
-      "sha256File": "tellus-audio-engine-v0.3.0-ios.tar.gz.sha256",
+      "file": "tellus-audio-engine-v0.3.1-ios.tar.gz",
+      "sha256File": "tellus-audio-engine-v0.3.1-ios.tar.gz.sha256",
       "requiredFiles": [
         "TellusAudioEngine.xcframework/Info.plist",
         "TellusAudioEngine.xcframework/ios-arm64/libtellus_audio_engine.a",
@@ -40,8 +40,8 @@
     },
     "android": {
       "platform": "android",
-      "file": "tellus-audio-engine-v0.3.0-android.tar.gz",
-      "sha256File": "tellus-audio-engine-v0.3.0-android.tar.gz.sha256",
+      "file": "tellus-audio-engine-v0.3.1-android.tar.gz",
+      "sha256File": "tellus-audio-engine-v0.3.1-android.tar.gz.sha256",
       "requiredFiles": [
         "jniLibs/arm64-v8a/libtellus_audio_engine.so",
         "jniLibs/x86_64/libtellus_audio_engine.so",
@@ -54,8 +54,8 @@
     },
     "web": {
       "platform": "web",
-      "file": "tellus-audio-engine-v0.3.0-wasm32-emscripten.tar.gz",
-      "sha256File": "tellus-audio-engine-v0.3.0-wasm32-emscripten.tar.gz.sha256",
+      "file": "tellus-audio-engine-v0.3.1-wasm32-emscripten.tar.gz",
+      "sha256File": "tellus-audio-engine-v0.3.1-wasm32-emscripten.tar.gz.sha256",
       "requiredFiles": [
         "tellus-audio-engine.mjs",
         "tellus-audio-engine.wasm",
