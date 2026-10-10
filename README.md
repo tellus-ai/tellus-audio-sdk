@@ -14,7 +14,7 @@
 
 고객에게 발급한 `TELLUS_AUDIO_ENGINE_TOKEN`과 HTTPS 서비스 `TELLUS_AUDIO_DOWNLOAD_BASE_URL`을 설정한 뒤 대상 패키지를 설치합니다. 설치된 패키지만 엔진 산출물을 다운로드하고 SHA-256을 검증합니다. 설치 과정은 엔진 저장소나 Rust·TypeScript 소스 빌드를 요구하지 않습니다. root workspace에는 postinstall이 없습니다.
 
-Desktop은 OS·CPU에 맞는 엔진을 선택합니다. Web은 웹 엔진만 설치합니다. Mobile은 iOS·Android를 설치하며 `TELLUS_AUDIO_ENGINE_PLATFORM=ios` 또는 `android`로 대상을 제한할 수 있습니다. SDK `0.2.2`의 엔진 버전은 `0.3.1`입니다. 정확한 엔진 버전은 `release-assets.json`에 고정되어 있습니다. 실행 승인 토큰과 모델 키는 설치 토큰과 별개이며 앱의 서버 연결에서 전달합니다.
+Desktop은 OS·CPU에 맞는 엔진을 선택합니다. Web은 웹 엔진만 설치합니다. Mobile은 iOS·Android를 설치하며 `TELLUS_AUDIO_ENGINE_PLATFORM=ios` 또는 `android`로 대상을 제한할 수 있습니다. SDK `0.2.3`의 엔진 버전은 `0.3.2`입니다. 정확한 엔진 버전은 `release-assets.json`에 고정되어 있습니다. 실행 승인 토큰과 모델 키는 설치 토큰과 별개이며 앱의 서버 연결에서 전달합니다.
 
 ## 유지보수 빌드
 
