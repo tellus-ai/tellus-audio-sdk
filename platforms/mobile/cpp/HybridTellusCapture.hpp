@@ -10,6 +10,10 @@ class HybridTellusCapture final : public HybridTellusCaptureSpec {
 public:
   HybridTellusCapture();
   std::shared_ptr<Promise<void>> configure(const std::string& json, double processingRate) override;
+  std::shared_ptr<Promise<void>> configureAudioDevices(const std::string& micDeviceId,
+      const std::string& playbackDeviceId, const std::string& iosOutputRoute) override;
+  std::shared_ptr<Promise<std::string>> listAudioDevices(const std::string& source) override;
+  std::shared_ptr<Promise<std::string>> getAudioDeviceStatus() override;
   std::shared_ptr<Promise<std::string>> createAuthorizationRequest(const std::string& conversationId) override;
   std::shared_ptr<Promise<std::string>> applyAuthorization(const std::string& token) override;
   std::shared_ptr<Promise<std::string>> getAuthorizationStatus() override;

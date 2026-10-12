@@ -15,6 +15,7 @@ jclass decoderClass = nullptr;
 jmethodID decodeAudio, decodedSamples, decodedRate;
 jmethodID constructor, requestCapturePermission, startCapture, stopCapture, beginPlayback, writePlayback;
 jmethodID awaitPlayback, cancelPlayback, endPlayback, closeDevice, readModel, pauseCapture, setNotification;
+jmethodID configureDevices, listAudioDevices, getAudioDeviceStatus;
 
 class JavaEnv {
 public:
@@ -51,6 +52,12 @@ void checkException(JNIEnv* env) {
   throw std::runtime_error(message);
 }
 
+std::string readDeviceJson(JNIEnv* env, jstring value) {
+  checkException(env);
+  if (value == nullptr) throw std::runtime_error("android_device_json_unavailable");
+  return facebook::jni::adopt_local(value)->toStdString();
+}
+
 class AndroidAudioDevice final : public margelo::nitro::tellus::AudioDevice {
 public:
   AndroidAudioDevice(
@@ -76,6 +83,27 @@ public:
   }
 
   void requestCapturePermission() override { invoke(::requestCapturePermission); }
+
+  void configureDevices(const std::string& micDeviceId, const std::string& playbackDeviceId,
+                        const std::string& iosOutputRoute) override {
+    JavaEnv scope;
+    auto microphone = facebook::jni::make_jstring(micDeviceId);
+    auto playback = facebook::jni::make_jstring(playbackDeviceId);
+    auto route = facebook::jni::make_jstring(iosOutputRoute);
+    scope.env->CallVoidMethod(device_, ::configureDevices, microphone.get(), playback.get(), route.get());
+    checkException(scope.env);
+  }
+
+  std::string listAudioDevices(const std::string& source) override {
+    JavaEnv scope;
+    auto kind = facebook::jni::make_jstring(source);
+    return readDeviceJson(scope.env, static_cast<jstring>(scope.env->CallObjectMethod(device_, ::listAudioDevices, kind.get())));
+  }
+
+  std::string getAudioDeviceStatus() override {
+    JavaEnv scope;
+    return readDeviceJson(scope.env, static_cast<jstring>(scope.env->CallObjectMethod(device_, ::getAudioDeviceStatus)));
+  }
 
   void startCapture(uint32_t rate) override {
     JavaEnv scope;
@@ -279,6 +307,9 @@ void initializeAndroidAudioDevice(JNIEnv* env) {
   env->DeleteLocalRef(local);
   constructor = env->GetMethodID(deviceClass, "<init>", "(J)V");
   requestCapturePermission = env->GetMethodID(deviceClass, "requestCapturePermission", "()V");
+  configureDevices = env->GetMethodID(deviceClass, "configureDevices", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
+  listAudioDevices = env->GetMethodID(deviceClass, "listAudioDevices", "(Ljava/lang/String;)Ljava/lang/String;");
+  getAudioDeviceStatus = env->GetMethodID(deviceClass, "getAudioDeviceStatus", "()Ljava/lang/String;");
   startCapture = env->GetMethodID(deviceClass, "startCapture", "(I)V");
   stopCapture = env->GetMethodID(deviceClass, "stopCapture", "()V");
   pauseCapture = env->GetMethodID(deviceClass, "pauseCapture", "()V");

@@ -26,9 +26,9 @@ internal fun requireForegroundActivity(context: ReactApplicationContext): Activi
 }
 
 /** UI 결과 또는 Activity 종료까지 요청을 소유한다. timeout은 캡처를 시작하지 않는다. */
-internal fun requestMicrophonePermission(context: ReactApplicationContext) {
+internal fun requestMicrophonePermission(context: ReactApplicationContext): Boolean {
   check(Looper.myLooper() != Looper.getMainLooper()) { "permission_request_requires_worker_thread" }
-  if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) return
+  if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) return true
   val ticket = Any()
   check(pendingPermission.compareAndSet(null, ticket)) { "microphone_permission_request_already_active" }
   val ready = CountDownLatch(1)
@@ -63,5 +63,5 @@ internal fun requestMicrophonePermission(context: ReactApplicationContext) {
   if (!queued) finish(IllegalStateException("permission_ui_unavailable"))
   check(ready.await(60, TimeUnit.SECONDS)) { "microphone_permission_request_timeout" }
   failure?.let { throw it }
-  check(context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) { "microphone_permission_required" }
+  return context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 }

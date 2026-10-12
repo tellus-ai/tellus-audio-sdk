@@ -35,6 +35,22 @@ std::shared_ptr<Promise<void>> HybridTellusCapture::configure(const std::string&
   });
 }
 
+std::shared_ptr<Promise<void>> HybridTellusCapture::configureAudioDevices(
+    const std::string& mic, const std::string& playback, const std::string& route) {
+  auto session = acquire();
+  return session->submit([state = session.get(), mic, playback, route] { state->configureAudioDevices(mic, playback, route); });
+}
+
+std::shared_ptr<Promise<std::string>> HybridTellusCapture::listAudioDevices(const std::string& source) {
+  auto session = acquire();
+  return session->submit([state = session.get(), source] { return state->listAudioDevices(source); });
+}
+
+std::shared_ptr<Promise<std::string>> HybridTellusCapture::getAudioDeviceStatus() {
+  auto session = acquire();
+  return session->submit([state = session.get()] { return state->getAudioDeviceStatus(); }, true);
+}
+
 std::shared_ptr<Promise<std::string>> HybridTellusCapture::createAuthorizationRequest(const std::string& conversation) {
   auto session = acquire();
   return session->submit([state = session.get(), conversation] {

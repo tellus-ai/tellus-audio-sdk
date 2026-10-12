@@ -61,6 +61,13 @@ CaptureSession::~CaptureSession() {
   tellus_audio_session_destroy(handle);
 }
 
+void CaptureSession::configureAudioDevices(const std::string& mic, const std::string& playback,
+                                         const std::string& route) {
+  if (_deviceSelectionLocked) throw std::runtime_error("audio_device_selection_locked");
+  _device->configureDevices(mic, playback, route);
+  _deviceSelectionLocked = true;
+}
+
 void CaptureSession::start(bool resume) {
   const auto revision = _controlRevision.load();
   const auto status = resume ? tellus_audio_session_resume(handle) : tellus_audio_session_start(handle);
@@ -69,6 +76,7 @@ void CaptureSession::start(bool resume) {
     _device->stopCapture();
   }
   check(status);
+  _deviceSelectionLocked = true;
   _started = true;
   try {
     _device->requestCapturePermission();

@@ -32,6 +32,26 @@ void onMain(std::function<void()> operation) {
 void check(NSError* error) {
   if (error) throw std::runtime_error([[error localizedDescription] UTF8String]);
 }
+NSString* deviceString(const std::string& value) {
+  NSString* string = [NSString stringWithUTF8String:value.c_str()];
+  if (!string || value.find('\0') != std::string::npos ||
+      (!value.empty() && [string stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length == 0)) {
+    throw std::invalid_argument("invalid_audio_device_id");
+  }
+  return string;
+}
+NSDictionary* deviceStatus(NSString* source, NSString* code, const std::string& requested = {}, NSString* actual = nil) {
+  NSMutableDictionary* status = [@{@"source": source, @"code": code} mutableCopy];
+  if (!requested.empty()) status[@"requestedDeviceId"] = deviceString(requested);
+  if (actual.length > 0) status[@"actualDeviceId"] = actual;
+  return status;
+}
+std::string deviceJson(id object) {
+  NSError* error = nil;
+  NSData* bytes = [NSJSONSerialization dataWithJSONObject:object options:0 error:&error];
+  check(error);
+  return std::string(static_cast<const char*>(bytes.bytes), bytes.length);
+}
 struct PlaybackProgress {
   std::mutex mutex;
   std::condition_variable changed;
@@ -48,6 +68,51 @@ public:
     try { stopCapture(); cancelPlayback(); } catch (...) {}
   }
 
+  void configureDevices(const std::string& micDeviceId, const std::string& playbackDeviceId,
+                        const std::string& iosOutputRoute) override {
+    deviceString(micDeviceId); deviceString(playbackDeviceId);
+    if (!iosOutputRoute.empty() && iosOutputRoute != "speaker" && iosOutputRoute != "system") {
+      throw std::invalid_argument("invalid_ios_output_route");
+    }
+    onMain([&] {
+      if (_ownsCapture) throw std::runtime_error("audio_device_already_running");
+      _micDeviceId = micDeviceId; _playbackDeviceId = playbackDeviceId; _iosOutputRoute = iosOutputRoute;
+      _micStatus = deviceStatus(@"microphone", @"pending", _micDeviceId);
+      _playbackStatus = deviceStatus(@"playback", playbackDeviceId.empty() ? @"pending" : @"unsupported", _playbackDeviceId);
+    });
+  }
+
+  std::string listAudioDevices(const std::string& source) override {
+    std::string result;
+    onMain([&] {
+      NSString* kind = deviceString(source);
+      if (source != "microphone" && source != "system_audio" && source != "playback") {
+        throw std::invalid_argument("invalid_audio_device_source");
+      }
+      NSMutableArray* devices = [NSMutableArray new];
+      NSString* code = @"unsupported";
+      if (source == "microphone") {
+        AVAudioSession* session = [AVAudioSession sharedInstance];
+        code = session.recordPermission == AVAudioSessionRecordPermissionDenied ? @"permission_denied" : @"ready";
+        if (![code isEqualToString:@"permission_denied"]) {
+          // 조회는 현재 session에서 보이는 입력만 읽고 category·권한·캡처를 변경하지 않는다.
+          // https://developer.apple.com/documentation/avfaudio/avaudiosession/availableinputs
+          for (AVAudioSessionPortDescription* input in session.availableInputs) {
+            [devices addObject:@{@"id": input.UID, @"label": input.portName}];
+          }
+        }
+      }
+      result = deviceJson(@{@"status": deviceStatus(kind, code), @"devices": devices});
+    });
+    return result;
+  }
+
+  std::string getAudioDeviceStatus() override {
+    std::string result;
+    onMain([&] { result = deviceJson(@[_micStatus, _playbackStatus]); });
+    return result;
+  }
+
   void requestCapturePermission() override {
       auto permitted = std::make_shared<std::atomic<bool>>(false);
       dispatch_semaphore_t answered = dispatch_semaphore_create(0);
@@ -57,16 +122,21 @@ public:
         if (@available(iOS 17.0, *)) [AVAudioApplication requestRecordPermissionWithCompletionHandler:completion];
         else [[AVAudioSession sharedInstance] requestRecordPermission:completion];
       });
-      if (dispatch_semaphore_wait(answered, dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_SEC)) != 0 || !permitted->load()) {
+      const bool timedOut = dispatch_semaphore_wait(answered, dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_SEC)) != 0;
+      if (timedOut || !permitted->load()) {
+        onMain([&] { _micStatus = deviceStatus(@"microphone", timedOut ? @"pending" : @"permission_denied", _micDeviceId); });
         throw std::runtime_error("microphone_permission_required");
       }
   }
 
   void startCapture(uint32_t preferredRate) override {
+    onMain([&] { if (!_playbackDeviceId.empty()) throw std::runtime_error("audio_device_unsupported"); });
     if (captureInUse.exchange(true)) throw std::runtime_error("microphone_already_running");
     _ownsCapture = true;
     try {
       onMain([&] {
+        _micStatus = deviceStatus(@"microphone", @"pending", _micDeviceId);
+        _playbackStatus = deviceStatus(@"playback", @"pending");
         if ([UIApplication sharedApplication].applicationState != UIApplicationStateActive) {
           throw std::runtime_error("microphone_requires_foreground");
         }
@@ -78,6 +148,8 @@ public:
         [session setPreferredSampleRate:preferredRate error:&error]; check(error);
         [session setPreferredIOBufferDuration:0.01 error:&error]; check(error);
         [session setActive:YES error:&error]; check(error);
+        applyRequestedRoute(session);
+        verifyRoute(session);
         _engine = [[AVAudioEngine alloc] init];
         // main mixer 첫 접근은 output node도 연결하므로 I/O 시작 전에 graph를 준비한다.
         // https://developer.apple.com/documentation/avfaudio/avaudioengine/mainmixernode
@@ -108,9 +180,22 @@ public:
         [_engine attachNode:_sink];
         [_engine connect:_engine.inputNode to:_sink format:format];
         [_engine startAndReturnError:&error]; check(error);
+        verifyRoute(session);
+        NSString* input = session.currentRoute.inputs.firstObject.UID;
+        NSString* output = session.currentRoute.outputs.firstObject.UID;
+        _micStatus = deviceStatus(@"microphone", input.length > 0 ? @"ready" : @"pending", _micDeviceId, input);
+        _playbackStatus = deviceStatus(@"playback", output.length > 0 ? @"ready" : @"pending", {}, output);
         observeSession();
       });
-    } catch (...) { stopCapture(); throw; }
+    } catch (...) {
+      onMain([&] {
+        if ([_micStatus[@"code"] isEqualToString:@"pending"] && [_playbackStatus[@"code"] isEqualToString:@"pending"]) {
+          _micStatus = deviceStatus(@"microphone", @"unavailable", _micDeviceId);
+          _playbackStatus = deviceStatus(@"playback", @"unavailable", _playbackDeviceId);
+        }
+      });
+      stopCapture(); throw;
+    }
   }
 
   void stopCapture() override {
@@ -122,7 +207,17 @@ public:
       [_engine stop];
       if (_sink) { [_engine disconnectNodeOutput:_engine.inputNode]; [_engine detachNode:_sink]; }
       _sink = nil; _player = nil; _engine = nil;
+      if ([_micStatus[@"code"] isEqualToString:@"ready"]) _micStatus = deviceStatus(@"microphone", @"pending", _micDeviceId);
+      if ([_playbackStatus[@"code"] isEqualToString:@"ready"]) _playbackStatus = deviceStatus(@"playback", @"pending", _playbackDeviceId);
       if (_ownsCapture) {
+        if (_ownsOutputOverride) {
+          [[AVAudioSession sharedInstance] overrideOutputAudioPort:AVAudioSessionPortOverrideNone error:nil];
+          _ownsOutputOverride = false;
+        }
+        if (_ownsInputPreference) {
+          [[AVAudioSession sharedInstance] setPreferredInput:nil error:nil];
+          _ownsInputPreference = false;
+        }
         [[AVAudioSession sharedInstance] setActive:NO withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:nil];
         _ownsCapture = false;
         captureInUse = false;
@@ -228,20 +323,81 @@ public:
   }
 
 private:
+  AVAudioSessionPortDescription* requestedInput(AVAudioSession* session) {
+    NSString* uid = deviceString(_micDeviceId);
+    for (AVAudioSessionPortDescription* input in session.availableInputs) {
+      if ([input.UID isEqualToString:uid]) return input;
+    }
+    return nil;
+  }
+
+  void applyRequestedRoute(AVAudioSession* session) {
+    NSError* error = nil;
+    if (!_micDeviceId.empty()) {
+      AVAudioSessionPortDescription* selected = requestedInput(session);
+      if (!selected) {
+        _micStatus = deviceStatus(@"microphone", @"unavailable", _micDeviceId);
+        throw std::runtime_error("audio_device_unavailable");
+      }
+      // preferredInput은 요청이며 실제 입력은 currentRoute에서 별도로 확인한다.
+      // https://developer.apple.com/documentation/avfaudio/avaudiosession/setpreferredinput(_:)
+      [session setPreferredInput:selected error:&error];
+      if (error) _micStatus = deviceStatus(@"microphone", @"unavailable", _micDeviceId);
+      check(error);
+      _ownsInputPreference = true;
+    }
+    if (!_iosOutputRoute.empty()) {
+      // speaker override는 입력도 바꿀 수 있으므로 아래에서 요청한 마이크를 다시 검증한다.
+      // https://developer.apple.com/documentation/avfaudio/avaudiosession/overrideoutputaudioport(_:)
+      [session overrideOutputAudioPort:_iosOutputRoute == "speaker" ? AVAudioSessionPortOverrideSpeaker : AVAudioSessionPortOverrideNone error:&error];
+      if (error) _playbackStatus = deviceStatus(@"playback", @"unavailable");
+      check(error);
+      _ownsOutputOverride = _iosOutputRoute == "speaker";
+    }
+  }
+
+  void verifyRoute(AVAudioSession* session) {
+    AVAudioSessionPortDescription* input = session.currentRoute.inputs.firstObject;
+    AVAudioSessionPortDescription* output = session.currentRoute.outputs.firstObject;
+    if (!_micDeviceId.empty() && ![input.UID isEqualToString:deviceString(_micDeviceId)]) {
+      const bool available = requestedInput(session) != nil;
+      _micStatus = deviceStatus(@"microphone", available ? @"route_mismatch" : @"unavailable", _micDeviceId, input.UID);
+      throw std::runtime_error(available ? "audio_device_route_mismatch" : "audio_device_unavailable");
+    }
+    if (_iosOutputRoute == "speaker" && ![output.portType isEqualToString:AVAudioSessionPortBuiltInSpeaker]) {
+      _playbackStatus = deviceStatus(@"playback", @"route_mismatch", {}, output.UID);
+      throw std::runtime_error("audio_device_route_mismatch");
+    }
+  }
+
   void observeSession() {
     _observers = [NSMutableArray new];
     auto observe = [&](NSNotificationName name, std::function<bool(NSNotification*)> applies, const std::string& code) {
       id observer = [[NSNotificationCenter defaultCenter] addObserverForName:name object:nil
           queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification* notification) {
-        if (_running && applies(notification)) { _running = false; _error(code); }
+        if (_running && applies(notification)) {
+          _running = false;
+          AVAudioSession* session = [AVAudioSession sharedInstance];
+          if ([_micStatus[@"code"] isEqualToString:@"ready"] || [_micStatus[@"code"] isEqualToString:@"pending"]) {
+            _micStatus = deviceStatus(@"microphone", @"unavailable", _micDeviceId, session.currentRoute.inputs.firstObject.UID);
+          }
+          if ([_playbackStatus[@"code"] isEqualToString:@"ready"] || [_playbackStatus[@"code"] isEqualToString:@"pending"]) {
+            _playbackStatus = deviceStatus(@"playback", @"unavailable", _playbackDeviceId, session.currentRoute.outputs.firstObject.UID);
+          }
+          _error(code);
+        }
       }];
       [_observers addObject:observer];
     };
     observe(AVAudioSessionInterruptionNotification, [](NSNotification* n) {
       return [n.userInfo[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue] == AVAudioSessionInterruptionTypeBegan;
     }, "audio_interrupted");
-    observe(AVAudioSessionRouteChangeNotification, [](NSNotification* n) {
+    observe(AVAudioSessionRouteChangeNotification, [this](NSNotification* n) {
       auto reason = [n.userInfo[AVAudioSessionRouteChangeReasonKey] unsignedIntegerValue];
+      if (!_micDeviceId.empty() || _iosOutputRoute == "speaker") {
+        try { verifyRoute([AVAudioSession sharedInstance]); }
+        catch (const std::runtime_error&) { return true; }
+      }
       return reason == AVAudioSessionRouteChangeReasonNewDeviceAvailable || reason == AVAudioSessionRouteChangeReasonOldDeviceUnavailable;
     }, "audio_route_changed");
     observe(AVAudioSessionMediaServicesWereResetNotification, [](NSNotification*) { return true; }, "audio_services_reset");
@@ -254,7 +410,14 @@ private:
   std::function<void(const float*, size_t, uint32_t)> _render;
   std::function<void(const std::string&)> _error;
   std::atomic<bool> _running{false};
+  std::string _micDeviceId;
+  std::string _playbackDeviceId;
+  std::string _iosOutputRoute;
+  NSDictionary* _micStatus = deviceStatus(@"microphone", @"pending");
+  NSDictionary* _playbackStatus = deviceStatus(@"playback", @"pending");
   bool _ownsCapture = false;
+  bool _ownsInputPreference = false;
+  bool _ownsOutputOverride = false;
   AVAudioEngine* _engine = nil;
   AVAudioSinkNode* _sink = nil;
   AVAudioPlayerNode* _player = nil;

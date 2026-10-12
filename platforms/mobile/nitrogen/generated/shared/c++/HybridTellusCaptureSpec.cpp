@@ -15,6 +15,9 @@ namespace margelo::nitro::tellus {
     // load custom methods/properties
     registerHybrids(this, [](Prototype& prototype) {
       prototype.registerHybridMethod("configure", &HybridTellusCaptureSpec::configure);
+      prototype.registerHybridMethod("configureAudioDevices", &HybridTellusCaptureSpec::configureAudioDevices);
+      prototype.registerHybridMethod("listAudioDevices", &HybridTellusCaptureSpec::listAudioDevices);
+      prototype.registerHybridMethod("getAudioDeviceStatus", &HybridTellusCaptureSpec::getAudioDeviceStatus);
       prototype.registerHybridMethod("createAuthorizationRequest", &HybridTellusCaptureSpec::createAuthorizationRequest);
       prototype.registerHybridMethod("applyAuthorization", &HybridTellusCaptureSpec::applyAuthorization);
       prototype.registerHybridMethod("getAuthorizationStatus", &HybridTellusCaptureSpec::getAuthorizationStatus);
