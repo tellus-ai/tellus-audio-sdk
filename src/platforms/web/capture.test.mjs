@@ -3,17 +3,22 @@ import test from 'node:test';
 import { BrowserCapture } from '../../../platforms/web/runtime/platforms/web/capture.js';
 
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
-const stream = () => ({ getTracks: () => [{ readyState: 'live', stop() {}, addEventListener() {}, removeEventListener() {} }] });
+const stream = (deviceId) => {
+  const track = { readyState: 'live', stopped: false, getSettings: () => ({ deviceId }),
+    stop() { this.stopped = true; }, addEventListener(_type, listener) { this.onended = listener; }, removeEventListener() { this.onended = undefined; } };
+  return { track, getTracks: () => [track], getAudioTracks: () => [track] };
+};
 
-function environment(responses = {}) {
+function environment(responses = {}, config = {}) {
   const nodes = [];
   const requests = [];
   const permissions = [];
+  const rejections = [];
   globalThis.document = { addEventListener() {}, removeEventListener() {}, visibilityState: 'visible' };
   Object.defineProperty(globalThis, 'navigator', { configurable: true, value: {
     mediaDevices: { getUserMedia: (constraints) => {
       requests.push(constraints);
-      return new Promise((resolve) => permissions.push(resolve));
+      return new Promise((resolve, reject) => { permissions.push(resolve); rejections.push(reject); });
     } },
   } });
   globalThis.AudioWorkletNode = class {
@@ -22,7 +27,7 @@ function environment(responses = {}) {
     port = { postMessage: (message) => this.controls.push(message), close() {}, onmessage: null };
     connect() {} disconnect() {}
   };
-  const context = { resume: async () => {}, currentTime: 0, destination: {},
+  const context = { resume: responses.contextResume ?? (async () => {}), currentTime: 0, destination: {},
     createMediaStreamSource: () => ({ connect() {}, disconnect() {} }),
     decodeAudioData: (bytes) => responses.decodeAudioData(bytes) };
   let lifecycle = 'stopped';
@@ -41,8 +46,144 @@ function environment(responses = {}) {
       if (command.operation === 'status') return { lifecycle, denoise_enabled: false, denoise_loaded: false, vad_loaded: false };
     },
   };
-  return { capture: new BrowserCapture(client, context, {}), permissions, requests, commands, nodes };
+  return { capture: new BrowserCapture(client, context, config), permissions, rejections, requests, commands, nodes };
 }
+
+test('an exact microphone selection is pending until the actual input is acquired', async () => {
+  const { capture, permissions, requests } = environment({}, { micDeviceId: 'mic-b' });
+  const starting = capture.start(() => {});
+  await flush();
+  assert.deepEqual(requests[0].audio.deviceId, { exact: 'mic-b' });
+  assert.deepEqual((await capture.getStatus()).deviceStatus, [{ source: 'microphone', code: 'pending', requestedDeviceId: 'mic-b' }]);
+  permissions[0](stream('mic-b'));
+  await starting;
+  assert.deepEqual((await capture.getStatus()).deviceStatus, [{ source: 'microphone', code: 'ready', requestedDeviceId: 'mic-b', actualDeviceId: 'mic-b' }]);
+  await capture.dispose();
+});
+
+test('an actual microphone mismatch closes the input and leaves a readable failure status', async () => {
+  const { capture, permissions } = environment({}, { micDeviceId: 'mic-b' });
+  const starting = capture.start(() => {});
+  const rejection = assert.rejects(starting, (error) => {
+    assert.deepEqual(error.deviceStatus, { source: 'microphone', code: 'route_mismatch', requestedDeviceId: 'mic-b', actualDeviceId: 'mic-a' });
+    return true;
+  });
+  await flush();
+  const input = stream('mic-a');
+  permissions[0](input);
+  await rejection;
+  assert.equal(input.track.stopped, true);
+  assert.equal((await capture.getStatus()).state, 'stopped');
+  assert.equal((await capture.getStatus()).deviceStatus[0].code, 'route_mismatch');
+  await capture.dispose();
+});
+
+test('a denied microphone request reports permission state without poisoning core status', async () => {
+  const { capture, rejections } = environment({}, { micDeviceId: 'mic-b' });
+  const starting = capture.start(() => {});
+  const rejection = assert.rejects(starting, (error) => error.deviceStatus?.code === 'permission_denied');
+  await flush();
+  rejections[0](new DOMException('denied', 'NotAllowedError'));
+  await rejection;
+  assert.equal((await capture.getStatus()).deviceStatus[0].code, 'permission_denied');
+  await capture.dispose();
+});
+
+test('an empty microphone ID never opens the default device', async () => {
+  const { capture, requests } = environment({}, { micDeviceId: '' });
+  await assert.rejects(capture.start(() => {}), (error) => error.deviceStatus?.code === 'unavailable');
+  assert.deepEqual(requests, []);
+  await capture.dispose();
+});
+
+test('a selected microphone ending reports unavailable through callback and status', async () => {
+  const { capture, permissions } = environment({}, { micDeviceId: 'mic-b' });
+  let failure;
+  const starting = capture.start((error) => { failure = error; });
+  await flush();
+  const input = stream('mic-b');
+  permissions[0](input);
+  await starting;
+  input.track.onended();
+  await flush();
+  assert.equal(failure.deviceStatus.code, 'unavailable');
+  assert.equal((await capture.getStatus()).deviceStatus[0].code, 'unavailable');
+  assert.equal(input.track.stopped, true);
+  await capture.dispose();
+});
+
+test('stop while exact input permission is pending closes the late stream without marking it ready', async () => {
+  const { capture, permissions } = environment({}, { micDeviceId: 'mic-b' });
+  const starting = capture.start(() => {});
+  await flush();
+  await capture.stop();
+  const input = stream('mic-b');
+  permissions[0](input);
+  await starting;
+  assert.equal(input.track.stopped, true);
+  assert.notEqual((await capture.getStatus()).deviceStatus[0].code, 'ready');
+  await capture.dispose();
+});
+
+test('a missing exact microphone reports unavailable without opening another input', async () => {
+  const { capture, requests, rejections } = environment({}, { micDeviceId: 'missing-mic' });
+  const starting = capture.start(() => {});
+  const rejection = assert.rejects(starting, (error) => error.deviceStatus?.code === 'unavailable');
+  await flush();
+  rejections[0](new DOMException('missing device', 'NotFoundError'));
+  await rejection;
+  assert.equal(requests.length, 1);
+  assert.equal((await capture.getStatus()).deviceStatus[0].requestedDeviceId, 'missing-mic');
+  await capture.dispose();
+});
+
+test('a late rejected exact input cannot stop the replacement input after pause and resume', async () => {
+  const { capture, permissions, rejections } = environment({}, { micDeviceId: 'mic-b' });
+  const starting = capture.start(() => {});
+  await flush();
+  await capture.pause();
+  const resuming = capture.resume();
+  await flush();
+  permissions[1](stream('mic-b'));
+  await resuming;
+  rejections[0](new DOMException('stale permission denial', 'NotAllowedError'));
+  await starting;
+  assert.equal((await capture.getStatus()).state, 'running');
+  assert.equal((await capture.getStatus()).deviceStatus[0].code, 'ready');
+  await capture.dispose();
+});
+
+test('a failed context resume closes the acquired exact microphone', async () => {
+  const { capture, permissions } = environment({ contextResume: async () => { throw new Error('context_resume_failed'); } }, { micDeviceId: 'mic-b' });
+  const starting = capture.start(() => {});
+  const rejection = assert.rejects(starting, /context_resume_failed/);
+  await new Promise(setImmediate);
+  const input = stream('mic-b');
+  permissions[0](input);
+  await rejection;
+  assert.equal(input.track.stopped, true);
+  await capture.dispose();
+});
+
+test('pause while the context is resuming closes the acquired input and reacquires on resume', async () => {
+  const resumes = [];
+  const { capture, permissions, requests } = environment({ contextResume: () => new Promise((resolve) => resumes.push(resolve)) }, { micDeviceId: 'mic-b' });
+  const starting = capture.start(() => {});
+  await flush();
+  const firstInput = stream('mic-b');
+  permissions[0](firstInput);
+  await flush();
+  await capture.pause();
+  const resuming = capture.resume();
+  await flush();
+  assert.equal(requests.length, 2);
+  assert.equal(firstInput.track.stopped, true);
+  resumes.forEach((resolve) => resolve());
+  permissions[1](stream('mic-b'));
+  await Promise.all([starting, resuming]);
+  assert.equal((await capture.getStatus()).state, 'running');
+  await capture.dispose();
+});
 
 test('pause while microphone permission is pending reacquires real input on resume', async () => {
   const { capture, permissions, requests, commands } = environment();

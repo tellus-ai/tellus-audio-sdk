@@ -2,7 +2,9 @@ import type {
   AudioCapture, AudioCaptureCallback, AudioCaptureConfig, CaptureStatus,
 } from '../../bindings/typescript/capture-types.js';
 import type { EngineAuthorizationRequest, EngineAuthorizationStatus } from '../../bindings/typescript/authorization/contracts.js';
+import type { AudioDeviceStatus } from '../../bindings/typescript/audio-devices.js';
 import { CaptureQueue, type CaptureFrame } from './capture-queue.js';
+import { audioDeviceError } from './devices.js';
 import type { DeliveredChunk, NativeStatus, WorkerCommand } from './protocol.js';
 import { WorkerClient } from './worker-client.js';
 
@@ -38,9 +40,11 @@ export class BrowserCapture implements AudioCapture {
   private playbackEpoch = 0;
   private playbackCleanup: Promise<void> = Promise.resolve();
   private approval?: { remainingMs: number; monotonicStart: number; wallStart: number };
+  private deviceStatus: AudioDeviceStatus;
 
-  constructor(private readonly client: WorkerClient, private readonly context: AudioContext, private readonly config: AudioCaptureConfig) {
+  constructor(private readonly client: WorkerClient, private readonly context: AudioContext, private readonly config: AudioCaptureConfig, private readonly playbackDeviceStatus?: AudioDeviceStatus) {
     this.queue = new CaptureQueue(config.processing?.sampleRate ?? 16000);
+    this.deviceStatus = { source: 'microphone', code: 'pending', ...(config.micDeviceId === undefined ? {} : { requestedDeviceId: config.micDeviceId }) };
     this.denoiseEnabled = !!config.denoiseEnabled;
     this.ready = client.request<number>(0, 0, { operation: 'create', config }).then((id) => {
       this.sessionId = id;
@@ -96,18 +100,29 @@ export class BrowserCapture implements AudioCapture {
     this.callback = callback;
     const epoch = this.epoch;
     this.state = 'running';
+    const requestedDeviceId = this.config.micDeviceId;
+    this.deviceStatus = { source: 'microphone', code: 'pending', ...(requestedDeviceId === undefined ? {} : { requestedDeviceId }) };
     const resumed = this.context.resume();
+    void resumed.catch(() => {});
     try {
+      if (requestedDeviceId !== undefined && (typeof requestedDeviceId !== 'string' || !requestedDeviceId.trim())) throw audioDeviceError(new Error('tellus_microphone_invalid_device_id'), 'microphone', typeof requestedDeviceId === 'string' ? requestedDeviceId : undefined);
       await this.request({ operation: 'start' }, epoch);
       if (epoch !== this.epoch) return;
-      if (!navigator.mediaDevices?.getUserMedia) throw new Error('tellus_microphone_requires_secure_context');
+      if (!navigator.mediaDevices?.getUserMedia) throw audioDeviceError(new DOMException('tellus_microphone_requires_secure_context', 'NotSupportedError'), 'microphone', requestedDeviceId);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: {
         channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false,
-      } });
-      if (epoch !== this.epoch) { stream.getTracks().forEach((track) => track.stop()); return; }
-      await resumed;
+        ...(requestedDeviceId === undefined ? {} : { deviceId: { exact: requestedDeviceId } }),
+      } }).catch((error) => { throw audioDeviceError(error, 'microphone', requestedDeviceId); });
       if (epoch !== this.epoch) { stream.getTracks().forEach((track) => track.stop()); return; }
       this.stream = stream;
+      await resumed;
+      if (epoch !== this.epoch) { stream.getTracks().forEach((track) => track.stop()); return; }
+      const actualDeviceId = stream.getAudioTracks()[0]?.getSettings().deviceId;
+      if (requestedDeviceId !== undefined && actualDeviceId !== requestedDeviceId) {
+        throw Object.assign(new Error('tellus_microphone_route_mismatch'), { deviceStatus: {
+          source: 'microphone', code: 'route_mismatch', requestedDeviceId, ...(actualDeviceId === undefined ? {} : { actualDeviceId }),
+        } satisfies AudioDeviceStatus });
+      }
       this.source = this.context.createMediaStreamSource(stream);
       this.tap = this.createTap(false);
       this.tap.port.onmessage = (event: MessageEvent<CaptureFrame>) => {
@@ -120,7 +135,13 @@ export class BrowserCapture implements AudioCapture {
       this.source.connect(this.tap);
       this.tap.connect(this.context.destination);
       for (const track of stream.getTracks()) track.addEventListener('ended', this.onDeviceEnded);
-    } catch (error) { await this.stop(); throw error; }
+      this.deviceStatus = { source: 'microphone', code: 'ready', ...(requestedDeviceId === undefined ? {} : { requestedDeviceId }), ...(actualDeviceId === undefined ? {} : { actualDeviceId }) };
+    } catch (error) {
+      if (epoch !== this.epoch) return;
+      if (error instanceof Error && 'deviceStatus' in error) this.deviceStatus = error.deviceStatus as AudioDeviceStatus;
+      await this.stop();
+      throw error;
+    }
   }
 
   async pause(): Promise<void> {
@@ -133,7 +154,7 @@ export class BrowserCapture implements AudioCapture {
 
   async resume(): Promise<void> {
     if (this.state !== 'paused') throw new Error('tellus_capture_not_paused');
-    if (!this.stream?.getTracks().some((track) => track.readyState === 'live')) {
+    if (!this.tap || !this.stream?.getTracks().some((track) => track.readyState === 'live')) {
       const callback = this.callback;
       if (!callback) throw new Error('tellus_capture_callback_missing');
       const previousEpoch = this.epoch;
@@ -180,6 +201,7 @@ export class BrowserCapture implements AudioCapture {
     const status = await this.request<NativeStatus>({ operation: 'status' });
     return {
       state: this.state, denoiseEnabled: status.denoise_enabled, vadEnabled: !!this.config.vadEnabled,
+      deviceStatus: [this.deviceStatus, ...(this.playbackDeviceStatus ? [this.playbackDeviceStatus] : [])],
       modelsLoaded: [status.denoise_loaded ? (this.config.processing?.sampleRate ?? 16000) === 16000 ? 'fe-s16' : 'fe-s48' : '', status.vad_loaded ? 'silero-vad' : ''].filter(Boolean),
     };
   }
@@ -377,7 +399,11 @@ export class BrowserCapture implements AudioCapture {
     this.callback?.(error);
   }
 
-  private readonly onDeviceEnded = (): void => this.fail(new Error('tellus_microphone_device_ended'));
+  private readonly onDeviceEnded = (): void => {
+    const error = audioDeviceError(new Error('tellus_microphone_device_ended'), 'microphone', this.config.micDeviceId);
+    this.deviceStatus = error.deviceStatus;
+    this.fail(error);
+  };
   private readonly onVisibilityChange = (): void => {
     if (document.visibilityState === 'hidden' && this.approval) this.fail(new Error('engine_authorization_page_hidden'));
   };
