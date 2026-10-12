@@ -1,8 +1,13 @@
 import type { AuthorizableAudioCapture } from './authorization/contracts.js';
+import type { AudioDeviceStatus } from './audio-devices.js';
 
 export interface AudioCaptureConfig {
   micEnabled?: boolean;
   speakerEnabled?: boolean;
+  micDeviceId?: string;
+  systemAudioDeviceId?: string;
+  playbackDeviceId?: string;
+  iosOutputRoute?: 'speaker' | 'system';
   enableRawAudio?: boolean;
   denoiseEnabled?: boolean;
   vadEnabled?: boolean;
@@ -49,6 +54,7 @@ export interface CaptureStatus {
   denoiseEnabled: boolean;
   vadEnabled: boolean;
   modelsLoaded: string[];
+  deviceStatus?: AudioDeviceStatus[];
 }
 
 export type AudioCaptureCallback = (error: Error | null, chunk?: AudioChunk) => void;
