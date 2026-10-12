@@ -4,6 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { test } = require('node:test');
+const ts = require('typescript');
 
 test('fresh SDK sources build all packages without an engine checkout or runtime kits', t => {
   const root = path.resolve(__dirname, '..');
@@ -28,5 +29,17 @@ test('fresh SDK sources build all packages without an engine checkout or runtime
     const pkg = JSON.parse(fs.readFileSync(path.join(fixture, 'platforms', platform, 'package.json')));
     assert.ok(fs.existsSync(path.join(fixture, 'platforms', platform, pkg.main)));
     assert.ok(fs.existsSync(path.join(fixture, 'platforms', platform, pkg.types)));
+    const entry = path.join('platforms', platform, pkg.main).replaceAll(path.sep, '/');
+    const usage = path.join(fixture, `${platform}-devices.ts`);
+    fs.writeFileSync(usage, `import { listAudioDevices } from './${entry}';
+import type { AudioCaptureConfig, AudioDeviceListResult, AudioDeviceOperationError } from './${entry}';
+const config: AudioCaptureConfig = { micDeviceId: 'input-id', systemAudioDeviceId: 'system-id', playbackDeviceId: 'playback-id', iosOutputRoute: 'system' };
+const devices: Promise<AudioDeviceListResult> = listAudioDevices('microphone');
+function errorCode(error: AudioDeviceOperationError) { return error.deviceStatus.code; }
+void config; void devices; void errorCode;
+`);
+    const program = ts.createProgram([usage], { noEmit: true, strict: true, skipLibCheck: true,
+      target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler });
+    assert.deepEqual(ts.getPreEmitDiagnostics(program).map(diagnostic => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')), []);
   }
 });

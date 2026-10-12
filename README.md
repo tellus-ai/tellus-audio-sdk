@@ -20,6 +20,8 @@ Desktop은 OS·CPU에 맞는 엔진을 선택합니다. Web은 웹 엔진만 설
 
 SDK 저장소의 실행 래퍼와 설치 코드를 빌드하고 세 플랫폼 패키지를 조립합니다.
 
+장치 선택 API는 이 소스 변경에 포함됩니다. 현재 `release-assets.json`의 엔진 `0.3.2` 고정값과 checksum은 유지합니다. Desktop의 신규 native API는 이 변경으로 빌드한 엔진이 필요하며, 구형 엔진에서는 명시 장치 선택을 `unsupported`로 거부합니다. 고객에게 제공하기 전에 변경된 엔진 archive를 발행하고 검증된 버전·checksum으로 pin을 갱신해야 합니다. 소스 빌드·패키지 검증 통과만으로 새 장치 기능의 배포 완료를 의미하지 않습니다.
+
 ```sh
 npm ci --ignore-scripts
 npm run build
@@ -41,6 +43,12 @@ npm pack --workspace @tellus-ai/audio-sdk-mobile
 ```
 
 모든 변경의 완료 조건은 `npm run verify:pre-commit` 통과입니다. 이 명령은 SDK 테스트·JS 구문 검사·세 설치 패키지 검증을 실행합니다.
+
+## 장치 조회와 선택
+
+각 플랫폼은 `listAudioDevices('microphone' | 'system_audio' | 'playback')`을 제공합니다. 결과는 `{ status, devices: [{ id, label }] }`이며 ID는 조회한 값을 그대로 사용합니다. 이름이나 목록 순서로 장치를 지정하지 않습니다. 조회는 권한 요청이나 임시 캡처를 수행하지 않으며, 목록 조회의 `ready`는 스트림 선택 성공을 보장하지 않습니다. ID는 OS 재시작이나 브라우저 권한 초기화 이후 유지되지 않을 수 있습니다.
+
+설정의 ID를 생략하면 기존 기본 장치를 사용합니다. 명시 ID가 실패하면 기본 장치로 전환하지 않습니다. 장치 선택의 운영 실패를 전달하는 throw/reject 오류에는 `deviceStatus`가 포함되며, 캡처의 `getStatus().deviceStatus`로도 상태를 확인합니다. 상태 코드는 `pending`, `ready`, `unavailable`, `unsupported`, `permission_denied`, `route_mismatch`입니다. 다른 장치로 바꾸려면 새 설정으로 엔진·캡처를 생성하고 승인을 다시 연결합니다. 실행 중 선택 변경 API는 제공하지 않습니다.
 
 ## CI 조립
 

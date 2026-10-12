@@ -27,15 +27,22 @@ for (const platform of ['desktop', 'web', 'mobile']) {
       fs.writeFileSync(path.join(peer, 'package.json'), JSON.stringify({ name: 'react-native-nitro-modules', type: 'module', exports: './index.js' }));
       fs.writeFileSync(path.join(peer, 'index.js'), "export const NitroModules = { createHybridObject() { throw new Error('native host required'); } };\n");
     }
-    if (platform === 'web') {
+    {
       fs.writeFileSync(path.join(installed, 'consumer.mts'), `
-        import { AudioEngine } from '@tellus-ai/audio-sdk-web';
-        import { attachEngineAuthorization } from '@tellus-ai/audio-sdk-web/authorization';
+        import { AudioEngine, listAudioDevices } from '@tellus-ai/audio-sdk-${platform}';
+        import type { AudioCaptureConfig, AudioDeviceListResult, AudioDeviceOperationError, CaptureStatus } from '@tellus-ai/audio-sdk-${platform}';
+        import { attachEngineAuthorization } from '@tellus-ai/audio-sdk-${platform}/authorization';
         export const init = AudioEngine.init;
         export const authorize = attachEngineAuthorization;
+        const config: AudioCaptureConfig = { micDeviceId: 'input-id', systemAudioDeviceId: 'system-id', playbackDeviceId: 'playback-id', iosOutputRoute: 'system' };
+        const devices: Promise<AudioDeviceListResult> = listAudioDevices('microphone');
+        function selectedId(status: CaptureStatus) { return status.deviceStatus?.[0].actualDeviceId; }
+        function errorCode(error: AudioDeviceOperationError) { return error.deviceStatus.code; }
+        void config; void devices; void selectedId; void errorCode;
       `);
       const typed = spawnSync(process.execPath, [path.resolve(__dirname, '../node_modules/typescript/bin/tsc'),
         '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2020',
+        ...(platform === 'desktop' ? ['--types', 'node', '--typeRoots', path.resolve(__dirname, '../node_modules/@types')] : []),
         '--strict', '--skipLibCheck', 'false', '--noEmit', 'consumer.mts'], { cwd: installed, encoding: 'utf8' });
       assert.equal(typed.status, 0, typed.stdout + typed.stderr);
     }
@@ -47,7 +54,16 @@ for (const platform of ['desktop', 'web', 'mobile']) {
     const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
       const sdk = await import('@tellus-ai/audio-sdk-${platform}');
       const auth = await import('@tellus-ai/audio-sdk-${platform}/authorization');
-      if (typeof sdk.AudioEngine.init !== 'function' || typeof auth.attachEngineAuthorization !== 'function') process.exit(1);
+      if (typeof sdk.AudioEngine.init !== 'function' || typeof sdk.listAudioDevices !== 'function' || typeof auth.attachEngineAuthorization !== 'function') process.exit(1);
+      if ('${platform}' === 'desktop') {
+        const devices = await sdk.listAudioDevices('microphone');
+        if (devices.status.code === 'unsupported') {
+          let rejected = false;
+          try { new sdk.AudioCapture({ micDeviceId: 'explicit-device' }); }
+          catch (error) { rejected = error.deviceStatus?.code === 'unsupported'; }
+          if (!rejected) throw new Error('Old native engine silently accepted an explicit device');
+        }
+      }
     `], { cwd: installed, encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
     assert.ok(!fs.existsSync(path.join(installed, 'src')));
