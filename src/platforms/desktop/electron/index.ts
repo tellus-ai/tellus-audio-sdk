@@ -1,4 +1,6 @@
 import { release as osRelease } from 'node:os';
+import type { AudioDeviceSource, AudioDeviceStatus, AudioDeviceListResult } from '../../../bindings/typescript/audio-devices.js';
+export type { AudioDeviceSource, AudioDeviceInfo, AudioDeviceStatus, AudioDeviceListResult, AudioDeviceOperationError } from '../../../bindings/typescript/audio-devices.js';
 
 import { prepareEngineRuntime } from './runtime/engine-runtime.js';
 import type { EngineAuthorizationRequest, EngineAuthorizationStatus } from '../../../bindings/typescript/authorization/contracts.js';
@@ -21,6 +23,14 @@ export type AudioTrackSource =
 
 /** Audio capture configuration. */
 export interface AudioCaptureConfig {
+  /** 생략하면 OS 기본 입력을 따른다. */
+  micDeviceId?: string;
+  /** 시스템 오디오를 캡처할 출력 ID. */
+  systemAudioDeviceId?: string;
+  /** 데스크톱 엔진 재생 경로는 지원하지 않는다. */
+  playbackDeviceId?: string;
+  /** iOS 전용 설정. 데스크톱에서는 unsupported. */
+  iosOutputRoute?: 'speaker' | 'system';
   /** Enables microphone capture. Native default is true. */
   micEnabled?: boolean;
   /** Enables speaker/system-audio capture. Native default is false. */
@@ -125,6 +135,7 @@ export interface AudioChunk {
 }
 
 export interface CaptureStatus {
+  deviceStatus?: AudioDeviceStatus[];
   state: string;
   micThreadAlive: boolean;
   speakerThreadAlive: boolean;
@@ -157,6 +168,7 @@ export interface CaptureStatus {
 }
 
 export interface CaptureError {
+  deviceStatus?: AudioDeviceStatus;
   source: string;
   message: string;
   recoverable: boolean;
@@ -280,6 +292,7 @@ const { nativeBinding } = prepareEngineRuntime();
 
 const {
   AudioCapture: NativeAudioCapture,
+  listAudioDevices: nativeListAudioDevices,
   listMicDevices: nativeListMicDevices,
   listSpeakerDevices: nativeListSpeakerDevices,
   isSpeakerCaptureSupported: nativeIsSpeakerCaptureSupported,
@@ -584,10 +597,35 @@ function callNativeSpeakerPermissionProbe(): unknown {
   );
 }
 
+/** 기존 반환 계약에서 지원 실패를 구조화해 전달한다. */
+function validateDeviceSelection(config?: AudioCaptureConfig | null): void {
+  if (config?.playbackDeviceId !== undefined || config?.iosOutputRoute !== undefined) {
+    throw Object.assign(new Error('Desktop playback device selection is unsupported'), {
+      deviceStatus: { source: 'playback', code: 'unsupported', requestedDeviceId: config.playbackDeviceId },
+    });
+  }
+  const selected = config?.micDeviceId !== undefined ? { source: 'microphone', id: config.micDeviceId }
+    : config?.systemAudioDeviceId !== undefined ? { source: 'system_audio', id: config.systemAudioDeviceId } : undefined;
+  if (!selected) return;
+  if (typeof nativeListAudioDevices !== 'function') {
+    throw Object.assign(new Error('Native audio device selection is unsupported'), {
+      deviceStatus: { source: selected.source, code: 'unsupported', requestedDeviceId: selected.id },
+    });
+  }
+}
+
+/** 조회 실패 상태와 정상적인 빈 목록을 구분한다. */
+export async function listAudioDevices(source: AudioDeviceSource): Promise<AudioDeviceListResult> {
+  if (!['microphone', 'system_audio', 'playback'].includes(source)) throw new Error('Invalid audio device source');
+  if (typeof nativeListAudioDevices !== 'function') return { status: { source, code: 'unsupported' }, devices: [] };
+  return nativeListAudioDevices(source);
+}
+
 export class AudioCapture {
   #native: any;
 
   constructor(config?: AudioCaptureConfig | null) {
+    validateDeviceSelection(config);
     this.#native = new NativeAudioCapture(config);
   }
 
@@ -625,7 +663,13 @@ export class AudioCapture {
   }
 
   start(callback: AudioChunkCallback): void {
-    this.#native.start(callback);
+    try { this.#native.start(callback); }
+    catch (error) {
+      const status = this.#native.getStatus().deviceStatus?.find((status: AudioDeviceStatus) =>
+        status.code !== 'ready' && status.code !== 'pending');
+      if (error instanceof Error && status) Object.assign(error, { deviceStatus: status });
+      throw error;
+    }
   }
 
   pause(): void {

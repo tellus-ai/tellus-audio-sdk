@@ -18,6 +18,10 @@ struct DecodedAudio {
 class AudioDevice {
 public:
   virtual ~AudioDevice() = default;
+  virtual void configureDevices(const std::string& micDeviceId, const std::string& playbackDeviceId,
+                                const std::string& iosOutputRoute) = 0;
+  virtual std::string listAudioDevices(const std::string& source) = 0;
+  virtual std::string getAudioDeviceStatus() = 0;
   virtual void requestCapturePermission() = 0;
   virtual void startCapture(uint32_t preferredRate) = 0;
   virtual void stopCapture() = 0;

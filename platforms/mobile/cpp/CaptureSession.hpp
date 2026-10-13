@@ -42,6 +42,10 @@ public:
   }
 
   void start(bool resume);
+  void configureAudioDevices(const std::string& micDeviceId, const std::string& playbackDeviceId,
+                             const std::string& iosOutputRoute);
+  std::string listAudioDevices(const std::string& source) { return _device->listAudioDevices(source); }
+  std::string getAudioDeviceStatus() { return _device->getAudioDeviceStatus(); }
   void pause();
   void stop();
   void close();
@@ -85,6 +89,7 @@ private:
   std::atomic<bool> _outputOverflow{false};
   std::atomic<bool> _failed{false};
   bool _started = false;
+  bool _deviceSelectionLocked = false;
   bool _authorizationMonitored = false;
   std::unique_ptr<AudioDevice> _device;
   std::unique_ptr<CaptureWorker> _worker;

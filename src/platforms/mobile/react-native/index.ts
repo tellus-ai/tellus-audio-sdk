@@ -2,8 +2,20 @@ import { NitroModules } from 'react-native-nitro-modules';
 import type { TellusCapture } from './TellusCapture.nitro.js';
 import type { AudioCapture, AudioCaptureCallback, AudioCaptureConfig, AudioChunk, CaptureStatus, NativeEngineAssets, RecordingNotificationConfig } from '../../../bindings/typescript/capture-types.js';
 import type { EngineAuthorizationRequest, EngineAuthorizationStatus, EngineModelKey, EngineModelKeyRequest } from '../../../bindings/typescript/authorization/contracts.js';
+import type { AudioDeviceListResult, AudioDeviceSource, AudioDeviceStatus } from '../../../bindings/typescript/audio-devices.js';
 
 export type { AudioCapture, AudioCaptureCallback, AudioCaptureConfig, AudioChunk, CaptureStatus, NativeEngineAssets, RecordingNotificationConfig, VADConfig } from '../../../bindings/typescript/capture-types.js';
+export type { AudioDeviceInfo, AudioDeviceListResult, AudioDeviceOperationError, AudioDeviceSource, AudioDeviceStatus } from '../../../bindings/typescript/audio-devices.js';
+
+/** 현재 OS에 보이는 장치를 조회한다. 권한 요청이나 캡처를 시작하지 않는다. */
+export async function listAudioDevices(source: AudioDeviceSource): Promise<AudioDeviceListResult> {
+  if (!['microphone', 'system_audio', 'playback'].includes(source)) throw new Error('invalid_audio_device_source');
+  const native = NitroModules.createHybridObject<TellusCapture>('TellusCapture');
+  try {
+    if (typeof native.listAudioDevices !== 'function') return { status: { source, code: 'unsupported' }, devices: [] };
+    return JSON.parse(await native.listAudioDevices(source));
+  } finally { try { await native.close(); } finally { native.dispose(); } }
+}
 
 // 표준 padding 없는 base64url 80바이트만 허용한다. Buffer/Node runtime에 의존하지 않는다.
 function wrappedKeyBytes(value: string): ArrayBuffer {
@@ -30,6 +42,7 @@ function authorizationStatus(raw: string): EngineAuthorizationStatus {
 class NativeAudioCapture implements AudioCapture {
   private native = NitroModules.createHybridObject<TellusCapture>('TellusCapture');
   private ready: Promise<void>;
+  private devicesReady: Promise<void>;
   private models = new Map<string, { keyId: string; path: string }>();
   private loaded = new Set<string>();
   private deliveryEpoch = 0;
@@ -52,8 +65,21 @@ class NativeAudioCapture implements AudioCapture {
         negativeThreshold: config.vad.vadNegativeThreshold, silenceDurationMs: config.vad.vadSilenceDurationMs,
         preSpeechBufferMs: config.vad.vadPreSpeechBufferMs } : undefined,
     }), rate);
+    this.devicesReady = this.ready.then(async () => {
+      if (typeof this.native.configureAudioDevices !== 'function') {
+        const source = config.micDeviceId !== undefined ? 'microphone' : 'playback';
+        if (config.micDeviceId !== undefined || config.playbackDeviceId !== undefined || config.iosOutputRoute !== undefined) {
+          throw Object.assign(new Error('audio_device_selection_unsupported'), { deviceStatus: { source, code: 'unsupported',
+            requestedDeviceId: config.micDeviceId ?? config.playbackDeviceId } });
+        }
+        return;
+      }
+      try { await this.native.configureAudioDevices(config.micDeviceId ?? '', config.playbackDeviceId ?? '', config.iosOutputRoute ?? ''); }
+      catch (error) { throw await this.deviceError(error); }
+    });
     // 구성 실패는 호출한 API에서 전파하며 아직 소비자가 없어도 unhandled rejection을 만들지 않는다.
     void this.ready.catch(() => {});
+    void this.devicesReady.catch(() => {});
   }
 
   async createAuthorizationRequest(conversationId: string): Promise<EngineAuthorizationRequest> {
@@ -109,7 +135,7 @@ class NativeAudioCapture implements AudioCapture {
   }
   async start(callback: AudioCaptureCallback): Promise<void> {
     const revision = ++this.controlRevision;
-    await this.ready;
+    await this.devicesReady;
     this.checkControl(revision);
     if (this.notificationConfig) await this.setRecordingNotification(this.notificationConfig);
     this.checkControl(revision);
@@ -136,17 +162,21 @@ class NativeAudioCapture implements AudioCapture {
       }, code => {
         if (this.disposed || deliveryEpoch !== this.deliveryEpoch) return;
         this.receiving = false;
-        callback(new Error(code));
+        const errorRevision = this.controlRevision;
+        void this.deviceError(new Error(code)).then(error => {
+          if (!this.disposed && deliveryEpoch === this.deliveryEpoch && errorRevision === this.controlRevision) callback(error);
+        });
       });
-    } catch (error) { if (revision === this.controlRevision) this.receiving = false; throw error; }
+    } catch (error) { if (revision === this.controlRevision) this.receiving = false; throw await this.deviceError(error); }
   }
   async pause(): Promise<void> { ++this.controlRevision; this.receiving = false; await this.native.pause(); }
   async resume(): Promise<void> {
     const revision = ++this.controlRevision;
+    await this.devicesReady;
     if (this.notificationConfig) await this.setRecordingNotification(this.notificationConfig);
     this.checkControl(revision);
     this.receiving = true;
-    try { await this.native.resume(); } catch (error) { if (revision === this.controlRevision) this.receiving = false; throw error; }
+    try { await this.native.resume(); } catch (error) { if (revision === this.controlRevision) this.receiving = false; throw await this.deviceError(error); }
   }
   async stop(): Promise<void> {
     const revision = ++this.controlRevision;
@@ -174,8 +204,10 @@ class NativeAudioCapture implements AudioCapture {
   async getStatus(): Promise<CaptureStatus> {
     await this.ready;
     const status = JSON.parse(await this.native.getStatus());
+    const deviceStatus = typeof this.native.getAudioDeviceStatus === 'function'
+      ? JSON.parse(await this.native.getAudioDeviceStatus()) as AudioDeviceStatus[] : undefined;
     return { state: status.lifecycle, denoiseEnabled: status.denoise_enabled,
-      vadEnabled: this.config.vadEnabled ?? true, modelsLoaded: [...this.loaded] };
+      vadEnabled: this.config.vadEnabled ?? true, modelsLoaded: [...this.loaded], deviceStatus };
   }
   async setDenoiseEnabled(enabled: boolean): Promise<void> {
     await this.ready;
@@ -200,14 +232,31 @@ class NativeAudioCapture implements AudioCapture {
   private checkControl(revision: number): void {
     if (this.disposed || revision !== this.controlRevision) throw new Error('capture_cancelled');
   }
+  private async deviceError(error: unknown, source?: AudioDeviceSource): Promise<Error> {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    if (typeof this.native.getAudioDeviceStatus !== 'function' || this.disposed) return failure;
+    try {
+      const statuses = JSON.parse(await this.native.getAudioDeviceStatus()) as AudioDeviceStatus[];
+      const failures = statuses.filter(status => source === undefined || status.source === source);
+      // 권한·선택 실패를 함께 중단된 다른 stream의 unavailable 상태보다 먼저 전달한다.
+      const deviceStatus = failures.find(status => status.code === 'permission_denied')
+        ?? failures.find(status => status.code === 'route_mismatch')
+        ?? failures.find(status => status.code === 'unsupported')
+        ?? failures.find(status => status.code === 'unavailable');
+      if (deviceStatus) Object.assign(failure, { deviceStatus });
+    } catch { /* 상태 조회 실패가 원래 작업 오류를 덮어쓰지 않도록 한다. */ }
+    return failure;
+  }
   async playback(samples: Float32Array, nativeRate: number): Promise<void> {
-    await this.ready;
-    await this.native.playback(samples.slice().buffer, nativeRate);
+    await this.devicesReady;
+    try { await this.native.playback(samples.slice().buffer, nativeRate); }
+    catch (error) { throw await this.deviceError(error, 'playback'); }
   }
   async cancelPlayback(): Promise<void> { await this.native.cancelPlayback(); }
   async playbackEncoded(encoded: ArrayBuffer): Promise<void> {
-    await this.ready;
-    await this.native.playbackEncoded(encoded);
+    await this.devicesReady;
+    try { await this.native.playbackEncoded(encoded); }
+    catch (error) { throw await this.deviceError(error, 'playback'); }
   }
 }
 
@@ -215,6 +264,13 @@ class NativeAudioCapture implements AudioCapture {
 export class AudioEngine {
   private constructor(private config: AudioCaptureConfig, private assets: NativeEngineAssets) {}
   static async init(config: AudioCaptureConfig = {}, assets?: NativeEngineAssets): Promise<AudioEngine> {
+    for (const id of [config.micDeviceId, config.systemAudioDeviceId, config.playbackDeviceId]) {
+      if (id !== undefined && (typeof id !== 'string' || !id.trim() || id.includes('\0'))) throw new Error('invalid_audio_device_id');
+    }
+    if (config.iosOutputRoute !== undefined && config.iosOutputRoute !== 'speaker' && config.iosOutputRoute !== 'system') throw new Error('invalid_ios_output_route');
+    if (config.systemAudioDeviceId !== undefined) throw Object.assign(new Error('audio_device_selection_unsupported'), {
+      deviceStatus: { source: 'system_audio', code: 'unsupported', requestedDeviceId: config.systemAudioDeviceId },
+    });
     const rate = config.processing?.sampleRate ?? 16_000;
     if (![16_000, 48_000].includes(rate) || (config.processing?.chunkDurationMs ?? 20) !== 20) throw new Error('invalid_processing_config');
     if (config.micEnabled === false || config.speakerEnabled === true || config.enableRawAudio === true) throw new Error('unsupported_mobile_capture_config');

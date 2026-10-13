@@ -52,6 +52,9 @@ namespace margelo::nitro::tellus {
     public:
       // Methods
       virtual std::shared_ptr<Promise<void>> configure(const std::string& json, double processingRate) = 0;
+      virtual std::shared_ptr<Promise<void>> configureAudioDevices(const std::string& micDeviceId, const std::string& playbackDeviceId, const std::string& iosOutputRoute) = 0;
+      virtual std::shared_ptr<Promise<std::string>> listAudioDevices(const std::string& source) = 0;
+      virtual std::shared_ptr<Promise<std::string>> getAudioDeviceStatus() = 0;
       virtual std::shared_ptr<Promise<std::string>> createAuthorizationRequest(const std::string& conversationId) = 0;
       virtual std::shared_ptr<Promise<std::string>> applyAuthorization(const std::string& token) = 0;
       virtual std::shared_ptr<Promise<std::string>> getAuthorizationStatus() = 0;

@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
+import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioFormat
 import android.media.AudioManager
@@ -21,6 +22,8 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import org.json.JSONArray
+import org.json.JSONObject
 
 /** OS I/O만 소유한다. nativeSubmit은 PCM을 복사하고 Rust 작업 queue에 넘긴다. */
 @Keep
@@ -34,7 +37,13 @@ class AndroidAudioDevice(@Volatile private var nativeHandle: Long) {
   private var focusRequest: AudioFocusRequest? = null
   private var focusListener: AudioManager.OnAudioFocusChangeListener? = null
   @Volatile private var focusGeneration = 0L
-  private val playback = AudioPlayback(::interrupt)
+  private var micDeviceId: String? = null
+  private var playbackDeviceId: String? = null
+  @Volatile private var microphoneStatus: JSONObject? = null
+  @Volatile private var playbackStatus: JSONObject? = null
+  private val playback = AudioPlayback(::interrupt) { code, actual ->
+    updateDeviceStatus("playback", code, playbackDeviceId, actual)
+  }
   private val captureLock = Any()
   @Volatile private var recorder: AudioRecord? = null
   private var reader: Thread? = null
@@ -43,12 +52,82 @@ class AndroidAudioDevice(@Volatile private var nativeHandle: Long) {
   @Volatile private var capturing = false
   @Volatile private var playing = false
 
-  fun requestCapturePermission() = requestMicrophonePermission(context)
+  fun requestCapturePermission() {
+    if (!requestMicrophonePermission(context)) {
+      updateDeviceStatus("microphone", "permission_denied", micDeviceId)
+      error("microphone_permission_required")
+    }
+  }
+
+  fun configureDevices(microphone: String, output: String, iosOutputRoute: String) {
+    check(!capturing && !playing) { "audio_devices_already_active" }
+    if (iosOutputRoute.isNotEmpty()) {
+      updateDeviceStatus("playback", "unsupported", null)
+      error("ios_output_route_unsupported")
+    }
+    microphoneStatus = null
+    playbackStatus = null
+    micDeviceId = microphone.takeIf { it.isNotEmpty() }
+    playbackDeviceId = output.takeIf { it.isNotEmpty() }
+    micDeviceId?.let { resolveDevice(it, "microphone"); updateDeviceStatus("microphone", "pending", it) }
+    playbackDeviceId?.let { resolveDevice(it, "playback"); updateDeviceStatus("playback", "pending", it) }
+  }
+
+  fun listAudioDevices(source: String): String {
+    require(source in listOf("microphone", "system_audio", "playback")) { "audio_device_source_invalid" }
+    val devices = JSONArray()
+    val status = JSONObject().put("source", source).put("code", if (source == "system_audio") "unsupported" else "ready")
+    if (source != "system_audio") {
+      val direction = if (source == "microphone") AudioManager.GET_DEVICES_INPUTS else AudioManager.GET_DEVICES_OUTPUTS
+      try {
+        audioManager.getDevices(direction).forEach {
+          devices.put(JSONObject().put("id", it.id.toString()).put("label", it.productName.toString()))
+        }
+      } catch (error: SecurityException) {
+        status.put("code", "permission_denied")
+      }
+    }
+    return JSONObject().put("status", status).put("devices", devices).toString()
+  }
+
+  fun getAudioDeviceStatus(): String = JSONArray().apply {
+    microphoneStatus?.let { put(it) }
+    playbackStatus?.let { put(it) }
+  }.toString()
+
+  private fun updateDeviceStatus(source: String, code: String, requested: String?, actual: Int? = null) {
+    val status = JSONObject().put("source", source).put("code", code)
+    requested?.let { status.put("requestedDeviceId", it) }
+    actual?.let { status.put("actualDeviceId", it.toString()) }
+    if (source == "microphone") microphoneStatus = status else playbackStatus = status
+  }
+
+  private fun resolveDevice(id: String, source: String): AudioDeviceInfo {
+    val value = parseAudioDeviceId(id)
+    val device = try { audioManager.getDevices(AudioManager.GET_DEVICES_ALL).firstOrNull { it.id == value } }
+    catch (error: SecurityException) {
+      updateDeviceStatus(source, "permission_denied", id)
+      throw error
+    }
+    if (device == null) {
+      updateDeviceStatus(source, "unavailable", id)
+      error("audio_device_unavailable")
+    }
+    require(if (source == "microphone") device.isSource else device.isSink) { "audio_device_direction_invalid" }
+    return device
+  }
 
   fun startCapture(rate: Int) {
     check(Looper.myLooper() != Looper.getMainLooper()) { "capture_start_requires_worker_thread" }
     check(recorder == null) { "capture_already_active" }
-    check(context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) { "microphone_permission_required" }
+    if (!playing && playbackDeviceId != null) updateDeviceStatus("playback", "pending", playbackDeviceId)
+    if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+      updateDeviceStatus("microphone", "permission_denied", micDeviceId)
+      error("microphone_permission_required")
+    }
+    val preferredDevice = micDeviceId?.let { resolveDevice(it, "microphone") }
+    val selectedRoute = preferredDevice?.let { SelectedAudioRoute(it.id) }
+    micDeviceId?.let { updateDeviceStatus("microphone", "pending", it) }
     if (foreground == null) {
       requireForegroundActivity(context)
       foreground = TellusMicrophoneService.acquire(context, notification, ::notificationAction) { interrupt("microphone_service_stopped") }
@@ -67,10 +146,21 @@ class AndroidAudioDevice(@Volatile private var nativeHandle: Long) {
           .setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_IN_MONO).build())
         .setBufferSizeInBytes(maxOf(minimum, rate / 50 * 4)).build()
       synchronized(captureLock) { recorder = input }
+      if (preferredDevice != null && !input.setPreferredDevice(preferredDevice)) {
+        updateDeviceStatus("microphone", "unsupported", micDeviceId)
+        error("audio_device_unsupported")
+      }
       var previousDevice = -1
       input.addOnRoutingChangedListener(AudioRouting.OnRoutingChangedListener {
-        val current = it.routedDevice?.id ?: -1
-        if (previousDevice != -1 && current != previousDevice && recorder === it && capturing) interrupt("capture_route_changed")
+        val actual = it.routedDevice?.id
+        val current = actual ?: -1
+        if (recorder === it && capturing) {
+          if (selectedRoute != null) {
+            val code = selectedRoute.observe(actual)
+            if (code != "pending") updateDeviceStatus("microphone", code, micDeviceId, actual)
+            if (code == "unavailable" || code == "route_mismatch") interrupt("audio_device_$code")
+          } else if (previousDevice != -1 && current != previousDevice) interrupt("capture_route_changed")
+        }
         previousDevice = current
       }, Handler(Looper.getMainLooper()))
       synchronized(captureLock) {
@@ -78,11 +168,28 @@ class AndroidAudioDevice(@Volatile private var nativeHandle: Long) {
         check(input.state == AudioRecord.STATE_INITIALIZED) { "capture_initialization_failed" }
         input.startRecording()
       }
+      if (selectedRoute != null) awaitCaptureRoute(input, selectedRoute)
       reader = Thread({ readCapture(input) }, "TellusCapture").also { it.start() }
     } catch (error: Exception) {
+      if (micDeviceId != null && microphoneStatus?.optString("code") == "pending") {
+        updateDeviceStatus("microphone", "unavailable", micDeviceId)
+      }
       stopCapture()
       throw error
     }
+  }
+
+  private fun awaitCaptureRoute(input: AudioRecord, selection: SelectedAudioRoute) {
+    val deadline = SystemClock.elapsedRealtime() + 2000
+    while (capturing) {
+      val actual = input.routedDevice?.id
+      val code = selection.observe(actual, SystemClock.elapsedRealtime() >= deadline)
+      if (code != "pending") updateDeviceStatus("microphone", code, micDeviceId, actual)
+      if (code == "ready") return
+      check(code == "pending") { "audio_device_$code" }
+      Thread.sleep(2)
+    }
+    error("capture_interrupted_during_start")
   }
 
   // AudioRecord는 ByteBuffer position/limit을 무시하고 실제 읽은 byte 수를 반환한다.
@@ -139,10 +246,19 @@ class AndroidAudioDevice(@Volatile private var nativeHandle: Long) {
   fun beginPlayback(rate: Int) {
     playing = true
     try {
+      if (!capturing && micDeviceId != null) updateDeviceStatus("microphone", "pending", micDeviceId)
+      val preferredDevice = playbackDeviceId?.let { resolveDevice(it, "playback") }
+      playbackDeviceId?.let { updateDeviceStatus("playback", "pending", it) }
       acquireFocus()
-      playback.start(rate, attributes) { playing }
+      playback.start(rate, attributes, preferredDevice) { playing }
     }
-    catch (error: Exception) { endPlayback(); throw error }
+    catch (error: Exception) {
+      if (playbackDeviceId != null && playbackStatus?.optString("code") == "pending") {
+        updateDeviceStatus("playback", "unavailable", playbackDeviceId)
+      }
+      endPlayback()
+      throw error
+    }
   }
   fun writePlayback(samples: ByteBuffer, bytes: Int): Int = playback.write(samples, bytes)
   fun awaitPlayback() = playback.awaitCompletion()
@@ -157,6 +273,12 @@ class AndroidAudioDevice(@Volatile private var nativeHandle: Long) {
   }
 
   private fun interrupt(message: String) {
+    if (capturing && micDeviceId != null && microphoneStatus?.optString("code") in listOf("pending", "ready")) {
+      updateDeviceStatus("microphone", "unavailable", micDeviceId)
+    }
+    if (playing && playbackDeviceId != null && playbackStatus?.optString("code") in listOf("pending", "ready")) {
+      updateDeviceStatus("playback", "unavailable", playbackDeviceId)
+    }
     capturing = false
     playing = false
     synchronized(captureLock) { recorder?.let { if (it.recordingState == AudioRecord.RECORDSTATE_RECORDING) it.stop() } }
