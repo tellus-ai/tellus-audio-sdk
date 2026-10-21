@@ -1,5 +1,5 @@
 import { existsSync, readdirSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { basename, delimiter, dirname, join, normalize } from 'node:path';
 
 import {
   currentAssetKey,
@@ -21,12 +21,14 @@ function assetRoots(): string[] {
 }
 
 function packageRootCandidates(): string[] {
+  const developmentRoot = basename(PACKAGE_ROOT) === 'dist' ? dirname(PACKAGE_ROOT) : null;
+  const roots = developmentRoot ? [PACKAGE_ROOT, developmentRoot] : [PACKAGE_ROOT];
   const unpackedRoot = asarUnpackedPath(PACKAGE_ROOT);
   if (!unpackedRoot) {
-    return [PACKAGE_ROOT];
+    return roots;
   }
 
-  return [unpackedRoot, PACKAGE_ROOT];
+  return [unpackedRoot, ...roots];
 }
 
 function asarUnpackedPath(filePath: string): string | null {
@@ -71,6 +73,10 @@ function findExistingPath(relativePaths: string[]): string | null {
 }
 
 function configureOrtDylibPath(): void {
+  if (process.env.ORT_DYLIB_PATH) {
+    process.env.ORT_DYLIB_PATH = normalize(process.env.ORT_DYLIB_PATH);
+    return;
+  }
   const fileNameByPlatform: Record<string, string> = {
     darwin: 'libonnxruntime.dylib',
     linux: 'libonnxruntime.so',
@@ -97,6 +103,7 @@ function configureOrtDylibPath(): void {
 
 function configureModelDir(): void {
   if (process.env.TELLUS_AUDIO_ENGINE_MODEL_DIR) {
+    process.env.TELLUS_AUDIO_ENGINE_MODEL_DIR = normalize(process.env.TELLUS_AUDIO_ENGINE_MODEL_DIR);
     return;
   }
 
@@ -113,7 +120,11 @@ function loadNativeBinding(): any {
   configureOrtDylibPath();
   configureModelDir();
 
-  const nativePath = findExistingPath(nativeFileCandidates());
+  const candidates = nativeFileCandidates();
+  if (basename(PACKAGE_ROOT) === 'dist' && platform === 'darwin') {
+    candidates.unshift(`audio-capture.${currentAssetKey()}.node`);
+  }
+  const nativePath = findExistingPath(candidates);
   if (!nativePath) {
     throw new Error(
       [
@@ -121,6 +132,18 @@ function loadNativeBinding(): any {
         'Run the SDK installer after installing @tellus-ai/audio-sdk-desktop.',
       ].join(' '),
     );
+  }
+
+  if (platform === 'win32') {
+    // SDK는 엔진 index.js를 거치지 않으므로 동봉 MSVC DLL의 검색 경로도 준비한다.
+    const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === 'path') || 'Path';
+    const currentPath = process.env[pathKey];
+    const nativeDir = normalize(dirname(nativePath));
+    const nativeDirKey = nativeDir.replace(/[\\/]+$/, '').toLowerCase();
+    const otherPaths = (currentPath ? currentPath.split(delimiter) : []).filter(
+      (entry) => normalize(entry).replace(/[\\/]+$/, '').toLowerCase() !== nativeDirKey,
+    );
+    process.env[pathKey] = [nativeDir, ...otherPaths].join(delimiter);
   }
 
   return require(nativePath);
