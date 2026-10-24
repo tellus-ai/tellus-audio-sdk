@@ -22,6 +22,8 @@ SDK 저장소의 실행 래퍼와 설치 코드를 빌드하고 세 플랫폼 �
 
 장치 선택 API는 이 소스 변경에 포함됩니다. 현재 `release-assets.json`은 엔진 `0.3.5`에 고정되어 있으며, 설치 시 해당 버전 archive의 checksum을 검증합니다. Desktop의 신규 native API는 장치 선택을 지원하는 엔진이 필요하며, 구형 엔진에서는 명시 장치 선택을 `unsupported`로 거부합니다. 고객에게 제공하기 전에 고정된 버전의 엔진 archive와 checksum이 발행되어 있는지 확인해야 합니다. 소스 빌드·패키지 검증 통과만으로 새 장치 기능의 배포 완료를 의미하지 않습니다.
 
+Desktop의 마이크·스피커 음소거 API(`setMicMuted`·`setSpeakerMuted`)도 이 소스에 포함됩니다. 엔진 `0.3.5`에는 해당 native API가 없으므로 호출하면 `source_mute_unsupported`로 거부합니다. 지원 엔진이 발행된 뒤 `release-assets.json`의 엔진 버전을 올려야 실제로 동작합니다.
+
 ```sh
 npm ci --ignore-scripts
 npm run build
