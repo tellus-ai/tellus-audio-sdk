@@ -658,6 +658,25 @@ export class AudioCapture {
     this.#native.invalidateAuthorization();
   }
 
+  #requireSourceMuteSupport(): void {
+    if (typeof this.#native.setMicMuted !== 'function' ||
+        typeof this.#native.setSpeakerMuted !== 'function') {
+      throw new Error('source_mute_unsupported: install a native engine with source mute support');
+    }
+  }
+
+  /** 다음 청크부터 마이크 소리를 무음으로 바꾸거나 되돌린다. 장치는 열어 두고 음소거 중 소리는 버린다. */
+  setMicMuted(muted: boolean): void {
+    this.#requireSourceMuteSupport();
+    this.#native.setMicMuted(muted);
+  }
+
+  /** 다음 청크부터 스피커 소리를 무음으로 바꾸거나 되돌린다. 시스템 오디오 캡처는 열어 둔다. */
+  setSpeakerMuted(muted: boolean): void {
+    this.#requireSourceMuteSupport();
+    this.#native.setSpeakerMuted(muted);
+  }
+
   onError(callback: ErrorCallback): void {
     this.#native.onError(callback);
   }
