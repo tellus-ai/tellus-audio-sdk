@@ -24,6 +24,8 @@ SDK 저장소의 실행 래퍼와 설치 코드를 빌드하고 세 플랫폼 �
 
 Desktop의 마이크·스피커 음소거 API(`setMicMuted`·`setSpeakerMuted`)는 엔진 `0.3.6`부터 지원합니다. 그보다 오래된 엔진에서는 호출하면 `source_mute_unsupported`로 거부합니다.
 
+Desktop의 회의 앱 마이크 동기화 API(`setMeetingSync`·`getMeetingSyncState`·`onMeetingSync`·`getMeetingCandidates`)는 이를 포함한 엔진이 필요합니다. 지금 고정된 엔진 `0.3.6`에는 없으므로 호출하면 `meeting_sync_unsupported`로 거부합니다. 엔진 릴리스 뒤 `release-assets.json`의 엔진 버전을 올려야 동작합니다.
+
 ```sh
 npm ci --ignore-scripts
 npm run build
