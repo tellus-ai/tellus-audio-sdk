@@ -336,6 +336,18 @@ export interface PermissionOpenResult {
 export interface MicrophonePermissionOpenResult extends PermissionOpenResult {}
 export interface SystemAudioPermissionOpenResult extends PermissionOpenResult {}
 export interface ScreenCapturePermissionOpenResult extends PermissionOpenResult {}
+export interface AccessibilityPermissionOpenResult extends PermissionOpenResult {}
+
+/** 회의 앱 화면을 읽는 데 필요한 손쉬운 사용 권한 확인 결과. */
+export interface AccessibilityPermissionCheckResult {
+  /** 회의 앱 화면을 읽을 수 있으면 true. 권한이 필요 없는 플랫폼도 true다. */
+  granted: boolean;
+  /** 이 플랫폼에서 손쉬운 사용 권한이 필요한지 여부(macOS만 true). */
+  required: boolean;
+  /** macOS는 허용 전과 거부를 구분할 수 없어 둘 다 denied다. */
+  status: 'granted' | 'denied' | 'not-required';
+  message: string;
+}
 
 export type ErrorCallback = (err: Error | null, arg: CaptureError) => unknown;
 export type AudioChunkCallback = (err: Error | null, arg: AudioChunk) => unknown;
@@ -358,6 +370,8 @@ const {
   requestInitialSystemAudioPermissionOpen: nativeRequestInitialSystemAudioPermissionOpen,
   requestSystemAudioPermission: nativeRequestSystemAudioPermission,
   requestScreenCapturePermission: nativeRequestScreenCapturePermission,
+  checkAccessibilityPermissionInfo: nativeCheckAccessibilityPermissionInfo,
+  requestAccessibilityPermission: nativeRequestAccessibilityPermission,
   getMicActiveApps: nativeGetMicActiveApps,
   getMeetingCandidates: nativeGetMeetingCandidates,
   getDefaultInputDevice: nativeGetDefaultInputDevice,
@@ -872,6 +886,25 @@ export const requestSystemAudioPermission: () => SystemAudioPermissionOpenResult
   callPermissionOpen(nativeRequestSystemAudioPermission);
 export const requestScreenCapturePermission: () => ScreenCapturePermissionOpenResult = () =>
   callPermissionOpen(nativeRequestScreenCapturePermission);
+
+const ACCESSIBILITY_PERMISSION_UNSUPPORTED =
+  'accessibility_permission_unsupported: install a native engine with accessibility permission support';
+
+/** 회의 앱 동기화에 필요한 macOS 손쉬운 사용 권한을 권한 창 없이 확인한다. 다른 플랫폼은 required: false다. */
+export function checkAccessibilityPermissionInfo(): AccessibilityPermissionCheckResult {
+  if (typeof nativeCheckAccessibilityPermissionInfo !== 'function') throw new Error(ACCESSIBILITY_PERMISSION_UNSUPPORTED);
+  return nativeCheckAccessibilityPermissionInfo();
+}
+
+/**
+ * 손쉬운 사용 권한이 없으면 macOS 권한 창과 설정창을 연다. 사용자 동작에서만 부른다.
+ * 반환값은 창을 연 동작의 결과이며, 허용 여부는 checkAccessibilityPermissionInfo로 다시 확인한다.
+ */
+export const requestAccessibilityPermission: () => AccessibilityPermissionOpenResult = () =>
+  callPermissionOpen(() => {
+    if (typeof nativeRequestAccessibilityPermission !== 'function') throw new Error(ACCESSIBILITY_PERMISSION_UNSUPPORTED);
+    return nativeRequestAccessibilityPermission();
+  });
 export const getMicActiveApps: () => Promise<MicActiveApp[]> = nativeGetMicActiveApps;
 /** 마이크를 사용 중인 앱에, 동기화할 수 있는 회의 앱이면 appId를 붙여 돌려준다. */
 export async function getMeetingCandidates(): Promise<MeetingCandidate[]> {

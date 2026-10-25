@@ -87,3 +87,26 @@ test('meeting candidates come from the native engine and are rejected on engines
   assert.deepEqual(await supported.getMeetingCandidates(), candidates);
   await assert.rejects(unsupported.getMeetingCandidates(), /meeting_sync_unsupported/);
 });
+
+test('the accessibility permission check returns the native result and fails fast on engines without it', () => {
+  const granted = { granted: true, required: true, status: 'granted', message: 'ok' };
+  const supported = loadWrapper({ AudioCapture: class NativeAudioCapture {}, checkAccessibilityPermissionInfo: () => granted });
+  const unsupported = loadWrapper({ AudioCapture: class NativeAudioCapture {} });
+
+  assert.deepEqual(supported.checkAccessibilityPermissionInfo(), granted);
+  assert.throws(() => unsupported.checkAccessibilityPermissionInfo(), /accessibility_permission_unsupported/);
+});
+
+test('the accessibility permission request reports what was opened like the other permission requests', () => {
+  const opened = loadWrapper({ AudioCapture: class NativeAudioCapture {}, requestAccessibilityPermission: () => ({ opened: true }) });
+  const failing = loadWrapper({ AudioCapture: class NativeAudioCapture {}, requestAccessibilityPermission: () => { throw new Error('settings open failed'); } });
+  const unsupported = loadWrapper({ AudioCapture: class NativeAudioCapture {} });
+
+  assert.equal(opened.requestAccessibilityPermission().opened, true);
+  const failed = failing.requestAccessibilityPermission();
+  assert.equal(failed.opened, false);
+  assert.match(failed.error, /settings open failed/);
+  const result = unsupported.requestAccessibilityPermission();
+  assert.equal(result.opened, false);
+  assert.match(result.error, /accessibility_permission_unsupported/);
+});
