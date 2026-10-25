@@ -180,6 +180,58 @@ export interface MicActiveApp {
   bundleId?: string;
 }
 
+export type MeetingAppId = 'zoom';
+export type MeetingSyncMode = 'off' | 'auto' | 'manual';
+export type MeetingSyncStateName = 'off' | 'idle' | 'needs_link' | 'synced' | 'lost';
+export type MeetingSyncReason =
+  | 'accessibility_permission'
+  | 'control_not_found'
+  | 'unknown_label'
+  | 'app_not_running'
+  | 'read_failed';
+export type MeetingAudioState = 'unmuted' | 'muted' | 'telephone' | 'not_joined';
+
+/** 마이크를 사용 중인 앱과, 동기화할 수 있는 회의 앱이면 그 앱 ID. */
+export interface MeetingCandidate extends MicActiveApp {
+  appId?: MeetingAppId;
+}
+
+/** 엔진 기본 문구 표에 더할 회의 앱 음소거 항목 제목. 목록 이름은 그 제목이 보일 때의 회의 앱 상태다. */
+export interface MeetingAudioLabels {
+  unmuted?: string[];
+  muted?: string[];
+  telephone?: string[];
+  notJoined?: string[];
+}
+
+export interface MeetingSyncOptions {
+  mode: MeetingSyncMode;
+  /** mode가 manual일 때 필수 */
+  targetAppId?: MeetingAppId;
+  /** 100~2000, 기본 250 */
+  pollIntervalMs?: number;
+  /** 0~60000, 기본 5000 */
+  unknownGraceMs?: number;
+  labels?: MeetingAudioLabels;
+}
+
+export interface MeetingSyncEvent {
+  state: MeetingSyncStateName;
+  mode: MeetingSyncMode;
+  appId?: MeetingAppId;
+  reason?: MeetingSyncReason;
+  meetingAudio?: MeetingAudioState;
+  /** 마지막으로 읽은 음소거 항목 제목(진단용) */
+  controlTitle?: string;
+  /** 실제 적용된 마이크 음소거 */
+  micMuted: boolean;
+  /** 회의 앱이 마이크를 정하는 중(synced·lost)이면 true. 이때 setMicMuted는 mic_sync_active로 throw */
+  micControlled: boolean;
+  observedAtMs: number;
+}
+
+export type MeetingSyncCallback = (err: Error | null, event: MeetingSyncEvent) => unknown;
+
 export interface AudioEngineDenoiseInitStatus {
   enabled: boolean;
   active: boolean;
@@ -284,6 +336,18 @@ export interface PermissionOpenResult {
 export interface MicrophonePermissionOpenResult extends PermissionOpenResult {}
 export interface SystemAudioPermissionOpenResult extends PermissionOpenResult {}
 export interface ScreenCapturePermissionOpenResult extends PermissionOpenResult {}
+export interface AccessibilityPermissionOpenResult extends PermissionOpenResult {}
+
+/** 회의 앱 화면을 읽는 데 필요한 손쉬운 사용 권한 확인 결과. */
+export interface AccessibilityPermissionCheckResult {
+  /** 회의 앱 화면을 읽을 수 있으면 true. 권한이 필요 없는 플랫폼도 true다. */
+  granted: boolean;
+  /** 이 플랫폼에서 손쉬운 사용 권한이 필요한지 여부(macOS만 true). */
+  required: boolean;
+  /** macOS는 허용 전과 거부를 구분할 수 없어 둘 다 denied다. */
+  status: 'granted' | 'denied' | 'not-required';
+  message: string;
+}
 
 export type ErrorCallback = (err: Error | null, arg: CaptureError) => unknown;
 export type AudioChunkCallback = (err: Error | null, arg: AudioChunk) => unknown;
@@ -306,7 +370,10 @@ const {
   requestInitialSystemAudioPermissionOpen: nativeRequestInitialSystemAudioPermissionOpen,
   requestSystemAudioPermission: nativeRequestSystemAudioPermission,
   requestScreenCapturePermission: nativeRequestScreenCapturePermission,
+  checkAccessibilityPermissionInfo: nativeCheckAccessibilityPermissionInfo,
+  requestAccessibilityPermission: nativeRequestAccessibilityPermission,
   getMicActiveApps: nativeGetMicActiveApps,
+  getMeetingCandidates: nativeGetMeetingCandidates,
   getDefaultInputDevice: nativeGetDefaultInputDevice,
   getDefaultSpeakerDevice: nativeGetDefaultSpeakerDevice,
   isBuiltInSpeaker: nativeIsBuiltInSpeaker,
@@ -621,8 +688,12 @@ export async function listAudioDevices(source: AudioDeviceSource): Promise<Audio
   return nativeListAudioDevices(source);
 }
 
+const MEETING_SYNC_UNSUPPORTED = 'meeting_sync_unsupported: install a native engine with meeting app sync support';
+
 export class AudioCapture {
   #native: any;
+  // 엔진은 stop에서 동기화 콜백을 해제하므로 다음 start 전에 다시 등록하려고 보관한다.
+  #meetingSyncCallback?: MeetingSyncCallback;
 
   constructor(config?: AudioCaptureConfig | null) {
     validateDeviceSelection(config);
@@ -677,11 +748,42 @@ export class AudioCapture {
     this.#native.setSpeakerMuted(muted);
   }
 
+  #requireMeetingSyncSupport(): void {
+    if (typeof this.#native.setMeetingSync !== 'function' ||
+        typeof this.#native.getMeetingSyncState !== 'function' ||
+        typeof this.#native.onMeetingSync !== 'function') {
+      throw new Error(MEETING_SYNC_UNSUPPORTED);
+    }
+  }
+
+  /**
+   * 회의 앱 음소거 상태를 따라 마이크를 맞춘다. 시작 전·녹음 중 언제든 부를 수 있다.
+   * 회의 앱이 마이크를 정하는 동안 setMicMuted는 mic_sync_active로 거부된다.
+   */
+  setMeetingSync(options: MeetingSyncOptions): void {
+    this.#requireMeetingSyncSupport();
+    this.#native.setMeetingSync(options);
+  }
+
+  /** 지금 회의 앱 마이크 동기화 상태. 캡처 중이 아니면 설정만 반영한 off 또는 idle이다. */
+  getMeetingSyncState(): MeetingSyncEvent {
+    this.#requireMeetingSyncSupport();
+    return this.#native.getMeetingSyncState();
+  }
+
+  /** 동기화 상태가 바뀔 때 부를 콜백. 한 번 등록하면 stop() 뒤 다시 start()해도 유지된다. */
+  onMeetingSync(callback: MeetingSyncCallback): void {
+    this.#requireMeetingSyncSupport();
+    this.#meetingSyncCallback = callback;
+    this.#native.onMeetingSync(callback);
+  }
+
   onError(callback: ErrorCallback): void {
     this.#native.onError(callback);
   }
 
   start(callback: AudioChunkCallback): void {
+    if (this.#meetingSyncCallback) this.#native.onMeetingSync(this.#meetingSyncCallback);
     try { this.#native.start(callback); }
     catch (error) {
       const status = this.#native.getStatus().deviceStatus?.find((status: AudioDeviceStatus) =>
@@ -784,7 +886,31 @@ export const requestSystemAudioPermission: () => SystemAudioPermissionOpenResult
   callPermissionOpen(nativeRequestSystemAudioPermission);
 export const requestScreenCapturePermission: () => ScreenCapturePermissionOpenResult = () =>
   callPermissionOpen(nativeRequestScreenCapturePermission);
+
+const ACCESSIBILITY_PERMISSION_UNSUPPORTED =
+  'accessibility_permission_unsupported: install a native engine with accessibility permission support';
+
+/** 회의 앱 동기화에 필요한 macOS 손쉬운 사용 권한을 권한 창 없이 확인한다. 다른 플랫폼은 required: false다. */
+export function checkAccessibilityPermissionInfo(): AccessibilityPermissionCheckResult {
+  if (typeof nativeCheckAccessibilityPermissionInfo !== 'function') throw new Error(ACCESSIBILITY_PERMISSION_UNSUPPORTED);
+  return nativeCheckAccessibilityPermissionInfo();
+}
+
+/**
+ * 손쉬운 사용 권한이 없으면 macOS 권한 창과 설정창을 연다. 사용자 동작에서만 부른다.
+ * 반환값은 창을 연 동작의 결과이며, 허용 여부는 checkAccessibilityPermissionInfo로 다시 확인한다.
+ */
+export const requestAccessibilityPermission: () => AccessibilityPermissionOpenResult = () =>
+  callPermissionOpen(() => {
+    if (typeof nativeRequestAccessibilityPermission !== 'function') throw new Error(ACCESSIBILITY_PERMISSION_UNSUPPORTED);
+    return nativeRequestAccessibilityPermission();
+  });
 export const getMicActiveApps: () => Promise<MicActiveApp[]> = nativeGetMicActiveApps;
+/** 마이크를 사용 중인 앱에, 동기화할 수 있는 회의 앱이면 appId를 붙여 돌려준다. */
+export async function getMeetingCandidates(): Promise<MeetingCandidate[]> {
+  if (typeof nativeGetMeetingCandidates !== 'function') throw new Error(MEETING_SYNC_UNSUPPORTED);
+  return nativeGetMeetingCandidates();
+}
 export const getDefaultInputDevice: () => string | null = nativeGetDefaultInputDevice;
 export const getDefaultSpeakerDevice: () => string | null = nativeGetDefaultSpeakerDevice;
 export const isBuiltInSpeaker: () => boolean = nativeIsBuiltInSpeaker;
