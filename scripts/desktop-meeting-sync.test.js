@@ -1,8 +1,10 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
 const { test } = require('node:test');
+const ts = require('typescript');
 
 const wrapperPath = path.resolve(__dirname,
   '../platforms/desktop/runtime/platforms/desktop/electron/index.js');
@@ -109,4 +111,26 @@ test('the accessibility permission request reports what was opened like the othe
   const result = unsupported.requestAccessibilityPermission();
   assert.equal(result.opened, false);
   assert.match(result.error, /accessibility_permission_unsupported/);
+});
+
+// 엔진 0.4.0이 돌려주는 회의 앱 ID와 needs_link·lost 사유(엔진 src/platforms/desktop/meeting의 mod.rs·observation.rs).
+const ENGINE_MEETING_APP_IDS = ['zoom', 'google_meet'];
+const ENGINE_MEETING_SYNC_REASONS = ['accessibility_permission', 'control_not_found', 'unknown_label',
+  'app_not_running', 'read_failed', 'meeting_hidden'];
+
+test('desktop meeting sync types accept every app ID and reason the 0.4.0 engine reports', t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tellus-sdk-meeting-types-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const usage = path.join(directory, 'meeting-sync.ts');
+  fs.writeFileSync(usage, `import type { MeetingAppId, MeetingCandidate, MeetingSyncEvent, MeetingSyncOptions, MeetingSyncReason } from ${JSON.stringify(wrapperPath)};
+const apps: MeetingAppId[] = ${JSON.stringify(ENGINE_MEETING_APP_IDS)};
+const reasons: MeetingSyncReason[] = ${JSON.stringify(ENGINE_MEETING_SYNC_REASONS)};
+const options: MeetingSyncOptions = { mode: 'manual', targetAppId: 'google_meet' };
+const candidate: MeetingCandidate = { processId: 7, appName: 'Google Chrome', bundleId: 'com.google.Chrome', appId: 'google_meet' };
+const event: MeetingSyncEvent = { state: 'needs_link', mode: 'auto', appId: 'google_meet', reason: 'meeting_hidden', micMuted: false, micControlled: false, observedAtMs: 1 };
+void apps; void reasons; void options; void candidate; void event;
+`);
+  const program = ts.createProgram([usage], { noEmit: true, strict: true, skipLibCheck: true,
+    target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler });
+  assert.deepEqual(ts.getPreEmitDiagnostics(program).map(diagnostic => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')), []);
 });

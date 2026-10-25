@@ -55,7 +55,7 @@ capture.setSpeakerMuted(true);  // 다음 청크부터 마이크 소리만 전�
 
 ## 회의 앱 음소거 따라가기
 
-회의실에서 Zoom 마이크를 끄고 회의실끼리 이야기하면, 녹음에도 마이크가 빠져야 합니다. `setMeetingSync()`를 켜면 엔진이 회의 앱의 음소거 상태를 읽어 마이크에 그대로 적용합니다. 회의 앱이 기준이므로, 회의 앱이 마이크를 정하는 동안 `setMicMuted()`는 `mic_sync_active`로 거부됩니다.
+회의실에서 Zoom이나 Google Meet 마이크를 끄고 회의실끼리 이야기하면, 녹음에도 마이크가 빠져야 합니다. `setMeetingSync()`를 켜면 엔진이 회의 앱의 음소거 상태를 읽어 마이크에 그대로 적용합니다. 회의 앱이 기준이므로, 회의 앱이 마이크를 정하는 동안 `setMicMuted()`는 `mic_sync_active`로 거부됩니다.
 
 ```ts
 capture.onMeetingSync((error, event) => {
@@ -63,23 +63,24 @@ capture.onMeetingSync((error, event) => {
   // event.state: 'off' | 'idle' | 'needs_link' | 'synced' | 'lost'
   showMicSyncBadge(event.state, event.reason, event.micMuted);
 });
-capture.setMeetingSync({ mode: 'auto' });                         // Zoom을 찾아 따름
-// capture.setMeetingSync({ mode: 'manual', targetAppId: 'zoom' }); // 사용자가 Zoom을 고름
+capture.setMeetingSync({ mode: 'auto' });                         // Zoom을, Zoom이 회의 중이 아니면 Google Meet을 찾아 따름
+// capture.setMeetingSync({ mode: 'manual', targetAppId: 'zoom' }); // 사용자가 고른 앱('zoom' | 'google_meet')을 따름
 // capture.setMeetingSync({ mode: 'off' });                         // 오프라인 회의, 마이크 수동
 capture.start(onChunk);
 
-const candidates = await getMeetingCandidates(); // 마이크를 쓰는 앱. 동기화할 수 있으면 appId: 'zoom'
+const candidates = await getMeetingCandidates(); // 마이크를 쓰는 앱. 동기화할 수 있으면 appId: 'zoom' | 'google_meet'(브라우저)
 ```
 
 | 상태 | 뜻 | 마이크 |
 | --- | --- | --- |
 | `off` | 동기화를 끔 | 수동 |
 | `idle` | 회의 중인 회의 앱이 없음 | 수동 |
-| `needs_link` | 회의 중으로 보이지만 상태를 못 읽음. `reason`: `accessibility_permission`, `control_not_found`, `unknown_label`, `app_not_running`, `read_failed` | 수동 |
+| `needs_link` | 회의 중으로 보이지만 상태를 못 읽음. `reason`: `accessibility_permission`, `control_not_found`, `unknown_label`, `app_not_running`, `read_failed`, `meeting_hidden`(Meet 통화 화면이 보이지 않음: 뒤쪽 탭, 최소화된 창 등) | 수동 |
 | `synced` | 회의 앱 상태를 따르는 중 | 회의 앱이 정함 |
-| `lost` | 동기화 중 상태를 놓침. `unknownGraceMs`(기본 5000) 동안 마지막 값 유지 | 회의 앱이 정함 |
+| `lost` | 동기화 중 상태를 놓침. `unknownGraceMs`(기본 5000) 동안 마지막 값 유지. `reason`은 `needs_link`와 같은 값 | 회의 앱이 정함 |
 
-- 지금은 macOS Zoom 데스크톱만 지원합니다. 앱에 macOS 손쉬운 사용 권한이 필요합니다(Zoom이 아니라 엔진을 실행하는 앱의 권한). 다른 플랫폼은 `mode: 'off'`만 받고 그 밖에는 `meeting_sync_unsupported_platform`을 던집니다.
+- macOS·Windows의 Zoom 데스크톱 앱과 브라우저 안의 Google Meet을 지원합니다. Meet은 macOS의 Chrome·Arc·Dia·Edge·Whale·Brave·Safari와 Windows의 Chrome·Edge·Whale·Brave에서 읽습니다.
+- macOS는 앱에 손쉬운 사용 권한이 필요합니다(회의 앱이 아니라 엔진을 실행하는 앱의 권한). Windows는 권한이 필요 없습니다. 그 밖의 플랫폼은 `mode: 'off'`만 받고, 다른 모드는 `meeting_sync_unsupported_platform`으로 거부합니다.
 - 손쉬운 사용 권한은 아래 API로 확인하고 요청합니다. 요청은 사용자 동작에서만 부르고, 결과와 상관없이 확인 API로 다시 확인합니다.
 
 ```ts
@@ -91,6 +92,6 @@ if (accessibility.required && !accessibility.granted) {
 
   `status`는 `granted`·`denied`·`not-required`입니다. macOS는 허용 전과 거부를 구분할 수 없어 둘 다 `denied`입니다. Windows·Linux는 이 권한이 없어 `required: false`, `status: 'not-required'`입니다. 이미 허용돼 있으면 요청은 아무것도 열지 않고 `{ opened: false }`를 돌려줍니다.
 - 녹음 중에만 판단합니다(일시정지 포함). 마이크를 열기 전에 첫 판단을 마치므로, 회의 앱이 음소거면 첫 청크부터 마이크가 빠집니다.
-- 메뉴 문구는 Zoom UI 언어를 따릅니다. 엔진에는 영어·한국어 문구가 들어 있고, 다른 언어는 `labels`로 더합니다. 읽은 문구는 `event.controlTitle`로 확인합니다.
+- 음소거 항목 문구는 회의 앱 UI 언어를 따릅니다(Zoom 메뉴·툴바 항목, Meet 마이크 버튼 설명). 엔진에는 영어·한국어 문구가 들어 있고, 다른 언어는 `labels`로 더합니다. 더한 문구는 모든 회의 앱에 적용됩니다. 읽은 문구는 `event.controlTitle`로 확인합니다.
 - `onMeetingSync()`는 한 번 등록하면 같은 캡처 인스턴스의 `stop()`/`start()` 뒤에도 유지됩니다. 설정(`setMeetingSync`)도 같은 인스턴스 안에서 유지되지만, 새 캡처 인스턴스에는 다시 적용해야 합니다.
-- 회의 앱 동기화를 포함한 엔진이 필요합니다. 그보다 오래된 엔진에서는 `meeting_sync_unsupported` 오류를 던집니다. 손쉬운 사용 확인은 `accessibility_permission_unsupported` 오류를 던지고, 요청은 `{ opened: false, error }`를 돌려줍니다.
+- 엔진 `0.4.0`부터 지원합니다. 그보다 오래된 엔진에서는 `meeting_sync_unsupported` 오류를 던집니다. 손쉬운 사용 확인은 `accessibility_permission_unsupported` 오류를 던지고, 요청은 `{ opened: false, error }`를 돌려줍니다.

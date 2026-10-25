@@ -180,7 +180,8 @@ export interface MicActiveApp {
   bundleId?: string;
 }
 
-export type MeetingAppId = 'zoom';
+/** Zoom 데스크톱 앱, 또는 브라우저 안의 Google Meet. */
+export type MeetingAppId = 'zoom' | 'google_meet';
 export type MeetingSyncMode = 'off' | 'auto' | 'manual';
 export type MeetingSyncStateName = 'off' | 'idle' | 'needs_link' | 'synced' | 'lost';
 export type MeetingSyncReason =
@@ -188,7 +189,9 @@ export type MeetingSyncReason =
   | 'control_not_found'
   | 'unknown_label'
   | 'app_not_running'
-  | 'read_failed';
+  | 'read_failed'
+  /** 회의 화면이 보이지 않아 값을 믿을 수 없음(최소화된 창, 뒤쪽 탭, 가려진 Safari 창 등). */
+  | 'meeting_hidden';
 export type MeetingAudioState = 'unmuted' | 'muted' | 'telephone' | 'not_joined';
 
 /** 마이크를 사용 중인 앱과, 동기화할 수 있는 회의 앱이면 그 앱 ID. */
