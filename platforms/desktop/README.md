@@ -79,8 +79,18 @@ const candidates = await getMeetingCandidates(); // 마이크를 쓰는 앱. 동
 | `synced` | 회의 앱 상태를 따르는 중 | 회의 앱이 정함 |
 | `lost` | 동기화 중 상태를 놓침. `unknownGraceMs`(기본 5000) 동안 마지막 값 유지 | 회의 앱이 정함 |
 
-- 지금은 macOS Zoom 데스크톱만 지원합니다. 앱에 macOS 손쉬운 사용 권한이 필요합니다. 다른 플랫폼은 `mode: 'off'`만 받고 그 밖에는 `meeting_sync_unsupported_platform`을 던집니다.
+- 지금은 macOS Zoom 데스크톱만 지원합니다. 앱에 macOS 손쉬운 사용 권한이 필요합니다(Zoom이 아니라 엔진을 실행하는 앱의 권한). 다른 플랫폼은 `mode: 'off'`만 받고 그 밖에는 `meeting_sync_unsupported_platform`을 던집니다.
+- 손쉬운 사용 권한은 아래 API로 확인하고 요청합니다. 요청은 사용자 동작에서만 부르고, 결과와 상관없이 확인 API로 다시 확인합니다.
+
+```ts
+const accessibility = checkAccessibilityPermissionInfo(); // { granted, required, status, message }
+if (accessibility.required && !accessibility.granted) {
+  requestAccessibilityPermission(); // 권한 창(앱을 목록에 올림)과 손쉬운 사용 설정창을 엶
+}
+```
+
+  `status`는 `granted`·`denied`·`not-required`입니다. macOS는 허용 전과 거부를 구분할 수 없어 둘 다 `denied`입니다. Windows·Linux는 이 권한이 없어 `required: false`, `status: 'not-required'`입니다. 이미 허용돼 있으면 요청은 아무것도 열지 않고 `{ opened: false }`를 돌려줍니다.
 - 녹음 중에만 판단합니다(일시정지 포함). 마이크를 열기 전에 첫 판단을 마치므로, 회의 앱이 음소거면 첫 청크부터 마이크가 빠집니다.
 - 메뉴 문구는 Zoom UI 언어를 따릅니다. 엔진에는 영어·한국어 문구가 들어 있고, 다른 언어는 `labels`로 더합니다. 읽은 문구는 `event.controlTitle`로 확인합니다.
 - `onMeetingSync()`는 한 번 등록하면 같은 캡처 인스턴스의 `stop()`/`start()` 뒤에도 유지됩니다. 설정(`setMeetingSync`)도 같은 인스턴스 안에서 유지되지만, 새 캡처 인스턴스에는 다시 적용해야 합니다.
-- 회의 앱 동기화를 포함한 엔진이 필요합니다. 그보다 오래된 엔진에서는 `meeting_sync_unsupported` 오류를 던집니다.
+- 회의 앱 동기화를 포함한 엔진이 필요합니다. 그보다 오래된 엔진에서는 `meeting_sync_unsupported` 오류를 던집니다. 손쉬운 사용 확인은 `accessibility_permission_unsupported` 오류를 던지고, 요청은 `{ opened: false, error }`를 돌려줍니다.
