@@ -7,7 +7,7 @@ import type { AudioDeviceListResult, AudioDeviceSource, AudioDeviceStatus } from
 export type { AudioCapture, AudioCaptureCallback, AudioCaptureConfig, AudioChunk, CaptureStatus, NativeEngineAssets, RecordingNotificationConfig, VADConfig } from '../../../bindings/typescript/capture-types.js';
 export type { AudioDeviceInfo, AudioDeviceListResult, AudioDeviceOperationError, AudioDeviceSource, AudioDeviceStatus } from '../../../bindings/typescript/audio-devices.js';
 
-/** 현재 OS에 보이는 장치를 조회한다. 권한 요청이나 캡처를 시작하지 않는다. */
+/** Lists the devices the OS currently exposes. Does not request permission or start capture. */
 export async function listAudioDevices(source: AudioDeviceSource): Promise<AudioDeviceListResult> {
   if (!['microphone', 'system_audio', 'playback'].includes(source)) throw new Error('invalid_audio_device_source');
   const native = NitroModules.createHybridObject<TellusCapture>('TellusCapture');
@@ -17,7 +17,7 @@ export async function listAudioDevices(source: AudioDeviceSource): Promise<Audio
   } finally { try { await native.close(); } finally { native.dispose(); } }
 }
 
-// 표준 padding 없는 base64url 80바이트만 허용한다. Buffer/Node runtime에 의존하지 않는다.
+// Accepts only standard unpadded base64url for 80 bytes. Does not depend on Buffer or a Node runtime.
 function wrappedKeyBytes(value: string): ArrayBuffer {
   if (!/^[A-Za-z0-9_-]{107}$/.test(value)) throw new Error('model_key_invalid');
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
@@ -32,19 +32,43 @@ function wrappedKeyBytes(value: string): ArrayBuffer {
   return bytes.buffer;
 }
 
+// Validates the public denoiseMode with the same rules as core (surrounding spaces and case ignored). Omitting it selects close_talk; unknown values are rejected.
+function denoiseMode(config: AudioCaptureConfig): NonNullable<AudioCaptureConfig['denoiseMode']> {
+  const value: unknown = config.denoiseMode ?? 'close_talk';
+  const mode = typeof value === 'string' ? value.trim().toLowerCase() : value;
+  if (mode !== 'close_talk' && mode !== 'general') throw new Error('invalid_denoise_mode');
+  return mode;
+}
+
+// Rates libopus encodes. core TransportEncoderConfig decides; this fails early at init.
+const OPUS_SAMPLE_RATES = [8_000, 12_000, 16_000, 24_000, 48_000];
+
+// Same as the core output rate rule. A fixed 20 ms frame must be a whole number of samples within 8k..192 kHz so the sample clock does not drift.
+function isExactOutputRate(rate: number): boolean {
+  return Number.isInteger(rate) && rate >= 8_000 && rate <= 192_000 && rate % 50 === 0;
+}
+
+// Decides whether transport is Opus with the same rules as core codec parsing (surrounding spaces and case ignored, opus when omitted).
+function usesOpus(config: AudioCaptureConfig): boolean {
+  const codec: unknown = config.transport?.codec ?? 'opus';
+  return typeof codec === 'string' && codec.trim().toLowerCase() === 'opus';
+}
+
 function authorizationStatus(raw: string): EngineAuthorizationStatus {
   const status = JSON.parse(raw);
   return { state: status.state, remainingMs: status.remaining_ms, expiresAtMs: status.expires_at_ms,
     conversationId: status.conversation_id, connectionId: status.connection_id };
 }
 
-/** OS 마이크 한 개를 승인된 Rust 세션에 연결한다. 데이터 callback에는 인코딩된 전송 payload만 제공한다. */
+/** Connects one OS microphone to an authorized Rust session. The data callback receives only encoded transport payloads. */
 class NativeAudioCapture implements AudioCapture {
   private native = NitroModules.createHybridObject<TellusCapture>('TellusCapture');
   private ready: Promise<void>;
   private devicesReady: Promise<void>;
   private models = new Map<string, { keyId: string; path: string }>();
   private loaded = new Set<string>();
+  // Models that failed to load and are skipped so capture continues without denoise. Load is impossible after the first start, so reauthorization does not retry them.
+  private failed = new Set<string>();
   private deliveryEpoch = 0;
   private controlRevision = 0;
   private notificationRevision = 0;
@@ -58,7 +82,7 @@ class NativeAudioCapture implements AudioCapture {
     const rate = config.processing?.sampleRate ?? 16_000;
     this.denoiseEnabled = config.denoiseEnabled ?? true;
     this.ready = this.native.configure(JSON.stringify({
-      sampleRate: rate, denoise: this.denoiseEnabled, vad: config.vadEnabled ?? true,
+      sampleRate: rate, denoise: this.denoiseEnabled, denoiseMode: denoiseMode(config), vad: config.vadEnabled ?? true,
       echoCancellation: config.echoCancellationEnabled ?? true, micAgc2: config.micAgc2Enabled ?? false,
       transport: { codec: config.transport?.codec ?? 'opus', bitrateBps: config.transport?.bitrateBps },
       vadGate: config.vad ? { positiveThreshold: config.vad.vadPositiveThreshold,
@@ -77,7 +101,7 @@ class NativeAudioCapture implements AudioCapture {
       try { await this.native.configureAudioDevices(config.micDeviceId ?? '', config.playbackDeviceId ?? '', config.iosOutputRoute ?? ''); }
       catch (error) { throw await this.deviceError(error); }
     });
-    // 구성 실패는 호출한 API에서 전파하며 아직 소비자가 없어도 unhandled rejection을 만들지 않는다.
+    // A configuration failure propagates from the API that was called and raises no unhandled rejection even without a consumer yet.
     void this.ready.catch(() => {});
     void this.devicesReady.catch(() => {});
   }
@@ -111,14 +135,14 @@ class NativeAudioCapture implements AudioCapture {
         if (registry.has(header.model_id)) throw new Error('duplicate_encrypted_model');
         registry.set(header.model_id, { keyId: header.key_id, path });
       }
-      const expected = [(this.config.processing?.sampleRate ?? 16000) === 16000 ? 'fe-s16' : 'fe-s48',
-        ...((this.config.vadEnabled ?? true) ? ['silero-vad'] : [])];
-      if (registry.size !== expected.length || expected.some(model => !registry.has(model))) throw new Error('encrypted_model_binding_invalid');
+      // The engine owns the denoise model choice, so only the model count and the VAD model are checked here. Core rejects a model it does not support.
+      const vad = this.config.vadEnabled ?? true;
+      if (registry.size !== (vad ? 2 : 1) || registry.has('silero-vad') !== vad) throw new Error('encrypted_model_binding_invalid');
       this.models = registry;
     }
     const request = JSON.parse(await this.native.createModelKeyRequest());
     for (const [modelId, info] of this.models) {
-      if (!this.loaded.has(modelId)) models.push({ modelId, keyId: info.keyId, publicKey: request.public_key });
+      if (!this.loaded.has(modelId) && !this.failed.has(modelId)) models.push({ modelId, keyId: info.keyId, publicKey: request.public_key });
     }
     return models;
   }
@@ -127,9 +151,16 @@ class NativeAudioCapture implements AudioCapture {
     for (const key of keys) {
       const model = this.models.get(key.modelId);
       if (!model || model.keyId !== key.keyId) throw new Error('model_key_binding_invalid');
-      if (this.loaded.has(key.modelId)) continue;
+      if (this.loaded.has(key.modelId) || this.failed.has(key.modelId)) continue;
       await this.native.applyModelKey(key.modelId, key.keyId, wrappedKeyBytes(key.wrappedKey));
-      await this.native.loadModelFile(model.path);
+      try { await this.native.loadModelFile(model.path); }
+      catch (error) {
+        // Capture continues without denoise if the denoise model fails to load. Only a failure core recorded that way is tolerated; key and container errors still throw.
+        if (key.modelId === 'silero-vad' || !JSON.parse(await this.native.getStatus()).denoise_load_failed) throw error;
+        console.warn('denoise_load_failed: capture continues without denoise', error);
+        this.failed.add(key.modelId);
+        continue;
+      }
       this.loaded.add(key.modelId);
     }
   }
@@ -206,8 +237,9 @@ class NativeAudioCapture implements AudioCapture {
     const status = JSON.parse(await this.native.getStatus());
     const deviceStatus = typeof this.native.getAudioDeviceStatus === 'function'
       ? JSON.parse(await this.native.getAudioDeviceStatus()) as AudioDeviceStatus[] : undefined;
-    return { state: status.lifecycle, denoiseEnabled: status.denoise_enabled,
-      vadEnabled: this.config.vadEnabled ?? true, modelsLoaded: [...this.loaded], deviceStatus };
+    return { state: status.lifecycle, denoiseEnabled: status.denoise_enabled, denoiseMode: status.denoise_mode,
+      denoiseLoadFailed: status.denoise_load_failed, vadEnabled: this.config.vadEnabled ?? true,
+      modelsLoaded: [...this.loaded], deviceStatus };
   }
   async setDenoiseEnabled(enabled: boolean): Promise<void> {
     await this.ready;
@@ -238,13 +270,13 @@ class NativeAudioCapture implements AudioCapture {
     try {
       const statuses = JSON.parse(await this.native.getAudioDeviceStatus()) as AudioDeviceStatus[];
       const failures = statuses.filter(status => source === undefined || status.source === source);
-      // 권한·선택 실패를 함께 중단된 다른 stream의 unavailable 상태보다 먼저 전달한다.
+      // Reports a permission or selection failure ahead of the unavailable status of another stream stopped with it.
       const deviceStatus = failures.find(status => status.code === 'permission_denied')
         ?? failures.find(status => status.code === 'route_mismatch')
         ?? failures.find(status => status.code === 'unsupported')
         ?? failures.find(status => status.code === 'unavailable');
       if (deviceStatus) Object.assign(failure, { deviceStatus });
-    } catch { /* 상태 조회 실패가 원래 작업 오류를 덮어쓰지 않도록 한다. */ }
+    } catch { /* A failed status lookup must not replace the original operation error. */ }
     return failure;
   }
   async playback(samples: Float32Array, nativeRate: number): Promise<void> {
@@ -260,7 +292,7 @@ class NativeAudioCapture implements AudioCapture {
   }
 }
 
-/** 각 capture는 독립 승인·모델·처리 상태를 소유한다. 기본 모델은 SDK가 복사한 암호화 resource다. */
+/** Each capture owns its own authorization, models, and processing state. Default models are the encrypted resources the SDK copied. */
 export class AudioEngine {
   private constructor(private config: AudioCaptureConfig, private assets: NativeEngineAssets) {}
   static async init(config: AudioCaptureConfig = {}, assets?: NativeEngineAssets): Promise<AudioEngine> {
@@ -272,12 +304,15 @@ export class AudioEngine {
       deviceStatus: { source: 'system_audio', code: 'unsupported', requestedDeviceId: config.systemAudioDeviceId },
     });
     const rate = config.processing?.sampleRate ?? 16_000;
-    if (![16_000, 48_000].includes(rate) || (config.processing?.chunkDurationMs ?? 20) !== 20) throw new Error('invalid_processing_config');
+    if (!isExactOutputRate(rate) || (config.processing?.chunkDurationMs ?? 20) !== 20) throw new Error('invalid_processing_config');
+    if (usesOpus(config) && !OPUS_SAMPLE_RATES.includes(rate)) throw new Error('opus_sample_rate_unsupported');
     if (config.micEnabled === false || config.speakerEnabled === true || config.enableRawAudio === true) throw new Error('unsupported_mobile_capture_config');
-    const encryptedModels = assets?.encryptedModels ?? [rate === 16_000 ? 'fe-s16.temc' : 'fe-s48.temc',
+    const mode = denoiseMode(config);
+    // Each capture loads one denoise model and an optional VAD model, so the default assets pick only those.
+    const encryptedModels = assets?.encryptedModels ?? ['dfn3-48.temc',
       ...((config.vadEnabled ?? true) ? ['silero-vad.temc'] : [])];
     if (!encryptedModels.length || encryptedModels.length > 2 || encryptedModels.some(path => !path)) throw new Error('invalid_encrypted_model_assets');
-    return new AudioEngine({ ...config, processing: { ...config.processing }, transport: { ...config.transport }, vad: config.vad ? { ...config.vad } : undefined },
+    return new AudioEngine({ ...config, denoiseMode: mode, processing: { ...config.processing }, transport: { ...config.transport }, vad: config.vad ? { ...config.vad } : undefined },
       { encryptedModels: [...encryptedModels] });
   }
   createCapture(): AudioCapture { return new NativeAudioCapture(this.config, this.assets); }

@@ -1,6 +1,6 @@
 import type { AudioCaptureConfig, BrowserEngineAssets } from '../../bindings/typescript/capture-types.js';
 import { NativeEngine, type EngineModule, type NativeCapture } from './native.js';
-import type { DeliveredChunk, WorkerCommand, WorkerRequest, WorkerResponse } from './protocol.js';
+import type { DeliveredChunk, NativeStatus, WorkerCommand, WorkerRequest, WorkerResponse, WorkerStatus } from './protocol.js';
 
 interface EncryptedModel {
   model_id: string;
@@ -31,7 +31,7 @@ scope.onmessage = (event: MessageEvent<WorkerRequest | { cancel: number; epoch: 
     if (engine && activeSessionId === message.cancel) engine.module.tellusCancellationGeneration++;
     return;
   }
-  // Asyncify는 재진입할 수 없다. ORT 추론 대기 중에도 위 취소 처리는 즉시 실행된다.
+  // Asyncify is not reentrant. The cancellation handling above runs immediately even while waiting on ORT inference.
   operations = operations.then(async () => {
     try {
       activeSessionId = message.sessionId;
@@ -70,12 +70,12 @@ async function initialize(assets: BrowserEngineAssets): Promise<void> {
   }
 }
 
+// The engine owns the denoise model choice, so any container that is not the VAD model counts as the denoise model. Core rejects one it does not support.
 function requiredModels(config: AudioCaptureConfig): EncryptedModel[] {
-  const family = (config.processing?.sampleRate ?? 16000) === 16000 ? 'fe-s16' : 'fe-s48';
-  const selected = models.filter((model) => model.model_id === family || config.vadEnabled && model.model_id === 'silero-vad');
-  for (const required of [config.denoiseEnabled ? family : undefined, config.vadEnabled ? 'silero-vad' : undefined]) {
-    if (required && !selected.some((model) => model.model_id === required)) throw new Error('tellus_encrypted_model_missing');
-  }
+  const selected = models.filter((model) => config.vadEnabled || model.model_id !== 'silero-vad');
+  const hasDenoise = selected.some((model) => model.model_id !== 'silero-vad');
+  const hasVad = selected.some((model) => model.model_id === 'silero-vad');
+  if ((config.denoiseEnabled && !hasDenoise) || (config.vadEnabled && !hasVad)) throw new Error('tellus_encrypted_model_missing');
   return selected;
 }
 
@@ -118,7 +118,12 @@ async function dispatch(request: WorkerRequest): Promise<unknown> {
     case 'resume': return native.call('resume');
     case 'reset': return native.call('reset');
     case 'destroy': await native.destroy(); sessions.delete(request.sessionId); return;
-    case 'status': return native.json('get_status');
+    case 'status': {
+      const status = await native.json<NativeStatus>('get_status');
+      const loadedModels = session.models.map((model) => model.model_id)
+        .filter((id) => id === 'silero-vad' ? status.vad_loaded : status.denoise_loaded);
+      return { ...status, loadedModels } satisfies WorkerStatus;
+    }
     case 'denoise': await native.call('set_denoise_enabled', [command.enabled ? 1 : 0]); return command.enabled;
     case 'clearRender': return native.call('clear_render');
     case 'canDeliver': return native.canDeliver(command.nativeEpoch, command.authorizationGeneration);
@@ -147,7 +152,14 @@ async function loadModels(session: Session, command: Extract<WorkerCommand, { op
     if (decoded.length !== 80) throw new Error('tellus_model_key_invalid');
     await session.native.applyModelKey(key.modelId, key.keyId, decoded);
   }
-  for (const model of session.models) await session.native.loadModel(model.bytes);
+  for (const model of session.models) {
+    try { await session.native.loadModel(model.bytes); }
+    catch (error) {
+      // Capture continues without denoise if the denoise model fails to load. Only a failure core recorded that way is tolerated; key and container errors still throw.
+      if (model.model_id === 'silero-vad' || !(await session.native.json<NativeStatus>('get_status')).denoise_load_failed) throw error;
+      console.warn('tellus_denoise_load_failed: capture continues without denoise', error);
+    }
+  }
   session.loaded = true;
 }
 

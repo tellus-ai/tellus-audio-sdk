@@ -9,7 +9,7 @@ const path = require('node:path');
 const { Readable } = require('node:stream');
 const { test } = require('node:test');
 
-// 실제 파일·압축·다운로드 경계는 기록된 플랫폼 경로의 고정 사례로 검증한다.
+// The real file, archive, and download boundaries are verified with fixed cases of the recorded platform paths.
 const platformFiles = {
   ios: ['TellusAudioEngine.xcframework/Info.plist', 'TellusAudioEngine.xcframework/ios-arm64/libtellus_audio_engine.a',
     'TellusAudioEngine.xcframework/ios-arm64-simulator/libtellus_audio_engine.a', 'include/tellus_audio_engine.h',

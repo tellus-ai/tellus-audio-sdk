@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { test } = require('node:test');
 
-// 정적 자산 복사는 실제 파일과 패키지 해석을 사용하므로 고정 경계 사례로 검증한다.
+// Static asset copying uses real files and package resolution, so it is verified with fixed boundary cases.
 function webFixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellus-web-assets-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

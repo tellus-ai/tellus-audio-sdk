@@ -3,8 +3,8 @@ import test from 'node:test';
 import { BrowserCapture } from '../../../platforms/web/runtime/platforms/web/capture.js';
 
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
-const stream = (deviceId) => {
-  const track = { readyState: 'live', stopped: false, getSettings: () => ({ deviceId }),
+const stream = (deviceId, settings = {}) => {
+  const track = { readyState: 'live', stopped: false, getSettings: () => ({ deviceId, ...settings }),
     stop() { this.stopped = true; }, addEventListener(_type, listener) { this.onended = listener; }, removeEventListener() { this.onended = undefined; } };
   return { track, getTracks: () => [track], getAudioTracks: () => [track] };
 };
@@ -27,7 +27,7 @@ function environment(responses = {}, config = {}) {
     port = { postMessage: (message) => this.controls.push(message), close() {}, onmessage: null };
     connect() {} disconnect() {}
   };
-  const context = { resume: responses.contextResume ?? (async () => {}), currentTime: 0, destination: {},
+  const context = { resume: responses.contextResume ?? (async () => {}), currentTime: 0, destination: {}, sampleRate: 48000,
     createMediaStreamSource: () => ({ connect() {}, disconnect() {} }),
     decodeAudioData: (bytes) => responses.decodeAudioData(bytes) };
   let lifecycle = 'stopped';
@@ -43,7 +43,7 @@ function environment(responses = {}, config = {}) {
       if (command.operation === 'stop') { lifecycle = 'stopped'; return []; }
       if (command.operation === 'denoise') return command.enabled;
       if (command.operation === 'applyAuthorization') return { state: 'authorized', remaining_ms: 100000 };
-      if (command.operation === 'status') return { lifecycle, denoise_enabled: false, denoise_loaded: false, vad_loaded: false };
+      if (command.operation === 'status') return { lifecycle, denoise_enabled: false, denoise_loaded: false, vad_loaded: false, loadedModels: [] };
     },
   };
   return { capture: new BrowserCapture(client, context, config), permissions, rejections, requests, commands, nodes };
@@ -57,7 +57,49 @@ test('an exact microphone selection is pending until the actual input is acquire
   assert.deepEqual((await capture.getStatus()).deviceStatus, [{ source: 'microphone', code: 'pending', requestedDeviceId: 'mic-b' }]);
   permissions[0](stream('mic-b'));
   await starting;
-  assert.deepEqual((await capture.getStatus()).deviceStatus, [{ source: 'microphone', code: 'ready', requestedDeviceId: 'mic-b', actualDeviceId: 'mic-b' }]);
+  assert.deepEqual((await capture.getStatus()).deviceStatus, [{ source: 'microphone', code: 'ready', requestedDeviceId: 'mic-b', actualDeviceId: 'mic-b', nativeSampleRateHz: 48000 }]);
+  await capture.dispose();
+});
+
+test('a ready microphone reports the track rate and the context rate when the track has none', async () => {
+  for (const [settings, nativeSampleRateHz] of [[{ sampleRate: 44100 }, 44100], [{}, 48000]]) {
+    const { capture, permissions } = environment();
+    const starting = capture.start(() => {});
+    await flush();
+    assert.equal((await capture.getStatus()).deviceStatus[0].nativeSampleRateHz, undefined);
+    permissions[0](stream('mic-a', settings));
+    await starting;
+    assert.deepEqual((await capture.getStatus()).deviceStatus, [{ source: 'microphone', code: 'ready', actualDeviceId: 'mic-a', nativeSampleRateHz }]);
+    await capture.dispose();
+  }
+});
+
+test('reopening the microphone replaces the reported rate', async () => {
+  const { capture, permissions } = environment();
+  const first = capture.start(() => {});
+  await flush();
+  permissions[0](stream('mic-a', { sampleRate: 48000 }));
+  await first;
+  await capture.stop();
+  const second = capture.start(() => {});
+  await flush();
+  assert.equal((await capture.getStatus()).deviceStatus[0].nativeSampleRateHz, undefined);
+  permissions[1](stream('mic-b', { sampleRate: 16000 }));
+  await second;
+  assert.equal((await capture.getStatus()).deviceStatus[0].nativeSampleRateHz, 16000);
+  await capture.dispose();
+});
+
+test('an ended microphone no longer reports a rate', async () => {
+  const { capture, permissions } = environment();
+  const microphone = stream('mic-a', { sampleRate: 48000 });
+  const starting = capture.start(() => {});
+  await flush();
+  permissions[0](microphone);
+  await starting;
+  microphone.track.onended();
+  assert.equal((await capture.getStatus()).deviceStatus[0].code, 'unavailable');
+  assert.equal((await capture.getStatus()).deviceStatus[0].nativeSampleRateHz, undefined);
   await capture.dispose();
 });
 
@@ -360,4 +402,45 @@ test('a denoise update back to the initial value keeps the latest pending caller
   await capture.setDenoiseEnabled(false);
   assert.equal(updates.length, 2);
   await capture.dispose();
+});
+
+test('status reports the loaded models the worker resolved', async () => {
+  const { capture } = environment({ status: () => ({ lifecycle: 'stopped', denoise_enabled: true, denoise_loaded: true, vad_loaded: true, loadedModels: ['dfn3-48', 'silero-vad'] }) });
+  assert.deepEqual((await capture.getStatus()).modelsLoaded, ['dfn3-48', 'silero-vad']);
+  await capture.dispose();
+});
+
+test('status reports the applied denoise mode and a DeepFilterNet3 load failure as native reported them', async () => {
+  const native = { lifecycle: 'stopped', denoise_enabled: false, denoise_loaded: false, denoise_load_failed: true, denoise_mode: 'general', vad_loaded: false, loadedModels: [] };
+  const { capture } = environment({ status: () => native }, { denoiseMode: 'general' });
+  const status = await capture.getStatus();
+  assert.deepEqual([status.denoiseEnabled, status.denoiseMode, status.denoiseLoadFailed, status.modelsLoaded], [false, 'general', true, []]);
+  await capture.dispose();
+});
+
+test('queue loss is reported at the 16 kHz default output rate when processing.sampleRate is omitted', async () => {
+  for (const [config, expected] of [[{}, 160], [{ processing: {} }, 160], [{ processing: { sampleRate: 48000 } }, 480]]) {
+    const dropped = [];
+    let release;
+    const { capture, permissions, nodes } = environment({
+      capture: (command) => {
+        dropped.push(command.droppedSamples);
+        return dropped.length === 1 ? new Promise((resolve) => { release = () => resolve([]); }) : [];
+      },
+    }, config);
+    await capture.applyAuthorization('permit');
+    const starting = capture.start(() => {});
+    await flush();
+    permissions[0](stream());
+    await starting;
+    // While the first frame waits for the Worker, 11 frames queue up, so a queue of capacity 10 drops one 10 ms frame (480 samples at 48 kHz).
+    for (let frame = 0; frame < 12; frame++) {
+      nodes[0].port.onmessage({ data: { samples: new Float32Array(480), nativeRate: 48000, timestamp: frame, epoch: 0 } });
+    }
+    await flush();
+    release();
+    await flush();
+    assert.equal(dropped[1], expected, JSON.stringify(config));
+    await capture.dispose();
+  }
 });

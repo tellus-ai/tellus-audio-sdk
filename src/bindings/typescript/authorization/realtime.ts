@@ -22,11 +22,11 @@ export type {
 
 const MAX_RENEW_INTERVAL_MS = 480_000;
 const RETRY_DELAY_MS = 1_000;
-const MODEL_IDS = ['fe-s16', 'fe-s48', 'silero-vad'];
+const MODEL_IDS = ['dfn3-48', 'silero-vad'];
 const IDENTIFIER = /^[A-Za-z0-9._-]{1,64}(?![\s\S])/;
 
 function modelRequests(requests: EngineModelKeyRequest[]): EngineModelKeyRequest[] {
-  if (!Array.isArray(requests) || requests.length > 3) throw new Error('engine_model_key_request_invalid');
+  if (!Array.isArray(requests) || requests.length > MODEL_IDS.length) throw new Error('engine_model_key_request_invalid');
   const models = new Set<string>();
   for (const request of requests) {
     if (!request || !MODEL_IDS.includes(request.modelId) || typeof request.keyId !== 'string' ||
@@ -49,7 +49,7 @@ function modelKeys(value: unknown, requests: EngineModelKeyRequest[]): EngineMod
     if (typeof key !== 'object' || key === null || Array.isArray(key)) throw new Error('engine_model_key_response_invalid');
     const reply = key as Record<string, unknown>;
     const request = requests.find(request => request.modelId === reply.model_id && request.keyId === reply.key_id);
-    // 80바이트는 정확히 107문자이며 마지막 base64url 문자의 하위 2비트는 0이다.
+    // 80 bytes is exactly 107 characters, and the low 2 bits of the last base64url character are zero.
     if (!request || models.has(request.modelId) || typeof reply.wrapped_key !== 'string' ||
         reply.wrapped_key.length !== 107 || !/^[A-Za-z0-9_-]{106}[AEIMQUYcgkosw048]$/.test(reply.wrapped_key)) {
       throw new Error('engine_model_key_response_invalid');
@@ -69,7 +69,7 @@ export function attachEngineAuthorization(
   if (!options.conversationId || !Number.isFinite(requestTimeoutMs) || requestTimeoutMs <= 0) {
     throw new Error('engine_authorization_invalid_options');
   }
-  // 동기 desktop의 미지원 빌드 오류는 이전처럼 attach 호출자에게 즉시 전달한다.
+  // An unsupported-build error from synchronous desktop still reaches the attach caller immediately.
   const initialStatus = capture.getAuthorizationStatus();
   let disposed = false;
   let approved = false;
@@ -83,7 +83,7 @@ export function attachEngineAuthorization(
 
   function active(current: number): boolean { return !disposed && current === attempt; }
 
-  // 동기 응답은 같은 호출에서 이어가고 Promise만 비동기로 처리하여 desktop 계약을 보존한다.
+  // A synchronous response continues in the same call and only a Promise is handled asynchronously, preserving the desktop contract.
   function continueWith<T>(value: MaybePromise<T>, current: number, next: (value: T) => void): void {
     if (value && typeof (value as Promise<T>).then === 'function') {
       void Promise.resolve(value).then(next).catch(error => { if (active(current)) fail(error); });
@@ -241,7 +241,7 @@ export function attachEngineAuthorization(
   socket.addEventListener('message', onMessage);
   socket.addEventListener('close', onClose);
   socket.addEventListener('error', onError);
-  // 연결이 아직 열리지 않아 request가 대기하지 않는 동안에도 비동기 preflight 실패를 소비한다.
+  // Consumes an asynchronous preflight failure even while no request is waiting because the connection has not opened yet.
   continueWith(initialStatus, attempt, () => {});
   if (socket.readyState === 1) queueMicrotask(onOpen);
   else if (socket.readyState >= 2) queueMicrotask(onClose);

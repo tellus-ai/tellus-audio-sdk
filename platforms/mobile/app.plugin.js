@@ -1,6 +1,6 @@
 'use strict';
 
-// Expo가 생성하는 OS 설정만 수정한다. 녹음과 승인은 SDK의 기존 공개 API가 소유한다.
+// Modifies only the OS settings Expo generates. Recording and authorization stay with the SDK's existing public API.
 module.exports = function withTellusAudio(config, options = {}) {
   const projectRoot = config._internal?.projectRoot ?? process.cwd();
   const plugins = require(require.resolve('expo/config-plugins', { paths: [projectRoot] }));

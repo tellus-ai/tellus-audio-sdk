@@ -11,7 +11,7 @@
 
 namespace margelo::nitro::tellus {
 
-// realtime callback은 고정 FIFO에 복사만 한다. 제어와 오디오 처리는 하나의 worker가 직렬 실행한다.
+// The realtime callback only copies into a fixed FIFO. One worker runs control and audio processing serially.
 class CaptureWorker final {
 public:
   struct Frame {

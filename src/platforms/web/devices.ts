@@ -2,7 +2,7 @@ import type {
   AudioDeviceListResult, AudioDeviceOperationError, AudioDeviceSource, AudioDeviceStatus,
 } from '../../bindings/typescript/audio-devices.js';
 
-/** 브라우저 장치 경계의 실패를 문자열 파싱 없이 공개 상태로 전달한다. */
+/** Delivers browser device boundary failures as public statuses without string parsing. */
 export function audioDeviceError(value: unknown, source: AudioDeviceSource, requestedDeviceId?: string): AudioDeviceOperationError {
   const error = value instanceof Error ? value : new Error('tellus_audio_device_unavailable');
   const code: AudioDeviceStatus['code'] = error.name === 'NotAllowedError' || error.name === 'SecurityError'
@@ -10,7 +10,7 @@ export function audioDeviceError(value: unknown, source: AudioDeviceSource, requ
   return Object.assign(error, { deviceStatus: { source, code, ...(requestedDeviceId === undefined ? {} : { requestedDeviceId }) } });
 }
 
-/** 권한을 요청하지 않고 브라우저가 현재 공개하는 장치 ID와 label을 조회한다. */
+/** Lists the device IDs and labels the browser currently exposes, without requesting permission. */
 export async function listAudioDevices(source: AudioDeviceSource): Promise<AudioDeviceListResult> {
   if (!['microphone', 'system_audio', 'playback'].includes(source)) throw new Error('tellus_audio_device_source_invalid');
   if (source === 'system_audio' || !navigator.mediaDevices?.enumerateDevices) {

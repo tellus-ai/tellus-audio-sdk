@@ -3,7 +3,7 @@ import { dirname, join, resolve } from 'node:path';
 
 const ROOT = join(__dirname, '..', '..');
 
-// 기존 앱 파일을 보존하면서 설치된 엔진과 SDK의 상대 ESM 경로를 복사한다.
+// Copies the installed engine and the SDK's relative ESM paths while keeping existing app files.
 export function copyWebAssets(destination: string): void {
   const source = join(ROOT, 'vendor', 'web');
   const manifest = JSON.parse(readFileSync(join(ROOT, 'release-assets.json'), 'utf8')) as {

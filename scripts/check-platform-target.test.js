@@ -5,7 +5,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { test } = require('node:test');
 
-// Android만 설치한 실제 파일 경계에서 검증 CLI의 선택 옵션을 확인한다.
+// Checks the verification CLI's target option at a real file boundary with only Android installed.
 test('mobile binary checker validates the explicitly installed Android target', t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellus-check-target-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

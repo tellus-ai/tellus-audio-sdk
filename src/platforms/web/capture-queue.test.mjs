@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { CaptureQueue } from '../../../platforms/web/runtime/platforms/web/capture-queue.js';
 
-test('variable native blocks preserve the exact dropped processing sample total', () => {
+test('variable native blocks preserve the exact dropped output sample total', () => {
   for (const nativeRate of [16000, 44100, 48000]) {
-    for (const processingRate of [16000, 48000]) {
+    for (const processingRate of [8000, 16000, 22050, 44100, 48000]) {
       const queue = new CaptureQueue(processingRate, 3);
       let droppedNative = 0;
       const lengths = Array.from({ length: 47 }, (_, i) => 1 + (i * 79) % 512);

@@ -27,7 +27,7 @@ internal data class RecordingNotification(
   val action: String? get() = if (paused) { if (resumeAction) "resume" else null } else { if (pauseAction) "pause" else null }
 }
 
-/** 명시적으로 시작한 캡처를 background에서도 유지한다. 재시작하지 않는다. */
+/** Keeps an explicitly started capture alive in the background. Does not restart it. */
 class TellusMicrophoneService : Service() {
   inner class LocalBinder : Binder() { val service get() = this@TellusMicrophoneService }
   private var request: Request? = null
@@ -80,7 +80,7 @@ class TellusMicrophoneService : Service() {
 
   override fun onBind(intent: Intent): IBinder = LocalBinder()
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-    // lease monitor는 stop 이후 도착한 OS action을 차단한다. action은 앱 callback만 호출한다.
+    // The lease monitor blocks OS actions that arrive after stop. An action only calls the app callback.
     synchronized(this) {
       val active = request
       val action = active?.notification?.action
@@ -138,7 +138,7 @@ class TellusMicrophoneService : Service() {
   companion object {
     private val claimed = AtomicReference<Request?>(null)
 
-    /** FGS가 생성된 뒤 반환한다. main thread에서는 호출하지 않는다. */
+    /** Returns after the foreground service is created. Do not call on the main thread. */
     internal fun acquire(context: Context, notification: RecordingNotification?, onAction: (String) -> Unit, onStopped: () -> Unit): Lease {
       val request = Request(notification, onAction, onStopped)
       check(claimed.compareAndSet(null, request)) { "microphone_capture_already_active" }

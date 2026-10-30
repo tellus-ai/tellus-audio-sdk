@@ -25,7 +25,7 @@ import java.nio.ByteOrder
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** OS I/O만 소유한다. nativeSubmit은 PCM을 복사하고 Rust 작업 queue에 넘긴다. */
+/** Owns OS I/O only. nativeSubmit copies PCM and hands it to the Rust work queue. */
 @Keep
 class AndroidAudioDevice(@Volatile private var nativeHandle: Long) {
   private val context = checkNotNull(NitroModules.applicationContext) { "react_context_unavailable" }
@@ -91,9 +91,26 @@ class AndroidAudioDevice(@Volatile private var nativeHandle: Long) {
   }
 
   fun getAudioDeviceStatus(): String = JSONArray().apply {
-    microphoneStatus?.let { put(it) }
+    microphoneStatusWithRate()?.let { put(it) }
     playbackStatus?.let { put(it) }
   }.toString()
+
+  // Attaches the rate of the recording input to the ready status. Default-device capture has no selection status, so a ready status is built only while recording.
+  private fun microphoneStatusWithRate(): JSONObject? {
+    val input = recorder?.takeIf { capturing && it.recordingState == AudioRecord.RECORDSTATE_RECORDING }
+      ?: return microphoneStatus
+    val selected = microphoneStatus?.takeIf { micDeviceId != null }
+    val status = selected?.let { JSONObject(it.toString()) } ?: JSONObject().put("source", "microphone").put("code", "ready")
+      .apply { input.routedDevice?.let { put("actualDeviceId", it.id.toString()) } }
+    if (status.optString("code") == "ready") status.put("nativeSampleRateHz", nativeCaptureRate(input))
+    return status
+  }
+
+  // Uses the device-side rate when the OS reports that format, otherwise the rate AudioRecord was opened with. The former can be lower than the rate the app receives.
+  // https://developer.android.com/reference/android/media/AudioRecordingConfiguration#getFormat()
+  private fun nativeCaptureRate(input: AudioRecord): Int =
+    audioManager.activeRecordingConfigurations.firstOrNull { it.clientAudioSessionId == input.audioSessionId }
+      ?.format?.sampleRate?.takeIf { it > 0 } ?: input.sampleRate
 
   private fun updateDeviceStatus(source: String, code: String, requested: String?, actual: Int? = null) {
     val status = JSONObject().put("source", source).put("code", code)
@@ -121,10 +138,7 @@ class AndroidAudioDevice(@Volatile private var nativeHandle: Long) {
     check(Looper.myLooper() != Looper.getMainLooper()) { "capture_start_requires_worker_thread" }
     check(recorder == null) { "capture_already_active" }
     if (!playing && playbackDeviceId != null) updateDeviceStatus("playback", "pending", playbackDeviceId)
-    if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-      updateDeviceStatus("microphone", "permission_denied", micDeviceId)
-      error("microphone_permission_required")
-    }
+    requireRecordPermission()
     val preferredDevice = micDeviceId?.let { resolveDevice(it, "microphone") }
     val selectedRoute = preferredDevice?.let { SelectedAudioRoute(it.id) }
     micDeviceId?.let { updateDeviceStatus("microphone", "pending", it) }
@@ -136,15 +150,10 @@ class AndroidAudioDevice(@Volatile private var nativeHandle: Long) {
       capturing = true
       foreground?.update(notification)
       acquireFocus()
-      val minimum = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_FLOAT)
-      check(minimum > 0) { "capture_format_unsupported" }
       val source = if (audioManager.getProperty(AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED) == "true") {
         MediaRecorder.AudioSource.UNPROCESSED
       } else MediaRecorder.AudioSource.VOICE_RECOGNITION
-      val input = AudioRecord.Builder().setAudioSource(source)
-        .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
-          .setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_IN_MONO).build())
-        .setBufferSizeInBytes(maxOf(minimum, rate / 50 * 4)).build()
+      val input = openWithCaptureRateFallback(rate) { openRecorder(it, source) }
       synchronized(captureLock) { recorder = input }
       if (preferredDevice != null && !input.setPreferredDevice(preferredDevice)) {
         updateDeviceStatus("microphone", "unsupported", micDeviceId)
@@ -165,7 +174,6 @@ class AndroidAudioDevice(@Volatile private var nativeHandle: Long) {
       }, Handler(Looper.getMainLooper()))
       synchronized(captureLock) {
         check(capturing) { "capture_interrupted_during_start" }
-        check(input.state == AudioRecord.STATE_INITIALIZED) { "capture_initialization_failed" }
         input.startRecording()
       }
       if (selectedRoute != null) awaitCaptureRoute(input, selectedRoute)
@@ -177,6 +185,35 @@ class AndroidAudioDevice(@Volatile private var nativeHandle: Long) {
       stopCapture()
       throw error
     }
+  }
+
+  private fun requireRecordPermission() {
+    if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+      updateDeviceStatus("microphone", "permission_denied", micDeviceId)
+      error("microphone_permission_required")
+    }
+  }
+
+  // Returns only an initialized AudioRecord. Permission is checked on every attempt so a permission failure never turns into an unsupported-format retry.
+  // Builder reports initialization failure with UnsupportedOperationException and leaves no instance behind. Only an instance returned uninitialized is released.
+  // https://developer.android.com/reference/android/media/AudioRecord.Builder#build()
+  private fun openRecorder(rate: Int, source: Int): AudioRecord {
+    requireRecordPermission()
+    val minimum = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_FLOAT)
+    if (minimum <= 0) throw CaptureFormatUnsupported()
+    val input = try {
+      AudioRecord.Builder().setAudioSource(source)
+        .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
+          .setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_IN_MONO).build())
+        .setBufferSizeInBytes(maxOf(minimum, rate / 50 * 4)).build()
+    } catch (error: UnsupportedOperationException) {
+      throw CaptureFormatUnsupported()
+    }
+    if (input.state != AudioRecord.STATE_INITIALIZED) {
+      input.release()
+      throw CaptureFormatUnsupported()
+    }
+    return input
   }
 
   private fun awaitCaptureRoute(input: AudioRecord, selection: SelectedAudioRoute) {
@@ -192,7 +229,7 @@ class AndroidAudioDevice(@Volatile private var nativeHandle: Long) {
     error("capture_interrupted_during_start")
   }
 
-  // AudioRecord는 ByteBuffer position/limit을 무시하고 실제 읽은 byte 수를 반환한다.
+  // AudioRecord ignores the ByteBuffer position and limit and returns the number of bytes actually read.
   // https://developer.android.com/reference/android/media/AudioRecord#read(java.nio.ByteBuffer,int,int)
   private fun readCapture(input: AudioRecord) {
     try {
@@ -323,7 +360,7 @@ class AndroidAudioDevice(@Volatile private var nativeHandle: Long) {
   private external fun nativeError(handle: Long, message: String)
 
   companion object {
-    /** 파일 또는 앱에 패키지된 암호화 컨테이너만 읽는다. 평문은 native에서 거부한다. */
+    /** Reads only encrypted containers from a file or the app package. Native rejects plaintext. */
     @JvmStatic fun readEncryptedModel(path: String): ByteArray {
       val app = checkNotNull(NitroModules.applicationContext) { "react_context_unavailable" }
       val input = if (path.startsWith("file://") || path.startsWith("/")) {

@@ -9,10 +9,23 @@ export interface AudioCaptureConfig {
   playbackDeviceId?: string;
   iosOutputRoute?: 'speaker' | 'system';
   enableRawAudio?: boolean;
+  /** Enables denoise. The model is fixed to DeepFilterNet3 (encrypted model dfn3-48); processing runs internally at 48 kHz and only the output is converted to processing.sampleRate. */
   denoiseEnabled?: boolean;
+  /**
+   * Denoise output policy. Defaults to 'close_talk'. Surrounding spaces and case are ignored; unknown values are rejected at init.
+   * 'close_talk' adds a near-speech gate that turns far sound into exact silence, delays output by 300 ms more (about 330 ms with model latency), and limits noise attenuation to at most 12 dB. Speech can be blocked in noisy places.
+   * 'general' keeps the DeepFilterNet3 output with no attenuation limit. With denoiseEnabled: false the gate is off too.
+   */
+  denoiseMode?: 'close_talk' | 'general';
   vadEnabled?: boolean;
   echoCancellationEnabled?: boolean;
   micAgc2Enabled?: boolean;
+  /**
+   * sampleRate is the engine output rate: chunks, payloads, and sample clocks the caller receives use it. Defaults to 16000.
+   * This is not the device capture rate: processing always runs at 48 kHz internally and any device rate is resampled.
+   * Must be within 8000..=192000 Hz and give a whole number of samples per 20 ms (a multiple of 50). Opus supports only 8000, 12000, 16000, 24000, or 48000 Hz; use pcm_s16le or pcm_f32le for other rates.
+   * chunkDurationMs supports only 20.
+   */
   processing?: { sampleRate?: number; chunkDurationMs?: number };
   transport?: { codec?: 'opus' | 'pcm_s16le' | 'pcm_f32le'; bitrateBps?: number };
   vad?: VADConfig;
@@ -31,7 +44,7 @@ export interface AudioChunk {
   codec: 'opus' | 'pcm_s16le' | 'pcm_f32le';
   sampleRate: number;
   sampleCount: number;
-  /** 종료 시 padding을 제외한 유효 샘플 수. */
+  /** Number of valid samples at shutdown, excluding padding. */
   validSampleCount: number;
   durationMs: number;
   sample: number;
@@ -51,7 +64,12 @@ export interface AudioChunk {
 
 export interface CaptureStatus {
   state: 'idle' | 'running' | 'paused' | 'stopped';
+  /** Whether denoise is actually on. False if dfn3-48 failed to load. */
   denoiseEnabled: boolean;
+  /** Applied denoiseMode. */
+  denoiseMode: 'close_talk' | 'general';
+  /** dfn3-48 failed to load, so input passes through without denoise or the gate. */
+  denoiseLoadFailed: boolean;
   vadEnabled: boolean;
   modelsLoaded: string[];
   deviceStatus?: AudioDeviceStatus[];
@@ -74,14 +92,14 @@ export interface AudioCapture extends AuthorizableAudioCapture {
   dispose(): Promise<void>;
   getStatus(): Promise<CaptureStatus>;
   setDenoiseEnabled(enabled: boolean): Promise<void>;
-  /** 승인과 캡처를 유지하면서 처리 이력과 미전달 출력을 폐기한다. */
+  /** Discards processing history and undelivered output while keeping authorization and capture. */
   reset(): Promise<void>;
-  /** 재생 완료까지 기다리며 같은 샘플을 엔진 AEC 기준 신호로 전달한다. */
+  /** Waits for playback to finish and passes the same samples to the engine as the AEC reference. */
   playback(samples: Float32Array, nativeRate: number): Promise<void>;
-  /** OS decoder로 MP3·WAV를 읽고 동일 재생·AEC 경로에 전달한다. */
+  /** Reads MP3/WAV with the OS decoder and passes it to the same playback and AEC path. */
   playbackEncoded(data: ArrayBuffer): Promise<void>;
   cancelPlayback(): Promise<void>;
-  /** Android 녹음 알림을 설정한다. pause/resume은 앱 세션이 제어한다. */
+  /** Sets the Android recording notification. The app session controls pause and resume. */
   setRecordingNotification?(config: RecordingNotificationConfig): Promise<void>;
 }
 
@@ -94,6 +112,6 @@ export interface BrowserEngineAssets {
 }
 
 export interface NativeEngineAssets {
-  /** SDK가 다운로드·복사한 암호화 컨테이너의 파일 경로. */
+  /** File paths of the encrypted containers the SDK downloaded and copied. */
   encryptedModels: string[];
 }

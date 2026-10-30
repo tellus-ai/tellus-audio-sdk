@@ -7,7 +7,7 @@ const { test } = require('node:test');
 const wrapperPath = path.resolve(__dirname,
   '../platforms/desktop/runtime/platforms/desktop/electron/index.js');
 
-// 빌드된 Desktop 래퍼를 가짜 native AudioCapture와 함께 불러온다.
+// Loads the built Desktop wrapper with a fake native AudioCapture.
 function loadWrapper(NativeAudioCapture) {
   const exports = {};
   vm.runInNewContext(fs.readFileSync(wrapperPath, 'utf8'), {

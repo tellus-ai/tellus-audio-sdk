@@ -6,7 +6,7 @@ declare class AudioWorkletProcessor {
 }
 declare function registerProcessor(name: string, processor: typeof AudioWorkletProcessor): void;
 
-/** 가변 입력 블록을 복사한다. 프레이밍·리샘플·DSP는 Worker의 Rust가 처리한다. */
+/** Copies variable input blocks. Framing, resampling, and DSP are handled by Rust in the Worker. */
 class TellusAudioTap extends AudioWorkletProcessor {
   private active = false;
   private epoch = 0;

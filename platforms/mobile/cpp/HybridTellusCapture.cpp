@@ -26,7 +26,10 @@ void HybridTellusCapture::dispose() {
 }
 
 std::shared_ptr<Promise<void>> HybridTellusCapture::configure(const std::string& config, double rate) {
-  if (rate != 16000 && rate != 48000) throw std::runtime_error("invalid_processing_rate");
+  // Core configuration decides the output rate rules and Opus limits; this only guards the value range before the uint32 conversion.
+  if (!std::isfinite(rate) || rate < 8000 || rate > 192000 || std::fmod(rate, 50) != 0) {
+    throw std::runtime_error("invalid_processing_rate");
+  }
   auto session = acquire();
   return session->submit([state = session.get(), config, rate] {
     state->check(tellus_audio_session_configure(state->handle,

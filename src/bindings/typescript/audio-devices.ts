@@ -1,18 +1,23 @@
-/** 조회와 선택의 대상. 시스템 오디오 캡처와 SDK 재생 출력을 구분한다. */
+/** What to list or select. Separates system audio capture from SDK playback output. */
 export type AudioDeviceSource = 'microphone' | 'system_audio' | 'playback';
 
-/** 플랫폼이 반환한 ID와 이름. ID의 영구성을 보장하지 않는다. */
+/** ID and name returned by the platform. IDs are not guaranteed to persist. */
 export interface AudioDeviceInfo {
   id: string;
   label: string;
 }
 
-/** ready는 해당 작업의 준비 완료이며, 목록 조회는 스트림 선택을 보장하지 않는다. */
+/** ready means that operation is prepared; a successful listing does not guarantee stream selection. */
 export interface AudioDeviceStatus {
   source: AudioDeviceSource;
   code: 'pending' | 'ready' | 'unavailable' | 'unsupported' | 'permission_denied' | 'route_mismatch';
   requestedDeviceId?: string;
   actualDeviceId?: string;
+  /**
+   * Rate (Hz) the OS or browser hands to the engine for a ready input. Absent when unknown.
+   * Not proof of the device's real bandwidth: Linux server-side resampling and browser resampling can hide a narrowband device.
+   */
+  nativeSampleRateHz?: number;
 }
 
 export interface AudioDeviceListResult {
@@ -20,7 +25,7 @@ export interface AudioDeviceListResult {
   devices: readonly AudioDeviceInfo[];
 }
 
-/** 기존 reject와 오류 callback에서 장치 실패를 구조화하여 제공한다. */
+/** Carries structured device failures on existing rejections and error callbacks. */
 export interface AudioDeviceOperationError extends Error {
   deviceStatus: AudioDeviceStatus;
 }

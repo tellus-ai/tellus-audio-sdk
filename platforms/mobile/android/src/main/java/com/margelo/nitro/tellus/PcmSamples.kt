@@ -8,7 +8,7 @@ import java.nio.ByteOrder
 @Keep
 internal class DecodedAudioResult(val samples: FloatArray, val rate: Int)
 
-/** OS PCM16/float의 frame을 mono로 downmix하며 출력 memory 상한을 지킨다. */
+/** Downmixes OS PCM16/float frames to mono within the output memory limit. */
 internal class PcmSamples {
   private var samples = FloatArray(1024)
   private var count = 0

@@ -76,7 +76,7 @@ public:
 
   ~AndroidAudioDevice() override {
     JavaEnv scope;
-    // Kotlin close는 모든 콜백과 같은 monitor에서 nativeHandle을 지운다.
+    // Kotlin close clears nativeHandle under the same monitor as every callback.
     scope.env->CallVoidMethod(device_, closeDevice);
     scope.env->ExceptionClear();
     scope.env->DeleteGlobalRef(device_);
@@ -160,7 +160,7 @@ public:
     JavaEnv scope;
     auto buffer = scope.env->NewDirectByteBuffer(const_cast<uint8_t*>(encoded.data()), static_cast<jlong>(encoded.size()));
     checkException(scope.env);
-    // decode와 취소 콜백은 동기 실행이므로 함수 반환까지 참조가 유지된다.
+    // decode and the cancellation callback run synchronously, so the reference stays valid until the function returns.
     auto result = scope.env->CallStaticObjectMethod(decoderClass, ::decodeAudio, buffer, reinterpret_cast<jlong>(&cancelled));
     scope.env->DeleteLocalRef(buffer);
     checkException(scope.env);
@@ -296,9 +296,9 @@ jboolean decodeCancelled(JNIEnv* env, jclass, jlong pointer) noexcept {
   }
   return JNI_TRUE;
 }
-} // 익명 이름 공간
+} // anonymous namespace
 
-// package class loader에 접근할 수 있는 JNI_OnLoad에서 호출한다.
+// Called from JNI_OnLoad, where the package class loader is reachable.
 void initializeAndroidAudioDevice(JNIEnv* env) {
   env->GetJavaVM(&javaVm);
   auto local = env->FindClass("com/margelo/nitro/tellus/AndroidAudioDevice");
@@ -366,4 +366,4 @@ std::vector<uint8_t> readEncryptedModel(const std::string& path) {
   checkException(scope.env);
   return output;
 }
-} // margelo::nitro::tellus 이름 공간
+} // namespace margelo::nitro::tellus

@@ -135,7 +135,7 @@ function loadNativeBinding(): any {
   }
 
   if (platform === 'win32') {
-    // SDK는 엔진 index.js를 거치지 않으므로 동봉 MSVC DLL의 검색 경로도 준비한다.
+    // The SDK does not go through the engine's index.js, so it also sets up the search path for the bundled MSVC DLLs.
     const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === 'path') || 'Path';
     const currentPath = process.env[pathKey];
     const nativeDir = normalize(dirname(nativePath));

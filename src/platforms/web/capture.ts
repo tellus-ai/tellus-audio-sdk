@@ -5,7 +5,7 @@ import type { EngineAuthorizationRequest, EngineAuthorizationStatus } from '../.
 import type { AudioDeviceStatus } from '../../bindings/typescript/audio-devices.js';
 import { CaptureQueue, type CaptureFrame } from './capture-queue.js';
 import { audioDeviceError } from './devices.js';
-import type { DeliveredChunk, NativeStatus, WorkerCommand } from './protocol.js';
+import type { DeliveredChunk, WorkerCommand, WorkerStatus } from './protocol.js';
 import { WorkerClient } from './worker-client.js';
 
 interface NativeAuthorizationStatus {
@@ -16,7 +16,7 @@ interface NativeAuthorizationStatus {
   connection_id?: string;
 }
 
-/** 메인 스레드의 수명과 OS 라우팅을 관리한다. 처리 샘플은 Rust가 생성한다. */
+/** Manages main-thread lifecycle and OS routing. Rust produces the processed samples. */
 export class BrowserCapture implements AudioCapture {
   private readonly ready: Promise<number>;
   private sessionId = 0;
@@ -117,7 +117,8 @@ export class BrowserCapture implements AudioCapture {
       this.stream = stream;
       await resumed;
       if (epoch !== this.epoch) { stream.getTracks().forEach((track) => track.stop()); return; }
-      const actualDeviceId = stream.getAudioTracks()[0]?.getSettings().deviceId;
+      const settings = stream.getAudioTracks()[0]?.getSettings();
+      const actualDeviceId = settings?.deviceId;
       if (requestedDeviceId !== undefined && actualDeviceId !== requestedDeviceId) {
         throw Object.assign(new Error('tellus_microphone_route_mismatch'), { deviceStatus: {
           source: 'microphone', code: 'route_mismatch', requestedDeviceId, ...(actualDeviceId === undefined ? {} : { actualDeviceId }),
@@ -135,7 +136,9 @@ export class BrowserCapture implements AudioCapture {
       this.source.connect(this.tap);
       this.tap.connect(this.context.destination);
       for (const track of stream.getTracks()) track.addEventListener('ended', this.onDeviceEnded);
-      this.deviceStatus = { source: 'microphone', code: 'ready', ...(requestedDeviceId === undefined ? {} : { requestedDeviceId }), ...(actualDeviceId === undefined ? {} : { actualDeviceId }) };
+      // Without a track rate, uses the AudioContext rate the node actually delivers. If the rates differ, the browser resamples between them.
+      const nativeSampleRateHz = settings?.sampleRate ?? this.context.sampleRate;
+      this.deviceStatus = { source: 'microphone', code: 'ready', ...(requestedDeviceId === undefined ? {} : { requestedDeviceId }), ...(actualDeviceId === undefined ? {} : { actualDeviceId }), nativeSampleRateHz };
     } catch (error) {
       if (epoch !== this.epoch) return;
       if (error instanceof Error && 'deviceStatus' in error) this.deviceStatus = error.deviceStatus as AudioDeviceStatus;
@@ -181,7 +184,7 @@ export class BrowserCapture implements AudioCapture {
       const chunks = await this.request<DeliveredChunk[]>({ operation: 'stop' }, epoch);
       await this.deliver(chunks, epoch);
     } catch (error) {
-      // 승인 상실 시 native stop은 tail을 버리고 Stopped로 전환한 뒤 오류를 반환한다.
+      // When authorization is lost, native stop discards the tail, moves to Stopped, and returns an error.
       if (!(error instanceof Error && error.message.startsWith('engine_authorization_'))) throw error;
     }
   }
@@ -198,11 +201,12 @@ export class BrowserCapture implements AudioCapture {
   }
 
   async getStatus(): Promise<CaptureStatus> {
-    const status = await this.request<NativeStatus>({ operation: 'status' });
+    const status = await this.request<WorkerStatus>({ operation: 'status' });
     return {
-      state: this.state, denoiseEnabled: status.denoise_enabled, vadEnabled: !!this.config.vadEnabled,
+      state: this.state, denoiseEnabled: status.denoise_enabled, denoiseMode: status.denoise_mode,
+      denoiseLoadFailed: status.denoise_load_failed, vadEnabled: !!this.config.vadEnabled,
       deviceStatus: [this.deviceStatus, ...(this.playbackDeviceStatus ? [this.playbackDeviceStatus] : [])],
-      modelsLoaded: [status.denoise_loaded ? (this.config.processing?.sampleRate ?? 16000) === 16000 ? 'fe-s16' : 'fe-s48' : '', status.vad_loaded ? 'silero-vad' : ''].filter(Boolean),
+      modelsLoaded: status.loadedModels,
     };
   }
 
@@ -307,7 +311,7 @@ export class BrowserCapture implements AudioCapture {
     await cleanup;
     let buffer = await this.context.decodeAudioData(data.slice(0));
     if (epoch !== this.epoch || playbackEpoch !== this.playbackEpoch) return;
-    // OS decoder의 할당은 직접 제한할 수 없지만 추가 mono buffer 할당은 이 경계에서 제한한다.
+    // The OS decoder's allocation cannot be limited directly, but the extra mono buffer allocation is limited at this boundary.
     if (buffer.length * buffer.numberOfChannels > 4 * 1024 * 1024) throw new Error('tellus_playback_decoded_too_large');
     if (buffer.numberOfChannels !== 1) {
       const mixer = new OfflineAudioContext(1, buffer.length, buffer.sampleRate);

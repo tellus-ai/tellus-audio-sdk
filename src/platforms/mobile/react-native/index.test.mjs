@@ -4,9 +4,10 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 
-// Nitro는 JS 경계 double만 사용하며 실제 공개 wrapper를 실행한다.
-function fixture(assets = ['fe-s16.temc', 'silero-vad.temc']) {
+// Nitro uses only a JS boundary double; the real public wrapper runs.
+function fixture(assets = ['dfn3-48.temc', 'silero-vad.temc']) {
   const status = () => JSON.stringify({ state: 'authorized', remaining_ms: 1000 });
+  const warnings = [];
   const native = {
     epoch: 1n, authorized: true, inspected: [], loaded: [], acknowledged: 0,
     configure: async () => {},
@@ -34,12 +35,12 @@ function fixture(assets = ['fe-s16.temc', 'silero-vad.temc']) {
   const source = fs.readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const module = { exports: {} };
-  vm.runInNewContext(compiled, { module, exports: module.exports, Uint8Array, Map, Set, Error,
+  vm.runInNewContext(compiled, { module, exports: module.exports, Uint8Array, Map, Set, Error, console: { warn: (...args) => warnings.push(args) },
     require: name => { assert.equal(name, 'react-native-nitro-modules'); return { NitroModules: { createHybridObject: () => native } }; } });
-  const create = async (config = {}) => (await module.exports.AudioEngine.init(config, { encryptedModels: assets })).createCapture();
+  const create = async (config = {}) => (await module.exports.AudioEngine.init(config, assets ? { encryptedModels: assets } : undefined)).createCapture();
   const emit = () => native.callback(new Uint8Array([1]).buffer, JSON.stringify({ codec: 'opus', sample_rate: 16000,
     sample: 0, sample_count: 320, valid_sample_count: 320, timestamp: 0, rms: 0 }), native.epoch, 1n);
-  return { native, create, emit, list: module.exports.listAudioDevices };
+  return { native, create, emit, warnings, list: module.exports.listAudioDevices };
 }
 
 test('모바일 선택값은 OS adapter에만 전달하고 Rust 처리 설정에는 넣지 않는다', async () => {
@@ -78,6 +79,14 @@ test('선택 구성 실패 이후에도 core 상태와 구조화된 장치 상�
   await assert.rejects(capture.start(() => {}), error => error.deviceStatus.code === 'unsupported');
   const status = await capture.getStatus();
   assert.equal(status.state, 'idle');
+  assert.deepEqual(JSON.parse(JSON.stringify(status.deviceStatus)), native.devices);
+});
+
+test('native가 보고한 전달 레이트는 장치 상태에 그대로 전달한다', async () => {
+  const { native, create } = fixture();
+  native.devices = [{ source: 'microphone', code: 'ready', actualDeviceId: '7', nativeSampleRateHz: 44100 }];
+  const capture = await create();
+  const status = await capture.getStatus();
   assert.deepEqual(JSON.parse(JSON.stringify(status.deviceStatus)), native.devices);
 });
 
@@ -192,14 +201,137 @@ test('재승인된 capture는 기존 모델과 callback을 재사용한다', asy
 });
 
 test('동일 asset 목록의 모델 중복은 거부한다', async () => {
-  const { create } = fixture(['fe-s16.temc', 'fe-s16.temc']);
+  const { create } = fixture(['dfn3-48.temc', 'dfn3-48.temc']);
   await assert.rejects((await create()).createModelKeyRequests(), /duplicate_encrypted_model/);
 });
 
-test('runtime denoise 전환에 필요한 레이트별 FE와 VAD 모델 구성을 검증한다', async () => {
-  for (const assets of [['fe-s48.temc', 'silero-vad.temc'], ['silero-vad.temc']]) {
+test('runtime denoise 전환에 필요한 denoise 모델과 VAD 모델 구성을 검증한다', async () => {
+  for (const assets of [['dfn3-48.temc'], ['silero-vad.temc']]) {
     const { create } = fixture(assets);
     await assert.rejects((await create()).createModelKeyRequests(), /encrypted_model_binding_invalid/);
+  }
+});
+
+test('SDK 기본 asset은 모드와 출력 레이트와 무관하게 dfn3-48과 VAD 모델만 고른다', async () => {
+  for (const [config, expected] of [
+    [{}, ['dfn3-48', 'silero-vad']],
+    [{ processing: { sampleRate: 48000 }, vadEnabled: false }, ['dfn3-48']],
+    [{ denoiseMode: 'general' }, ['dfn3-48', 'silero-vad']],
+    [{ denoiseMode: 'close_talk', processing: { sampleRate: 48000 }, vadEnabled: false }, ['dfn3-48']],
+  ]) {
+    const { native, create } = fixture(null);
+    const requests = await (await create(config)).createModelKeyRequests();
+    assert.deepEqual(native.inspected, expected.map(model => `${model}.temc`), JSON.stringify(config));
+    assert.deepEqual(Array.from(requests, request => request.modelId), expected);
+  }
+});
+
+test('denoiseMode는 정규화한 값으로 native 설정에 전달하고 모르는 값은 init에서 거부한다', async () => {
+  for (const [denoiseMode, expected] of [[undefined, 'close_talk'], [' General ', 'general'], ['CLOSE_TALK', 'close_talk']]) {
+    const { native, create } = fixture(null);
+    let processing;
+    native.configure = async json => { processing = JSON.parse(json); };
+    await (await create({ denoiseMode })).getStatus();
+    assert.equal(processing.denoiseMode, expected);
+    assert.equal('denoiseModel' in processing, false);
+  }
+  const { create } = fixture(null);
+  for (const denoiseMode of ['rnnoise', '', 'close-talk', 'deepfilternet_v3', 3]) await assert.rejects(create({ denoiseMode }), /invalid_denoise_mode/);
+});
+
+test('상태는 적용 중인 모드와 DFN3 로드 실패를 native 보고 그대로 전달한다', async () => {
+  const { native, create } = fixture();
+  native.getStatus = async () => JSON.stringify({ lifecycle: 'stopped', denoise_enabled: false, denoise_load_failed: true, denoise_mode: 'general' });
+  const status = await (await create({ denoiseMode: 'general' })).getStatus();
+  assert.deepEqual([status.denoiseEnabled, status.denoiseMode, status.denoiseLoadFailed], [false, 'general', true]);
+});
+
+// Receives keys for both models and proceeds through applyModelKeys.
+async function applyAllModelKeys(capture) {
+  const requests = await capture.createModelKeyRequests();
+  await capture.applyModelKeys(requests.map(({ modelId, keyId }) => ({ modelId, keyId, wrappedKey: 'A'.repeat(107) })));
+}
+
+test('DFN3 로드 실패는 로그를 남기고 Silero를 이어서 올리며 캡처를 막지 않는다', async () => {
+  const { native, create, emit, warnings } = fixture();
+  const loadModelFile = native.loadModelFile;
+  native.loadModelFile = async path => {
+    if (path === 'dfn3-48.temc') throw new Error('model_load_failed');
+    await loadModelFile(path);
+  };
+  native.getStatus = async () => JSON.stringify({ lifecycle: 'stopped', denoise_enabled: false, denoise_load_failed: true, denoise_mode: 'close_talk' });
+  const capture = await create();
+
+  await applyAllModelKeys(capture);
+
+  assert.deepEqual(native.loaded, ['silero-vad.temc']);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0][0], /denoise_load_failed/);
+  assert.deepEqual(Array.from((await capture.getStatus()).modelsLoaded), ['silero-vad']);
+  const received = [];
+  await capture.start((error, chunk) => { assert.equal(error, null); received.push(chunk); });
+  emit();
+  assert.equal(received.length, 1);
+});
+
+test('DFN3 로드 실패는 재승인 때 다시 키를 요청하지 않는다', async () => {
+  const { native, create } = fixture(['dfn3-48.temc']);
+  native.loadModelFile = async () => { throw new Error('model_load_failed'); };
+  native.getStatus = async () => JSON.stringify({ lifecycle: 'running', denoise_load_failed: true });
+  const capture = await create({ vadEnabled: false });
+  await applyAllModelKeys(capture);
+
+  assert.equal((await capture.createModelKeyRequests()).length, 0);
+});
+
+test('native가 DFN3 로드 실패로 기록하지 않은 오류와 Silero 로드 실패는 그대로 전달한다', async () => {
+  for (const [failing, recorded] of [['dfn3-48.temc', false], ['silero-vad.temc', true]]) {
+    const { native, create, warnings } = fixture();
+    native.loadModelFile = async path => { if (path === failing) throw new Error('model_container_authentication_failed'); };
+    native.getStatus = async () => JSON.stringify({ lifecycle: 'stopped', denoise_load_failed: recorded });
+    await assert.rejects(applyAllModelKeys(await create()), /model_container_authentication_failed/);
+    assert.equal(warnings.length, 0);
+  }
+});
+
+// Returns the JSON sampleRate and the processing rate argument the capture passed to native configure.
+async function configuredRates(config) {
+  const { native, create } = fixture();
+  let rates;
+  native.configure = async (json, rate) => { rates = [JSON.parse(json).sampleRate, rate]; };
+  await (await create(config)).getStatus();
+  return rates;
+}
+
+test('sampleRate를 생략하면 엔진 출력 레이트는 16000 Hz다', async () => {
+  for (const config of [{}, { processing: {} }, { processing: { chunkDurationMs: 20 } }]) {
+    assert.deepEqual(await configuredRates(config), [16000, 16000], JSON.stringify(config));
+  }
+});
+
+test('PCM 출력 레이트는 8k..192kHz에서 20ms가 정수 샘플이면 받아 native에 그대로 전달한다', async () => {
+  for (const sampleRate of [8000, 11050, 22050, 44100, 88200, 192000]) for (const codec of ['pcm_s16le', 'pcm_f32le']) {
+    assert.deepEqual(await configuredRates({ processing: { sampleRate }, transport: { codec } }), [sampleRate, sampleRate]);
+  }
+});
+
+test('범위 밖이거나 20ms가 소수 샘플인 출력 레이트와 정수가 아닌 값은 init에서 거부한다', async () => {
+  const { create } = fixture();
+  for (const sampleRate of [0, -16000, 7950, 11025, 44101, 192050, 44100.5, NaN, Infinity, '16000']) {
+    await assert.rejects(create({ processing: { sampleRate }, transport: { codec: 'pcm_f32le' } }), /invalid_processing_config/, String(sampleRate));
+  }
+  await assert.rejects(create({ processing: { sampleRate: 16000, chunkDurationMs: 10 } }), /invalid_processing_config/);
+});
+
+test('Opus(기본 codec)는 libopus 레이트만 받고 다른 출력 레이트는 init에서 거부한다', async () => {
+  for (const transport of [undefined, {}, { codec: 'opus' }, { codec: ' OPUS ' }]) {
+    for (const sampleRate of [8000, 12000, 16000, 24000, 48000]) {
+      assert.deepEqual(await configuredRates({ processing: { sampleRate }, transport }), [sampleRate, sampleRate]);
+    }
+    const { create } = fixture();
+    for (const sampleRate of [11050, 22050, 32000, 44100, 96000]) {
+      await assert.rejects(create({ processing: { sampleRate }, transport }), /opus_sample_rate_unsupported/, String(sampleRate));
+    }
   }
 });
 

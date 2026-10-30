@@ -6,7 +6,7 @@ const path = require('node:path');
 const { test } = require('node:test');
 
 const repository = path.resolve(__dirname, '..');
-// npm 실제 배포 파일과 공개 exports를 확인하는 파일 시스템 경계 테스트다.
+// File system boundary test that checks the files npm actually publishes and the public exports.
 function packageFixture(t, platform = 'mobile') {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellus-package-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
