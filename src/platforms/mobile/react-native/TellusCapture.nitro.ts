@@ -1,6 +1,6 @@
 import type { HybridObject, UInt64 } from 'react-native-nitro-modules';
 
-/** 승인된 Rust 세션과 OS 마이크를 연결한다. PCM 처리와 모델 추론은 native worker에서만 수행한다. */
+/** Connects the authorized Rust session to the OS microphone. PCM processing and model inference run only on the native worker. */
 export interface TellusCapture extends HybridObject<{ ios: 'c++'; android: 'c++' }> {
   configure(json: string, processingRate: number): Promise<void>;
   configureAudioDevices(micDeviceId: string, playbackDeviceId: string, iosOutputRoute: string): Promise<void>;

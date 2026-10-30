@@ -26,7 +26,7 @@ function checkExports(target: ExportTarget, files: Set<string>): void {
   for (const value of Object.values(target)) checkExports(value, files);
 }
 
-// 실제 npm 배포 목록에서 플랫폼 경계와 공개 진입점을 검증한다.
+// Verifies platform boundaries and public entry points against the actual npm publish list.
 export function checkPackageContents(packageRoot = join(__dirname, '..', '..')): void {
   const npm = process.env.npm_execpath;
   const command = npm ? process.execPath : process.platform === 'win32' ? 'cmd.exe' : 'npm';

@@ -14,7 +14,7 @@ struct DecodedAudio {
   uint32_t rate;
 };
 
-// OS 캡처·재생만 담당한다. 캡처 callback은 샘플 복사만 하고 render는 worker에서 전달한다.
+// Handles OS capture and playback only. The capture callback only copies samples; render is delivered from the worker.
 class AudioDevice {
 public:
   virtual ~AudioDevice() = default;
@@ -40,7 +40,7 @@ std::unique_ptr<AudioDevice> createAudioDevice(
     std::function<void(const float*, size_t, uint32_t)> render,
     std::function<void(const std::string&)> error);
 
-// file:// 경로 또는 SDK resource bundle의 암호화 컨테이너를 읽는다. 평문 모델은 받지 않는다.
+// Reads encrypted containers from a file:// path or the SDK resource bundle. Plaintext models are not accepted.
 std::vector<uint8_t> readEncryptedModel(const std::string& path);
 
 } // namespace margelo::nitro::tellus

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 
-// Nitro는 JS 경계 double만 사용하며 실제 공개 wrapper를 실행한다.
+// Nitro uses only a JS boundary double; the real public wrapper runs.
 function fixture(assets = ['dfn3-48.temc', 'silero-vad.temc']) {
   const status = () => JSON.stringify({ state: 'authorized', remaining_ms: 1000 });
   const warnings = [];
@@ -246,7 +246,7 @@ test('상태는 적용 중인 모드와 DFN3 로드 실패를 native 보고 그�
   assert.deepEqual([status.denoiseEnabled, status.denoiseMode, status.denoiseLoadFailed], [false, 'general', true]);
 });
 
-// 두 모델의 키를 받아 applyModelKeys까지 진행한다.
+// Receives keys for both models and proceeds through applyModelKeys.
 async function applyAllModelKeys(capture) {
   const requests = await capture.createModelKeyRequests();
   await capture.applyModelKeys(requests.map(({ modelId, keyId }) => ({ modelId, keyId, wrappedKey: 'A'.repeat(107) })));
@@ -294,7 +294,7 @@ test('native가 DFN3 로드 실패로 기록하지 않은 오류와 Silero 로�
   }
 });
 
-// capture 구성이 native configure에 넘긴 JSON sampleRate와 처리 레이트 인자를 돌려준다.
+// Returns the JSON sampleRate and the processing rate argument the capture passed to native configure.
 async function configuredRates(config) {
   const { native, create } = fixture();
   let rates;

@@ -16,7 +16,7 @@ namespace margelo::nitro::tellus {
 namespace {
 std::atomic<bool> captureInUse{false};
 
-// AVAudioEngine의 설정과 notification 수명은 UIKit main queue에서 직렬 관리한다.
+// AVAudioEngine setup and notification lifetimes are managed serially on the UIKit main queue.
 void onMain(std::function<void()> operation) {
   __block std::exception_ptr error;
   auto run = ^{
@@ -97,7 +97,7 @@ public:
         AVAudioSession* session = [AVAudioSession sharedInstance];
         code = session.recordPermission == AVAudioSessionRecordPermissionDenied ? @"permission_denied" : @"ready";
         if (![code isEqualToString:@"permission_denied"]) {
-          // 조회는 현재 session에서 보이는 입력만 읽고 category·권한·캡처를 변경하지 않는다.
+          // Listing reads only the inputs visible in the current session and does not change category, permissions, or capture.
           // https://developer.apple.com/documentation/avfaudio/avaudiosession/availableinputs
           for (AVAudioSessionPortDescription* input in session.availableInputs) {
             [devices addObject:@{@"id": input.UID, @"label": input.portName}];
@@ -153,7 +153,7 @@ public:
         applyRequestedRoute(session);
         verifyRoute(session);
         _engine = [[AVAudioEngine alloc] init];
-        // main mixer 첫 접근은 output node도 연결하므로 I/O 시작 전에 graph를 준비한다.
+        // The first main mixer access also connects the output node, so the graph is prepared before I/O starts.
         // https://developer.apple.com/documentation/avfaudio/avaudioengine/mainmixernode
         (void)_engine.mainMixerNode;
         AVAudioFormat* format = [_engine.inputNode outputFormatForBus:0];
@@ -167,7 +167,7 @@ public:
         mach_timebase_info(&timebase);
         const int64_t wall = static_cast<int64_t>([[NSDate date] timeIntervalSince1970] * 1000);
         _running = true;
-        // sink는 tap의 100ms 버퍼와 달리 실제 I/O frameCount를 전달한다. 첫 마이크 채널을 mono로 복사한다.
+        // Unlike the 100 ms tap buffer, the sink delivers the actual I/O frameCount. Copies the first microphone channel as mono.
         // https://developer.apple.com/documentation/avfaudio/avaudiosinknode
         _sink = [[AVAudioSinkNode alloc] initWithReceiverBlock:^OSStatus(
             const AudioTimeStamp* timestamp, AVAudioFrameCount frames, const AudioBufferList* data) {
@@ -185,7 +185,7 @@ public:
         verifyRoute(session);
         NSString* input = session.currentRoute.inputs.firstObject.UID;
         NSString* output = session.currentRoute.outputs.firstObject.UID;
-        // sink callback이 받는 input node 레이트가 엔진에 전달되는 레이트다.
+        // The input node rate the sink callback receives is the rate passed to the engine.
         _micStatus = deviceStatus(@"microphone", input.length > 0 ? @"ready" : @"pending", _micDeviceId, input, @(rate));
         _playbackStatus = deviceStatus(@"playback", output.length > 0 ? @"ready" : @"pending", {}, output);
         observeSession();
@@ -296,7 +296,7 @@ public:
       NSError* error = nil;
       NSData* bytes = [NSData dataWithBytes:encoded.data() length:encoded.size()];
       [bytes writeToURL:url options:NSDataWritingAtomic error:&error]; check(error);
-      // OS 디코더의 Float32 출력을 mono로 합친다. 전체 출력은 PCM playback과 같은 16MiB로 제한한다.
+      // Mixes the OS decoder's Float32 output down to mono. Total output is limited to 16 MiB, the same as PCM playback.
       // https://developer.apple.com/documentation/avfaudio/avaudiofile
       AVAudioFile* file = [[AVAudioFile alloc] initForReading:url commonFormat:AVAudioPCMFormatFloat32 interleaved:NO error:&error];
       check(error);
@@ -342,7 +342,7 @@ private:
         _micStatus = deviceStatus(@"microphone", @"unavailable", _micDeviceId);
         throw std::runtime_error("audio_device_unavailable");
       }
-      // preferredInput은 요청이며 실제 입력은 currentRoute에서 별도로 확인한다.
+      // preferredInput is a request; the actual input is verified separately from currentRoute.
       // https://developer.apple.com/documentation/avfaudio/avaudiosession/setpreferredinput(_:)
       [session setPreferredInput:selected error:&error];
       if (error) _micStatus = deviceStatus(@"microphone", @"unavailable", _micDeviceId);
@@ -350,7 +350,7 @@ private:
       _ownsInputPreference = true;
     }
     if (!_iosOutputRoute.empty()) {
-      // speaker override는 입력도 바꿀 수 있으므로 아래에서 요청한 마이크를 다시 검증한다.
+      // A speaker override can also change the input, so the requested microphone is verified again below.
       // https://developer.apple.com/documentation/avfaudio/avaudiosession/overrideoutputaudioport(_:)
       [session overrideOutputAudioPort:_iosOutputRoute == "speaker" ? AVAudioSessionPortOverrideSpeaker : AVAudioSessionPortOverrideNone error:&error];
       if (error) _playbackStatus = deviceStatus(@"playback", @"unavailable");
@@ -403,11 +403,11 @@ private:
       }
       return reason == AVAudioSessionRouteChangeReasonNewDeviceAvailable || reason == AVAudioSessionRouteChangeReasonOldDeviceUnavailable;
     }, "audio_route_changed");
-    // 하드웨어 샘플 레이트·채널 수가 바뀌면 엔진이 스스로 멈추고 sink callback도 끊겨, 이 알림 없이는 캡처 중단을 알 수 없다.
-    // 이 엔진 인스턴스의 알림만 받고, 엔진이 아직 돌고 있으면 캡처가 끊긴 것이 아니므로 보고하지 않는다. observer는 시작이 끝난 뒤
-    // 등록되고 stopCapture는 _running을 먼저 내리므로 자체 시작·중지는 보고되지 않는다. 같은 변경으로 route 알림도 오면
-    // observe의 _running 검사로 먼저 도착한 알림의 코드 하나만 전달한다.
-    // 알림 계약: iOS SDK AVFAudio/AVAudioEngine.h의 AVAudioEngineConfigurationChangeNotification.
+    // When the hardware sample rate or channel count changes, the engine stops itself and the sink callback ends, so capture loss is invisible without this notification.
+    // Only this engine instance's notification is observed, and nothing is reported while the engine still runs because capture has not stopped. The observer is registered
+    // after startup finishes and stopCapture clears _running first, so the engine's own start and stop are not reported. If the same change also raises a route
+    // notification, the _running check in observe delivers only the code of whichever arrives first.
+    // Notification contract: AVAudioEngineConfigurationChangeNotification in the iOS SDK's AVFAudio/AVAudioEngine.h.
     observe(AVAudioEngineConfigurationChangeNotification, [this](NSNotification*) { return !_engine.isRunning; },
             "audio_configuration_changed", _engine);
     observe(AVAudioSessionMediaServicesWereResetNotification, [](NSNotification*) { return true; }, "audio_services_reset");

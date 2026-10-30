@@ -11,7 +11,7 @@
 
 namespace margelo::nitro::tellus {
 
-// Rust handle과 worker 수명을 함께 관리한다. destructor는 OS 입력과 모든 처리 호출을 먼저 종료한다.
+// Manages the Rust handle and worker lifetimes together. The destructor ends OS input and all processing calls first.
 class CaptureSession final {
 public:
   CaptureSession();

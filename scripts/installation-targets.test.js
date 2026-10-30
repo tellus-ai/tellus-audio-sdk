@@ -5,7 +5,7 @@ const os = require('node:os');
 const { spawnSync } = require('node:child_process');
 const { test } = require('node:test');
 
-// 실제 CLI 실행에서 패키지 종류별 다운로드 선택만 대역으로 기록한다.
+// Runs the real CLI and records only the per-package download selection through a double.
 for (const [platform, targets, args = [], selectedPlatform] of [
   ['desktop', [null]], ['web', ['web']], ['mobile', ['ios', 'android']],
   ['mobile', ['android'], ['--platform', 'android']], ['mobile', ['ios'], [], 'ios'],

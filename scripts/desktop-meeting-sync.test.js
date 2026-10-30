@@ -9,7 +9,7 @@ const ts = require('typescript');
 const wrapperPath = path.resolve(__dirname,
   '../platforms/desktop/runtime/platforms/desktop/electron/index.js');
 
-// 빌드된 Desktop 래퍼를 가짜 native 바인딩과 함께 불러온다.
+// Loads the built Desktop wrapper with a fake native binding.
 function loadWrapper(nativeBinding) {
   const exports = {};
   vm.runInNewContext(fs.readFileSync(wrapperPath, 'utf8'), {
@@ -24,7 +24,7 @@ function loadWrapper(nativeBinding) {
   return exports;
 }
 
-// 회의 앱 동기화를 지원하는 엔진처럼 호출을 기록한다.
+// Records calls like an engine that supports meeting app sync.
 function meetingSyncNative(calls) {
   return class NativeAudioCapture {
     setMeetingSync(options) { calls.push(['setMeetingSync', options]); }
@@ -113,7 +113,7 @@ test('the accessibility permission request reports what was opened like the othe
   assert.match(result.error, /accessibility_permission_unsupported/);
 });
 
-// 엔진 0.4.0이 돌려주는 회의 앱 ID와 needs_link·lost 사유(엔진 src/platforms/desktop/meeting의 mod.rs·observation.rs).
+// Meeting app IDs and needs_link/lost reasons returned by engine 0.4.0 (mod.rs and observation.rs in the engine's src/platforms/desktop/meeting).
 const ENGINE_MEETING_APP_IDS = ['zoom', 'google_meet'];
 const ENGINE_MEETING_SYNC_REASONS = ['accessibility_permission', 'control_not_found', 'unknown_label',
   'app_not_running', 'read_failed', 'meeting_hidden'];

@@ -433,7 +433,7 @@ test('queue loss is reported at the 16 kHz default output rate when processing.s
     await flush();
     permissions[0](stream());
     await starting;
-    // 첫 프레임이 Worker 응답을 기다리는 동안 11개가 쌓여 용량 10인 큐에서 10 ms(48 kHz 480 샘플) 프레임 하나가 밀려난다.
+    // While the first frame waits for the Worker, 11 frames queue up, so a queue of capacity 10 drops one 10 ms frame (480 samples at 48 kHz).
     for (let frame = 0; frame < 12; frame++) {
       nodes[0].port.onmessage({ data: { samples: new Float32Array(480), nativeRate: 48000, timestamp: frame, epoch: 0 } });
     }

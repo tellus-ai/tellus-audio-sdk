@@ -86,7 +86,7 @@ uint64_t CaptureWorker::discard(uint32_t processingRate) {
 }
 
 uint64_t CaptureWorker::lostSamples(uint64_t count, uint32_t nativeRate, uint32_t processingRate) {
-  // worker 전용 변환이다. 작은 I/O 조각의 소수 샘플도 다음 손실까지 보존한다.
+  // Worker-only conversion. Fractional samples from small I/O slices are kept until the next loss.
   _lossRemainder = _lossRemainder * nativeRate / _lossRate;
   _lossRate = nativeRate;
   const auto scaled = static_cast<unsigned __int128>(count) * processingRate + _lossRemainder;

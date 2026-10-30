@@ -7,7 +7,7 @@ import type { AudioDeviceListResult, AudioDeviceSource, AudioDeviceStatus } from
 export type { AudioCapture, AudioCaptureCallback, AudioCaptureConfig, AudioChunk, CaptureStatus, NativeEngineAssets, RecordingNotificationConfig, VADConfig } from '../../../bindings/typescript/capture-types.js';
 export type { AudioDeviceInfo, AudioDeviceListResult, AudioDeviceOperationError, AudioDeviceSource, AudioDeviceStatus } from '../../../bindings/typescript/audio-devices.js';
 
-/** 현재 OS에 보이는 장치를 조회한다. 권한 요청이나 캡처를 시작하지 않는다. */
+/** Lists the devices the OS currently exposes. Does not request permission or start capture. */
 export async function listAudioDevices(source: AudioDeviceSource): Promise<AudioDeviceListResult> {
   if (!['microphone', 'system_audio', 'playback'].includes(source)) throw new Error('invalid_audio_device_source');
   const native = NitroModules.createHybridObject<TellusCapture>('TellusCapture');
@@ -17,7 +17,7 @@ export async function listAudioDevices(source: AudioDeviceSource): Promise<Audio
   } finally { try { await native.close(); } finally { native.dispose(); } }
 }
 
-// 표준 padding 없는 base64url 80바이트만 허용한다. Buffer/Node runtime에 의존하지 않는다.
+// Accepts only standard unpadded base64url for 80 bytes. Does not depend on Buffer or a Node runtime.
 function wrappedKeyBytes(value: string): ArrayBuffer {
   if (!/^[A-Za-z0-9_-]{107}$/.test(value)) throw new Error('model_key_invalid');
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
@@ -32,7 +32,7 @@ function wrappedKeyBytes(value: string): ArrayBuffer {
   return bytes.buffer;
 }
 
-// 공개 denoiseMode를 core와 같은 규칙(앞뒤 공백·대소문자 무시)으로 검증한다. 생략하면 close_talk이고 모르는 값은 거부한다.
+// Validates the public denoiseMode with the same rules as core (surrounding spaces and case ignored). Omitting it selects close_talk; unknown values are rejected.
 function denoiseMode(config: AudioCaptureConfig): NonNullable<AudioCaptureConfig['denoiseMode']> {
   const value: unknown = config.denoiseMode ?? 'close_talk';
   const mode = typeof value === 'string' ? value.trim().toLowerCase() : value;
@@ -40,15 +40,15 @@ function denoiseMode(config: AudioCaptureConfig): NonNullable<AudioCaptureConfig
   return mode;
 }
 
-// libopus가 인코딩하는 레이트다. 판단 기준은 core TransportEncoderConfig이고 여기서는 init에서 일찍 실패시킨다.
+// Rates libopus encodes. core TransportEncoderConfig decides; this fails early at init.
 const OPUS_SAMPLE_RATES = [8_000, 12_000, 16_000, 24_000, 48_000];
 
-// core 출력 레이트 규칙과 같다. 8k..192kHz 안에서 고정 20ms 프레임이 정수 샘플이어야 샘플 시계가 밀리지 않는다.
+// Same as the core output rate rule. A fixed 20 ms frame must be a whole number of samples within 8k..192 kHz so the sample clock does not drift.
 function isExactOutputRate(rate: number): boolean {
   return Number.isInteger(rate) && rate >= 8_000 && rate <= 192_000 && rate % 50 === 0;
 }
 
-// core codec 파싱(앞뒤 공백·대소문자 무시, 생략 시 opus)과 같은 기준으로 Opus 전송인지 판단한다.
+// Decides whether transport is Opus with the same rules as core codec parsing (surrounding spaces and case ignored, opus when omitted).
 function usesOpus(config: AudioCaptureConfig): boolean {
   const codec: unknown = config.transport?.codec ?? 'opus';
   return typeof codec === 'string' && codec.trim().toLowerCase() === 'opus';
@@ -60,14 +60,14 @@ function authorizationStatus(raw: string): EngineAuthorizationStatus {
     conversationId: status.conversation_id, connectionId: status.connection_id };
 }
 
-/** OS 마이크 한 개를 승인된 Rust 세션에 연결한다. 데이터 callback에는 인코딩된 전송 payload만 제공한다. */
+/** Connects one OS microphone to an authorized Rust session. The data callback receives only encoded transport payloads. */
 class NativeAudioCapture implements AudioCapture {
   private native = NitroModules.createHybridObject<TellusCapture>('TellusCapture');
   private ready: Promise<void>;
   private devicesReady: Promise<void>;
   private models = new Map<string, { keyId: string; path: string }>();
   private loaded = new Set<string>();
-  // 올리지 못해 denoise 없이 진행하기로 한 모델이다. 첫 start 뒤에는 load할 수 없으므로 재승인 때 다시 시도하지 않는다.
+  // Models that failed to load and are skipped so capture continues without denoise. Load is impossible after the first start, so reauthorization does not retry them.
   private failed = new Set<string>();
   private deliveryEpoch = 0;
   private controlRevision = 0;
@@ -101,7 +101,7 @@ class NativeAudioCapture implements AudioCapture {
       try { await this.native.configureAudioDevices(config.micDeviceId ?? '', config.playbackDeviceId ?? '', config.iosOutputRoute ?? ''); }
       catch (error) { throw await this.deviceError(error); }
     });
-    // 구성 실패는 호출한 API에서 전파하며 아직 소비자가 없어도 unhandled rejection을 만들지 않는다.
+    // A configuration failure propagates from the API that was called and raises no unhandled rejection even without a consumer yet.
     void this.ready.catch(() => {});
     void this.devicesReady.catch(() => {});
   }
@@ -270,13 +270,13 @@ class NativeAudioCapture implements AudioCapture {
     try {
       const statuses = JSON.parse(await this.native.getAudioDeviceStatus()) as AudioDeviceStatus[];
       const failures = statuses.filter(status => source === undefined || status.source === source);
-      // 권한·선택 실패를 함께 중단된 다른 stream의 unavailable 상태보다 먼저 전달한다.
+      // Reports a permission or selection failure ahead of the unavailable status of another stream stopped with it.
       const deviceStatus = failures.find(status => status.code === 'permission_denied')
         ?? failures.find(status => status.code === 'route_mismatch')
         ?? failures.find(status => status.code === 'unsupported')
         ?? failures.find(status => status.code === 'unavailable');
       if (deviceStatus) Object.assign(failure, { deviceStatus });
-    } catch { /* 상태 조회 실패가 원래 작업 오류를 덮어쓰지 않도록 한다. */ }
+    } catch { /* A failed status lookup must not replace the original operation error. */ }
     return failure;
   }
   async playback(samples: Float32Array, nativeRate: number): Promise<void> {
@@ -292,7 +292,7 @@ class NativeAudioCapture implements AudioCapture {
   }
 }
 
-/** 각 capture는 독립 승인·모델·처리 상태를 소유한다. 기본 모델은 SDK가 복사한 암호화 resource다. */
+/** Each capture owns its own authorization, models, and processing state. Default models are the encrypted resources the SDK copied. */
 export class AudioEngine {
   private constructor(private config: AudioCaptureConfig, private assets: NativeEngineAssets) {}
   static async init(config: AudioCaptureConfig = {}, assets?: NativeEngineAssets): Promise<AudioEngine> {
@@ -308,7 +308,7 @@ export class AudioEngine {
     if (usesOpus(config) && !OPUS_SAMPLE_RATES.includes(rate)) throw new Error('opus_sample_rate_unsupported');
     if (config.micEnabled === false || config.speakerEnabled === true || config.enableRawAudio === true) throw new Error('unsupported_mobile_capture_config');
     const mode = denoiseMode(config);
-    // capture마다 denoise 모델 하나와 선택적 VAD 모델만 load하므로 기본 asset도 그 둘만 고른다.
+    // Each capture loads one denoise model and an optional VAD model, so the default assets pick only those.
     const encryptedModels = assets?.encryptedModels ?? ['dfn3-48.temc',
       ...((config.vadEnabled ?? true) ? ['silero-vad.temc'] : [])];
     if (!encryptedModels.length || encryptedModels.length > 2 || encryptedModels.some(path => !path)) throw new Error('invalid_encrypted_model_assets');

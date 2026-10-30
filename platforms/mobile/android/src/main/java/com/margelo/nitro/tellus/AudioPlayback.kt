@@ -10,7 +10,7 @@ import android.os.Looper
 import android.os.SystemClock
 import java.nio.ByteBuffer
 
-/** AudioTrack의 실제 수락량과 재생 완료를 제공한다. cancel은 출력 thread와 동시에 호출할 수 있다. */
+/** Exposes how much AudioTrack actually accepted and when playback finished. cancel may be called concurrently with the output thread. */
 internal class AudioPlayback(
   private val interrupted: (String) -> Unit,
   private val deviceStatus: (String, Int?) -> Unit
@@ -80,7 +80,7 @@ internal class AudioPlayback(
     code
   }
 
-  /** 사용자 PCM 전에 무음으로 재생 경로를 활성화한다. prime은 native render/AEC에 전달하지 않는다. */
+  /** Activates the playback path with silence before user PCM. The prime is not passed to native render/AEC. */
   private fun primeSelectedRoute() {
     val silence = synchronized(lock) {
       check(running) { "playback_cancelled" }
@@ -99,7 +99,7 @@ internal class AudioPlayback(
     }
   }
 
-  /** 마지막 수락 sample이 실제로 재생된 뒤 반환한다. */
+  /** Returns after the last accepted sample has actually played. */
   fun awaitCompletion() {
     val deadline = synchronized(lock) {
       val output = checkNotNull(track)

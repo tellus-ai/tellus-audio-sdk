@@ -25,7 +25,7 @@ internal fun requireForegroundActivity(context: ReactApplicationContext): Activi
   return activity
 }
 
-/** UI 결과 또는 Activity 종료까지 요청을 소유한다. timeout은 캡처를 시작하지 않는다. */
+/** Owns the request until the UI result or the Activity ends. A timeout does not start capture. */
 internal fun requestMicrophonePermission(context: ReactApplicationContext): Boolean {
   check(Looper.myLooper() != Looper.getMainLooper()) { "permission_request_requires_worker_thread" }
   if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) return true

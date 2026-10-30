@@ -25,7 +25,7 @@ import java.nio.ByteOrder
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** OS I/O만 소유한다. nativeSubmit은 PCM을 복사하고 Rust 작업 queue에 넘긴다. */
+/** Owns OS I/O only. nativeSubmit copies PCM and hands it to the Rust work queue. */
 @Keep
 class AndroidAudioDevice(@Volatile private var nativeHandle: Long) {
   private val context = checkNotNull(NitroModules.applicationContext) { "react_context_unavailable" }
@@ -95,7 +95,7 @@ class AndroidAudioDevice(@Volatile private var nativeHandle: Long) {
     playbackStatus?.let { put(it) }
   }.toString()
 
-  // 녹음 중인 입력의 레이트를 준비 상태에 붙인다. 기본 장치 캡처에는 선택 상태가 없으므로 녹음 중에만 ready 상태를 만든다.
+  // Attaches the rate of the recording input to the ready status. Default-device capture has no selection status, so a ready status is built only while recording.
   private fun microphoneStatusWithRate(): JSONObject? {
     val input = recorder?.takeIf { capturing && it.recordingState == AudioRecord.RECORDSTATE_RECORDING }
       ?: return microphoneStatus
@@ -106,7 +106,7 @@ class AndroidAudioDevice(@Volatile private var nativeHandle: Long) {
     return status
   }
 
-  // OS가 장치 쪽 형식을 알려 주면 그 레이트를, 아직 없으면 AudioRecord를 연 레이트를 쓴다. 전자는 앱이 받는 레이트보다 낮을 수 있다.
+  // Uses the device-side rate when the OS reports that format, otherwise the rate AudioRecord was opened with. The former can be lower than the rate the app receives.
   // https://developer.android.com/reference/android/media/AudioRecordingConfiguration#getFormat()
   private fun nativeCaptureRate(input: AudioRecord): Int =
     audioManager.activeRecordingConfigurations.firstOrNull { it.clientAudioSessionId == input.audioSessionId }
@@ -194,8 +194,8 @@ class AndroidAudioDevice(@Volatile private var nativeHandle: Long) {
     }
   }
 
-  // 초기화된 AudioRecord만 반환한다. 권한을 시도마다 확인해 권한 실패가 형식 미지원 재시도로 이어지지 않게 한다.
-  // Builder는 초기화 실패를 UnsupportedOperationException으로 알리며 이때 남는 인스턴스는 없다. 초기화되지 않은 채 돌아온 인스턴스만 해제한다.
+  // Returns only an initialized AudioRecord. Permission is checked on every attempt so a permission failure never turns into an unsupported-format retry.
+  // Builder reports initialization failure with UnsupportedOperationException and leaves no instance behind. Only an instance returned uninitialized is released.
   // https://developer.android.com/reference/android/media/AudioRecord.Builder#build()
   private fun openRecorder(rate: Int, source: Int): AudioRecord {
     requireRecordPermission()
@@ -229,7 +229,7 @@ class AndroidAudioDevice(@Volatile private var nativeHandle: Long) {
     error("capture_interrupted_during_start")
   }
 
-  // AudioRecord는 ByteBuffer position/limit을 무시하고 실제 읽은 byte 수를 반환한다.
+  // AudioRecord ignores the ByteBuffer position and limit and returns the number of bytes actually read.
   // https://developer.android.com/reference/android/media/AudioRecord#read(java.nio.ByteBuffer,int,int)
   private fun readCapture(input: AudioRecord) {
     try {
@@ -360,7 +360,7 @@ class AndroidAudioDevice(@Volatile private var nativeHandle: Long) {
   private external fun nativeError(handle: Long, message: String)
 
   companion object {
-    /** 파일 또는 앱에 패키지된 암호화 컨테이너만 읽는다. 평문은 native에서 거부한다. */
+    /** Reads only encrypted containers from a file or the app package. Native rejects plaintext. */
     @JvmStatic fun readEncryptedModel(path: String): ByteArray {
       val app = checkNotNull(NitroModules.applicationContext) { "react_context_unavailable" }
       val input = if (path.startsWith("file://") || path.startsWith("/")) {

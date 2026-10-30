@@ -1,6 +1,6 @@
 import type { WorkerCommand, WorkerResponse } from './protocol.js';
 
-/** 요청과 응답을 연결한다. Asyncify 호출 직렬화는 Worker가 관리한다. */
+/** Matches requests to responses. The Worker manages Asyncify call serialization. */
 export class WorkerClient {
   private nextId = 0;
   private pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();

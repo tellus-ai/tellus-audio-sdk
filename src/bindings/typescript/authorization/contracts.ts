@@ -1,4 +1,4 @@
-/** 동기 desktop과 비동기 native/web 호출이 공유하는 반환 형식이다. */
+/** Return shape shared by synchronous desktop and asynchronous native/web calls. */
 export type MaybePromise<T> = T | Promise<T>;
 
 /** A fresh challenge generated inside a native capture instance. */
@@ -25,7 +25,7 @@ export interface EngineModelKeyRequest {
 export interface EngineModelKey {
   modelId: string;
   keyId: string;
-  /** 80바이트 HPKE wrapped key의 padding 없는 base64url 표현이다. */
+  /** Unpadded base64url form of the 80-byte HPKE wrapped key. */
   wrappedKey: string;
 }
 
@@ -51,13 +51,13 @@ export interface EngineAuthorizationOptions {
   conversationId: string;
   /** Obtain current login credentials again for each renewal. Keep partner secrets on your backend. */
   getAccessToken: () => MaybePromise<string>;
-  /** 요청과 native 승인 적용의 제한 시간이다. 기본값은 10초다. */
+  /** Timeout for the request and for applying authorization to native. Defaults to 10 seconds. */
   requestTimeoutMs?: number;
   onError?: (error: Error) => void;
 }
 
 export interface EngineAuthorizationController {
-  /** 최초 permit과 요청한 모든 모델 키를 native가 적용한 뒤 완료한다. */
+  /** Completes after native has applied the first permit and every requested model key. */
   ready: Promise<void>;
   /** Stops renewal, invalidates native permission, and stops capture. The caller owns the socket. */
   dispose(): void;

@@ -11,7 +11,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
 
-/** MP3/WAV 컨테이너를 OS로 해석한다. cancellation pointer는 이 동기 JNI 호출 동안만 유효하다. */
+/** Decodes MP3/WAV containers through the OS. The cancellation pointer is valid only during this synchronous JNI call. */
 @Keep
 internal object AudioDecoder {
   @JvmStatic fun decode(encoded: ByteBuffer, cancellation: Long): DecodedAudioResult {
@@ -116,7 +116,7 @@ internal object AudioDecoder {
   }
 
   private fun appendPcm(output: PcmSamples, data: ByteBuffer, format: MediaFormat) {
-    // Android의 누락 PCM encoding 계약은 signed16이다.
+    // Android's contract for a missing PCM encoding is signed16.
     // https://developer.android.com/reference/android/media/MediaFormat#KEY_PCM_ENCODING
     val encoding = if (format.containsKey(MediaFormat.KEY_PCM_ENCODING)) format.getInteger(MediaFormat.KEY_PCM_ENCODING)
       else AudioFormat.ENCODING_PCM_16BIT

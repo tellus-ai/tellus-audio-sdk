@@ -322,7 +322,7 @@ function moveDirectory(source: string, destination: string): void {
   }
 }
 
-// 모바일 ABI별 라이브러리를 포함한 필수 파일 경로는 릴리스 manifest에 고정한다.
+// Required file paths, including per-ABI mobile libraries, are pinned in the release manifest.
 function missingRequiredFiles(root: string, asset: ReleaseAsset): string[] {
   return (asset.requiredFiles || []).filter((file) => {
     if (typeof file !== 'string' || !file || isAbsolute(file) || file.includes('\\') || file.split('/').includes('..')) {

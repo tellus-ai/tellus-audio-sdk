@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const withTellusAudio = require('../platforms/mobile/app.plugin');
 
-// 소비 앱의 Expo re-export 경계만 구성하며 Mods는 실제 SDK 개발 의존성을 사용한다.
+// Sets up only the consumer app's Expo re-export boundary; Mods use the real SDK dev dependency.
 const host = fs.mkdtempSync(path.join(os.tmpdir(), 'tellus-expo-plugin-'));
 const expo = path.join(host, 'node_modules/expo');
 fs.mkdirSync(expo, { recursive: true });

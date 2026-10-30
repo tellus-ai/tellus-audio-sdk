@@ -5,7 +5,7 @@ const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
 const { test } = require('node:test');
 
-// 엔진 저장소가 없는 임시 설치 경로에서 실제 tgz의 공개 진입점을 실행한다.
+// Runs the real tgz's public entry points from a temporary install path with no engine repository.
 for (const platform of ['desktop', 'web', 'mobile']) {
   test(`${platform} package imports after unpacking without engine sources`, t => {
     const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'tellus-standalone-'));
@@ -47,7 +47,7 @@ for (const platform of ['desktop', 'web', 'mobile']) {
       assert.equal(typed.status, 0, typed.stdout + typed.stderr);
     }
     if (platform === 'desktop' && !fs.existsSync(path.join(installed, 'vendor'))) {
-      // CI에는 엔진 archive를 설치하지 않으므로 실제 native 로더 검증은 별도 check:binary가 담당한다.
+      // CI installs no engine archive, so the real native loader check is left to check:binary.
       t.skip('Native engine archive is not staged on this CI host; check:binary verifies installed native loading');
       return;
     }

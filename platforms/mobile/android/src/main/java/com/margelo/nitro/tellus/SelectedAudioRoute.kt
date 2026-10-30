@@ -6,7 +6,7 @@ internal fun parseAudioDeviceId(id: String): Int {
   return value
 }
 
-/** preferredDevice는 실제 경로가 아니다. 최초 관측 대기와 관측 후 장치 소실을 구분한다. */
+/** preferredDevice is not the actual route. Distinguishes waiting for the first observation from losing the device after it was observed. */
 internal class SelectedAudioRoute(val requestedDeviceId: Int) {
   @Volatile var confirmed = false
     private set

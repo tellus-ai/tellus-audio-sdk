@@ -45,13 +45,13 @@ export interface WorkerResponse {
   error?: string;
 }
 
-/** core가 Opus로 인코딩하는 출력 레이트다. */
+/** Output rates core encodes with Opus. */
 const OPUS_SAMPLE_RATES = [8000, 12000, 16000, 24000, 48000];
 
 /**
- * 공개 출력 레이트를 core 전송 설정과 같은 규칙으로 검증해 돌려준다. 생략하면 16000이다.
- * 8000..=192000 Hz에서 고정 20 ms 청크가 정수 샘플(50의 배수)이어야 하고 chunkDurationMs는 20만 받는다. 어기면 tellus_processing_config_invalid다.
- * Opus(codec 생략 시 기본, 앞뒤 공백·대소문자 무시)는 8000·12000·16000·24000·48000 Hz만 받고 다른 레이트는 tellus_opus_sample_rate_unsupported다.
+ * Validates the public output rate with the same rules as the core transport settings and returns it. Defaults to 16000.
+ * Must be within 8000..=192000 Hz with a fixed 20 ms chunk of whole samples (a multiple of 50), and chunkDurationMs accepts only 20. Otherwise throws tellus_processing_config_invalid.
+ * Opus (the default when codec is omitted; surrounding spaces and case ignored) accepts only 8000, 12000, 16000, 24000, and 48000 Hz; other rates throw tellus_opus_sample_rate_unsupported.
  */
 export function outputSampleRate(config: AudioCaptureConfig): number {
   const rate = config.processing?.sampleRate ?? 16000;
@@ -66,7 +66,7 @@ export function outputSampleRate(config: AudioCaptureConfig): number {
   return rate;
 }
 
-/** 공개 denoiseMode를 core와 같은 규칙(앞뒤 공백·대소문자 무시)으로 검증한다. 생략하면 close_talk이고 모르는 값은 거부한다. */
+/** Validates the public denoiseMode with the same rules as core (surrounding spaces and case ignored). Omitting it selects close_talk; unknown values are rejected. */
 export function denoiseMode(config: AudioCaptureConfig): NonNullable<AudioCaptureConfig['denoiseMode']> {
   const value: unknown = config.denoiseMode ?? 'close_talk';
   const mode = typeof value === 'string' ? value.trim().toLowerCase() : value;

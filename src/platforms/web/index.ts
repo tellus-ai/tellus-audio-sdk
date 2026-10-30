@@ -14,16 +14,16 @@ export type {
 } from '../../bindings/typescript/audio-devices.js';
 export { listAudioDevices } from './devices.js';
 
-/** 같은 AudioContext의 캡처·재생 샘플을 엔진 AEC 시계에 전달한다. */
+/** Passes capture and playback samples from the same AudioContext to the engine's AEC clock. */
 export class AudioEngine {
   private readonly captures = new Set<AudioCapture>();
   private disposed = false;
 
   private constructor(private readonly config: AudioCaptureConfig, private readonly context: AudioContext, private readonly client: WorkerClient, private readonly playbackDeviceStatus?: AudioDeviceStatus) {}
 
-  /** 클릭 전에 준비할 수 있다. AudioContext 재개는 start의 사용자 입력 경계에서 수행한다. */
+  /** Can be prepared before a click. AudioContext resume happens at the user input boundary of start. */
   static async init(config: AudioCaptureConfig, assets: BrowserEngineAssets): Promise<AudioEngine> {
-    // 잘못된 출력 설정은 AudioContext·Worker를 만들기 전에 거부한다.
+    // Rejects invalid output settings before creating the AudioContext and Worker.
     outputSampleRate(config);
     const base = document.baseURI;
     const resolved: BrowserEngineAssets = {

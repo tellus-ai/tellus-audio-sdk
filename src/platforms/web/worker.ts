@@ -31,7 +31,7 @@ scope.onmessage = (event: MessageEvent<WorkerRequest | { cancel: number; epoch: 
     if (engine && activeSessionId === message.cancel) engine.module.tellusCancellationGeneration++;
     return;
   }
-  // Asyncify는 재진입할 수 없다. ORT 추론 대기 중에도 위 취소 처리는 즉시 실행된다.
+  // Asyncify is not reentrant. The cancellation handling above runs immediately even while waiting on ORT inference.
   operations = operations.then(async () => {
     try {
       activeSessionId = message.sessionId;

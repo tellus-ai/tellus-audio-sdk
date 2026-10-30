@@ -18,7 +18,7 @@ function isMusl(): boolean {
   return !glibcVersionRuntime;
 }
 
-// 명시한 설치 대상은 앱을 빌드하는 Node 호스트 플랫폼과 독립적으로 선택한다.
+// An explicit install target is chosen independently of the Node host platform building the app.
 export function currentAssetKey(target?: string): string {
   if (target !== undefined) {
     if (target === 'ios' || target === 'android' || target === 'web') return target;

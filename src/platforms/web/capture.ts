@@ -16,7 +16,7 @@ interface NativeAuthorizationStatus {
   connection_id?: string;
 }
 
-/** 메인 스레드의 수명과 OS 라우팅을 관리한다. 처리 샘플은 Rust가 생성한다. */
+/** Manages main-thread lifecycle and OS routing. Rust produces the processed samples. */
 export class BrowserCapture implements AudioCapture {
   private readonly ready: Promise<number>;
   private sessionId = 0;
@@ -136,7 +136,7 @@ export class BrowserCapture implements AudioCapture {
       this.source.connect(this.tap);
       this.tap.connect(this.context.destination);
       for (const track of stream.getTracks()) track.addEventListener('ended', this.onDeviceEnded);
-      // track에 레이트가 없으면 노드가 실제로 넘기는 AudioContext 레이트를 쓴다. 레이트가 다르면 브라우저가 그 사이를 리샘플한다.
+      // Without a track rate, uses the AudioContext rate the node actually delivers. If the rates differ, the browser resamples between them.
       const nativeSampleRateHz = settings?.sampleRate ?? this.context.sampleRate;
       this.deviceStatus = { source: 'microphone', code: 'ready', ...(requestedDeviceId === undefined ? {} : { requestedDeviceId }), ...(actualDeviceId === undefined ? {} : { actualDeviceId }), nativeSampleRateHz };
     } catch (error) {
@@ -184,7 +184,7 @@ export class BrowserCapture implements AudioCapture {
       const chunks = await this.request<DeliveredChunk[]>({ operation: 'stop' }, epoch);
       await this.deliver(chunks, epoch);
     } catch (error) {
-      // 승인 상실 시 native stop은 tail을 버리고 Stopped로 전환한 뒤 오류를 반환한다.
+      // When authorization is lost, native stop discards the tail, moves to Stopped, and returns an error.
       if (!(error instanceof Error && error.message.startsWith('engine_authorization_'))) throw error;
     }
   }
@@ -311,7 +311,7 @@ export class BrowserCapture implements AudioCapture {
     await cleanup;
     let buffer = await this.context.decodeAudioData(data.slice(0));
     if (epoch !== this.epoch || playbackEpoch !== this.playbackEpoch) return;
-    // OS decoder의 할당은 직접 제한할 수 없지만 추가 mono buffer 할당은 이 경계에서 제한한다.
+    // The OS decoder's allocation cannot be limited directly, but the extra mono buffer allocation is limited at this boundary.
     if (buffer.length * buffer.numberOfChannels > 4 * 1024 * 1024) throw new Error('tellus_playback_decoded_too_large');
     if (buffer.numberOfChannels !== 1) {
       const mixer = new OfflineAudioContext(1, buffer.length, buffer.sampleRate);

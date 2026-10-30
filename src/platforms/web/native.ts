@@ -17,7 +17,7 @@ export interface EngineModule {
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-/** C ABI 메모리를 관리하며 각 호출 완료 후 다음 호출을 시작한다. */
+/** Manages C ABI memory and starts each call after the previous one completes. */
 export class NativeEngine {
   constructor(readonly module: EngineModule) {}
 

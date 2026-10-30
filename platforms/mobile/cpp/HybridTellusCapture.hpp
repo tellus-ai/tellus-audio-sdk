@@ -5,7 +5,7 @@
 
 namespace margelo::nitro::tellus {
 
-// Nitro는 encoded 청크만 JS에 전달한다. 모델·승인·처리 상태는 capture 인스턴스에 묶인다.
+// Nitro passes only encoded chunks to JS. Model, authorization, and processing state are bound to the capture instance.
 class HybridTellusCapture final : public HybridTellusCaptureSpec {
 public:
   HybridTellusCapture();
