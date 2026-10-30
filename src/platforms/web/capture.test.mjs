@@ -405,12 +405,12 @@ test('a denoise update back to the initial value keeps the latest pending caller
 });
 
 test('status reports the loaded models the worker resolved', async () => {
-  const { capture } = environment({ status: () => ({ lifecycle: 'stopped', denoise_enabled: true, denoise_loaded: true, vad_loaded: true, loadedModels: ['dfn3-48', 'silero-vad'] }) });
-  assert.deepEqual((await capture.getStatus()).modelsLoaded, ['dfn3-48', 'silero-vad']);
+  const { capture } = environment({ status: () => ({ lifecycle: 'stopped', denoise_enabled: true, denoise_loaded: true, vad_loaded: true, loadedModels: ['denoise-48', 'vad'] }) });
+  assert.deepEqual((await capture.getStatus()).modelsLoaded, ['denoise-48', 'vad']);
   await capture.dispose();
 });
 
-test('status reports the applied denoise mode and a DeepFilterNet3 load failure as native reported them', async () => {
+test('status reports the applied denoise mode and a denoise model load failure as native reported them', async () => {
   const native = { lifecycle: 'stopped', denoise_enabled: false, denoise_loaded: false, denoise_load_failed: true, denoise_mode: 'general', vad_loaded: false, loadedModels: [] };
   const { capture } = environment({ status: () => native }, { denoiseMode: 'general' });
   const status = await capture.getStatus();

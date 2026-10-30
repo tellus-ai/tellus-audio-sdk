@@ -169,7 +169,7 @@ test('an omitted processing.sampleRate configures the 16 kHz engine output and a
 
 test('an unknown denoise mode rejects init and closes init resources', async () => {
   const { contexts, workers } = environment();
-  for (const denoiseMode of ['rnnoise', '', 'close-talk', 'deepfilternet_v3', 3]) {
+  for (const denoiseMode of ['rnnoise', '', 'close-talk', 'denoise', 3]) {
     await assert.rejects(AudioEngine.init({ denoiseMode }, assets), /tellus_denoise_mode_invalid/);
   }
   assert.ok(contexts.every((context) => context.closed));

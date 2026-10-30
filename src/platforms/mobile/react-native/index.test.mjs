@@ -212,7 +212,7 @@ test('runtime denoise 전환에 필요한 denoise 모델과 VAD 모델 구성을
   }
 });
 
-test('SDK 기본 asset은 모드와 출력 레이트와 무관하게 dfn3-48과 VAD 모델만 고른다', async () => {
+test('SDK 기본 asset은 모드와 출력 레이트와 무관하게 Denoise 모델과 VAD 모델만 고른다', async () => {
   for (const [config, expected] of [
     [{}, ['dfn3-48', 'silero-vad']],
     [{ processing: { sampleRate: 48000 }, vadEnabled: false }, ['dfn3-48']],
@@ -236,10 +236,10 @@ test('denoiseMode는 정규화한 값으로 native 설정에 전달하고 모르
     assert.equal('denoiseModel' in processing, false);
   }
   const { create } = fixture(null);
-  for (const denoiseMode of ['rnnoise', '', 'close-talk', 'deepfilternet_v3', 3]) await assert.rejects(create({ denoiseMode }), /invalid_denoise_mode/);
+  for (const denoiseMode of ['rnnoise', '', 'close-talk', 'denoise', 3]) await assert.rejects(create({ denoiseMode }), /invalid_denoise_mode/);
 });
 
-test('상태는 적용 중인 모드와 DFN3 로드 실패를 native 보고 그대로 전달한다', async () => {
+test('상태는 적용 중인 모드와 Denoise 모델 로드 실패를 native 보고 그대로 전달한다', async () => {
   const { native, create } = fixture();
   native.getStatus = async () => JSON.stringify({ lifecycle: 'stopped', denoise_enabled: false, denoise_load_failed: true, denoise_mode: 'general' });
   const status = await (await create({ denoiseMode: 'general' })).getStatus();
@@ -252,7 +252,7 @@ async function applyAllModelKeys(capture) {
   await capture.applyModelKeys(requests.map(({ modelId, keyId }) => ({ modelId, keyId, wrappedKey: 'A'.repeat(107) })));
 }
 
-test('DFN3 로드 실패는 로그를 남기고 Silero를 이어서 올리며 캡처를 막지 않는다', async () => {
+test('Denoise 모델 로드 실패는 로그를 남기고 VAD 모델을 이어서 올리며 캡처를 막지 않는다', async () => {
   const { native, create, emit, warnings } = fixture();
   const loadModelFile = native.loadModelFile;
   native.loadModelFile = async path => {
@@ -274,7 +274,7 @@ test('DFN3 로드 실패는 로그를 남기고 Silero를 이어서 올리며 �
   assert.equal(received.length, 1);
 });
 
-test('DFN3 로드 실패는 재승인 때 다시 키를 요청하지 않는다', async () => {
+test('Denoise 모델 로드 실패는 재승인 때 다시 키를 요청하지 않는다', async () => {
   const { native, create } = fixture(['dfn3-48.temc']);
   native.loadModelFile = async () => { throw new Error('model_load_failed'); };
   native.getStatus = async () => JSON.stringify({ lifecycle: 'running', denoise_load_failed: true });
@@ -284,7 +284,7 @@ test('DFN3 로드 실패는 재승인 때 다시 키를 요청하지 않는다',
   assert.equal((await capture.createModelKeyRequests()).length, 0);
 });
 
-test('native가 DFN3 로드 실패로 기록하지 않은 오류와 Silero 로드 실패는 그대로 전달한다', async () => {
+test('native가 Denoise 모델 로드 실패로 기록하지 않은 오류와 VAD 모델 로드 실패는 그대로 전달한다', async () => {
   for (const [failing, recorded] of [['dfn3-48.temc', false], ['silero-vad.temc', true]]) {
     const { native, create, warnings } = fixture();
     native.loadModelFile = async path => { if (path === failing) throw new Error('model_container_authentication_failed'); };

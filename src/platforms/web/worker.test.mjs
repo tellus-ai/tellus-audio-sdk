@@ -28,7 +28,7 @@ function engineModule(configured, { loaded, loadFailures, denoiseLoadFailed }) {
       if (name === 'tellus_audio_session_configure') configured.push(JSON.parse(text(args[1], args[2])));
       if (name === 'tellus_audio_session_model_key_request') reply({ public_key: 'b'.repeat(64) }, args[1], args[3]);
       if (name === 'tellus_audio_session_get_status') {
-        reply({ lifecycle: 'stopped', denoise_load_failed: denoiseLoadFailed, denoise_loaded: loaded.includes('dfn3-48'), vad_loaded: loaded.includes('silero-vad') }, args[1], args[3]);
+        reply({ lifecycle: 'stopped', denoise_load_failed: denoiseLoadFailed, denoise_loaded: loaded.includes('denoise-48'), vad_loaded: loaded.includes('silero-vad') }, args[1], args[3]);
       }
       if (name === 'tellus_audio_session_load_model') {
         const model = text(args[1], args[2]);
@@ -82,13 +82,13 @@ async function warnings(body) {
   return logged;
 }
 
-test('each capture requests the denoise container for every mode and Silero only with VAD', async () => {
-  const { send } = await worker(['dfn3-48', 'silero-vad']);
+test('each capture requests the denoise container for every mode and the VAD model only with VAD', async () => {
+  const { send } = await worker(['denoise-48', 'silero-vad']);
   for (const [config, expected] of [
-    [{ vadEnabled: true }, ['dfn3-48', 'silero-vad']],
-    [{ processing: { sampleRate: 48000 } }, ['dfn3-48']],
-    [{ denoiseMode: 'general', vadEnabled: true }, ['dfn3-48', 'silero-vad']],
-    [{ denoiseMode: 'CLOSE_TALK', processing: { sampleRate: 48000 } }, ['dfn3-48']],
+    [{ vadEnabled: true }, ['denoise-48', 'silero-vad']],
+    [{ processing: { sampleRate: 48000 } }, ['denoise-48']],
+    [{ denoiseMode: 'general', vadEnabled: true }, ['denoise-48', 'silero-vad']],
+    [{ denoiseMode: 'CLOSE_TALK', processing: { sampleRate: 48000 } }, ['denoise-48']],
   ]) {
     const { result: sessionId } = await send(0, { operation: 'create', config });
     const { result: requests } = await send(sessionId, { operation: 'modelRequests' });
@@ -97,7 +97,7 @@ test('each capture requests the denoise container for every mode and Silero only
 });
 
 test('the normalized denoise mode reaches native configuration', async () => {
-  const { send, configured } = await worker(['dfn3-48']);
+  const { send, configured } = await worker(['denoise-48']);
   await send(0, { operation: 'create', config: {} });
   await send(0, { operation: 'create', config: { denoiseMode: ' General ' } });
   assert.deepEqual(configured.map((config) => config.denoiseMode), ['close_talk', 'general']);
@@ -110,21 +110,21 @@ test('an enabled capture without a denoise container fails before configuring na
   assert.deepEqual(configured, []);
 });
 
-test('a VAD capture without Silero fails before configuring native', async () => {
-  const { send, configured } = await worker(['dfn3-48']);
+test('a VAD capture without the VAD model fails before configuring native', async () => {
+  const { send, configured } = await worker(['denoise-48']);
   const created = await send(0, { operation: 'create', config: { vadEnabled: true } });
   assert.equal(created.error, 'tellus_encrypted_model_missing');
   assert.deepEqual(configured, []);
 });
 
 test('an unknown denoise mode never reaches native configuration', async () => {
-  const { send, configured } = await worker(['dfn3-48', 'silero-vad']);
+  const { send, configured } = await worker(['denoise-48', 'silero-vad']);
   assert.equal((await send(0, { operation: 'create', config: { denoiseMode: 'rnnoise' } })).error, 'tellus_denoise_mode_invalid');
   assert.deepEqual(configured, []);
 });
 
-test('a denoise model load failure logs, still loads Silero and leaves nothing to retry', async () => {
-  const { send, loaded } = await worker(['dfn3-48', 'silero-vad'], { loadFailures: ['dfn3-48'], denoiseLoadFailed: true });
+test('a denoise model load failure logs, still loads the VAD model and leaves nothing to retry', async () => {
+  const { send, loaded } = await worker(['denoise-48', 'silero-vad'], { loadFailures: ['denoise-48'], denoiseLoadFailed: true });
   const { result: sessionId } = await send(0, { operation: 'create', config: { denoiseEnabled: true, vadEnabled: true } });
   let applied;
   const logged = await warnings(async () => { applied = await applyKeys(send, sessionId); });
@@ -136,13 +136,13 @@ test('a denoise model load failure logs, still loads Silero and leaves nothing t
 });
 
 test('a load error native did not record as a denoise load failure rejects the keys', async () => {
-  const { send } = await worker(['dfn3-48'], { loadFailures: ['dfn3-48'], denoiseLoadFailed: false });
+  const { send } = await worker(['denoise-48'], { loadFailures: ['denoise-48'], denoiseLoadFailed: false });
   const { result: sessionId } = await send(0, { operation: 'create', config: { denoiseEnabled: true } });
   assert.equal((await applyKeys(send, sessionId)).error, 'native_failed');
 });
 
-test('a Silero load failure rejects the keys even after the denoise model failed softly', async () => {
-  const { send } = await worker(['dfn3-48', 'silero-vad'], { loadFailures: ['dfn3-48', 'silero-vad'], denoiseLoadFailed: true });
+test('a VAD model load failure rejects the keys even after the denoise model failed softly', async () => {
+  const { send } = await worker(['denoise-48', 'silero-vad'], { loadFailures: ['denoise-48', 'silero-vad'], denoiseLoadFailed: true });
   const { result: sessionId } = await send(0, { operation: 'create', config: { denoiseEnabled: true, vadEnabled: true } });
   let applied;
   await warnings(async () => { applied = await applyKeys(send, sessionId); });
@@ -150,7 +150,7 @@ test('a Silero load failure rejects the keys even after the denoise model failed
 });
 
 test('status reports only the models native loaded, by their container IDs', async () => {
-  const { send } = await worker(['dfn3-48', 'silero-vad'], { loadFailures: ['dfn3-48'], denoiseLoadFailed: true });
+  const { send } = await worker(['denoise-48', 'silero-vad'], { loadFailures: ['denoise-48'], denoiseLoadFailed: true });
   const { result: sessionId } = await send(0, { operation: 'create', config: { denoiseEnabled: true, vadEnabled: true } });
   assert.deepEqual((await send(sessionId, { operation: 'status' })).result.loadedModels, []);
   await warnings(() => applyKeys(send, sessionId));
@@ -158,7 +158,7 @@ test('status reports only the models native loaded, by their container IDs', asy
 });
 
 test('an invalid output config never reaches native configuration', async () => {
-  const { send, configured } = await worker(['dfn3-48', 'silero-vad']);
+  const { send, configured } = await worker(['denoise-48', 'silero-vad']);
   assert.equal((await send(0, { operation: 'create', config: { processing: { chunkDurationMs: 10 } } })).error, 'tellus_processing_config_invalid');
   assert.equal((await send(0, { operation: 'create', config: { processing: { sampleRate: 44100 } } })).error, 'tellus_opus_sample_rate_unsupported');
   assert.deepEqual(configured, []);

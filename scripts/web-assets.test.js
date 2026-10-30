@@ -11,7 +11,7 @@ function webFixture(t) {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.writeFileSync(path.join(root, 'package.json'), '{}');
   fs.cpSync(path.join(__dirname, '../dist'), path.join(root, 'dist'), { recursive: true });
-  const requiredFiles = ['tellus-audio-engine.mjs', 'tellus-audio-engine.wasm', 'models/manifest.json', 'models/dfn3-48.temc'];
+  const requiredFiles = ['tellus-audio-engine.mjs', 'tellus-audio-engine.wasm', 'models/manifest.json', 'models/denoise-48.temc'];
   fs.writeFileSync(path.join(root, 'release-assets.json'), JSON.stringify({ assets: { web: { requiredFiles } } }));
   const payload = requiredFiles.map((file) => `vendor/web/${file}`).concat([
     'vendor/web/licenses/NOTICE', 'vendor/web/build-manifest.json',
@@ -35,7 +35,7 @@ function webFixture(t) {
 test('copies engine, encrypted models, relative browser graph and pinned ORT files', (t) => {
   const { output, copyWebAssets } = webFixture(t);
   copyWebAssets(output);
-  for (const file of ['tellus-audio-engine.mjs', 'tellus-audio-engine.wasm', 'models/dfn3-48.temc',
+  for (const file of ['tellus-audio-engine.mjs', 'tellus-audio-engine.wasm', 'models/denoise-48.temc',
     'platforms/web/worker.js', 'platforms/web/worklet.js', 'bindings/typescript/authorization/contracts.js',
     'ort/ort.wasm.bundle.min.mjs', 'ort/ort-wasm-simd-threaded.mjs', 'ort/ort-wasm-simd-threaded.wasm',
     'licenses/NOTICE', 'licenses/onnxruntime-web/LICENSE',
