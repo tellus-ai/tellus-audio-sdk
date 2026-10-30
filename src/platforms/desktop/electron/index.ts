@@ -43,17 +43,17 @@ export interface AudioCaptureConfig {
   speakerEnabled?: boolean;
   /** Includes synchronized PCM16 raw frames in chunk.rawAudio. */
   enableRawAudio?: boolean;
-  /** Enables denoise with DeepFilterNet3 (dfn3-48). Native default is true. */
+  /** Enables denoise. Native default is true. */
   denoiseEnabled?: boolean;
   /**
    * Denoise output policy. Native default is 'close_talk'. Surrounding spaces and case are ignored; unknown values throw.
    * 'close_talk' adds a near-speech gate that turns far sound into exact silence, delays the microphone by 300 ms more,
-   * and limits noise attenuation to at most 12 dB. 'general' keeps the DeepFilterNet3 output with no attenuation limit.
+   * and limits noise attenuation to at most 12 dB. 'general' keeps the denoise model output with no attenuation limit.
    * Both apply to the microphone only and leave rawAudio.mic unchanged.
    * With denoiseEnabled: false the gate is off too.
    */
   denoiseMode?: 'close_talk' | 'general';
-  /** Enables the native Silero VAD gate. Native default is false. */
+  /** Enables the native VAD gate. Native default is false. */
   vadEnabled?: boolean;
   /** Processing/mixer settings. */
   processing?: AudioProcessingConfig;
@@ -62,11 +62,11 @@ export interface AudioCaptureConfig {
 }
 
 export interface VADConfig {
-  /** Speech start threshold for Silero probability. */
+  /** Speech start threshold for the VAD model probability. */
   vadPositiveThreshold?: number;
-  /** Speech end threshold for Silero probability. */
+  /** Speech end threshold for the VAD model probability. */
   vadNegativeThreshold?: number;
-  /** Compatibility value. Silero-only VAD does not use RMS for speech decisions. */
+  /** Compatibility value. The VAD model does not use RMS for speech decisions. */
   vadRmsThreshold?: number;
   /** Keep the gate open for this long after the last speech frame. */
   vadSilenceDurationMs?: number;
@@ -158,7 +158,7 @@ export interface CaptureStatus {
   aecActive: boolean;
   vadEnabled: boolean;
   vadReady: boolean;
-  vadMode: 'silero' | 'disabled';
+  vadMode: string;
   vadGateState: 'open' | 'closed';
   vadProbability: number;
   vadRms: number;
@@ -412,7 +412,7 @@ function normalizeVadStatus(status: Record<string, unknown>): AudioEngineVadInit
     active: Boolean(vad.active ?? vad.ready ?? enabled),
     ready: Boolean(vad.ready ?? vad.active ?? false),
     reused: Boolean(vad.reused ?? false),
-    model: typeof vad.model === 'string' ? vad.model : 'silero_vad_v6.2',
+    model: typeof vad.model === 'string' ? vad.model : 'vad',
     modelDir: typeof vad.modelDir === 'string' ? vad.modelDir : undefined,
     sampleRateHz: typeof vad.sampleRateHz === 'number' ? vad.sampleRateHz : 16000,
     warmupMs: typeof vad.warmupMs === 'number' ? vad.warmupMs : 0,

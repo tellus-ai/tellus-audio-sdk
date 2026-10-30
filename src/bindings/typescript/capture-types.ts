@@ -9,12 +9,12 @@ export interface AudioCaptureConfig {
   playbackDeviceId?: string;
   iosOutputRoute?: 'speaker' | 'system';
   enableRawAudio?: boolean;
-  /** Enables denoise. The model is fixed to DeepFilterNet3 (encrypted model dfn3-48); processing runs internally at 48 kHz and only the output is converted to processing.sampleRate. */
+  /** Enables denoise. The denoise model is fixed; processing runs internally at 48 kHz and only the output is converted to processing.sampleRate. */
   denoiseEnabled?: boolean;
   /**
    * Denoise output policy. Defaults to 'close_talk'. Surrounding spaces and case are ignored; unknown values are rejected at init.
    * 'close_talk' adds a near-speech gate that turns far sound into exact silence, delays output by 300 ms more (about 330 ms with model latency), and limits noise attenuation to at most 12 dB. Speech can be blocked in noisy places.
-   * 'general' keeps the DeepFilterNet3 output with no attenuation limit. With denoiseEnabled: false the gate is off too.
+   * 'general' keeps the denoise model output with no attenuation limit. With denoiseEnabled: false the gate is off too.
    */
   denoiseMode?: 'close_talk' | 'general';
   vadEnabled?: boolean;
@@ -64,11 +64,11 @@ export interface AudioChunk {
 
 export interface CaptureStatus {
   state: 'idle' | 'running' | 'paused' | 'stopped';
-  /** Whether denoise is actually on. False if dfn3-48 failed to load. */
+  /** Whether denoise is actually on. False if the denoise model failed to load. */
   denoiseEnabled: boolean;
   /** Applied denoiseMode. */
   denoiseMode: 'close_talk' | 'general';
-  /** dfn3-48 failed to load, so input passes through without denoise or the gate. */
+  /** The denoise model failed to load, so input passes through without denoise or the gate. */
   denoiseLoadFailed: boolean;
   vadEnabled: boolean;
   modelsLoaded: string[];
