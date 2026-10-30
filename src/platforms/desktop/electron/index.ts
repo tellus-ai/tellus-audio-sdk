@@ -6,6 +6,12 @@ import { prepareEngineRuntime } from './runtime/engine-runtime.js';
 import type { EngineAuthorizationRequest, EngineAuthorizationStatus } from '../../../bindings/typescript/authorization/contracts.js';
 
 export interface AudioProcessingConfig {
+  /**
+   * Engine output rate: what the caller receives (chunks, payloads, rawAudio.mixed, sample clocks). Default 16000.
+   * This is not the device capture rate: the internal pipeline always runs at 48 kHz and any device rate is resampled.
+   * Must be within 8000..=192000 Hz and give a whole number of samples per chunkDurationMs chunk.
+   * Opus supports only 8000, 12000, 16000, 24000, or 48000 Hz; use pcm_s16le or pcm_f32le for other rates.
+   */
   sampleRate?: number;
   chunkDurationMs?: number;
 }
@@ -37,8 +43,16 @@ export interface AudioCaptureConfig {
   speakerEnabled?: boolean;
   /** Includes synchronized PCM16 raw frames in chunk.rawAudio. */
   enableRawAudio?: boolean;
-  /** Enables FastEnhancer denoise. Native default is true. */
+  /** Enables denoise with DeepFilterNet3 (dfn3-48). Native default is true. */
   denoiseEnabled?: boolean;
+  /**
+   * Denoise output policy. Native default is 'close_talk'. Surrounding spaces and case are ignored; unknown values throw.
+   * 'close_talk' adds a near-speech gate that turns far sound into exact silence, delays the microphone by 300 ms more,
+   * and limits noise attenuation to at most 12 dB. 'general' keeps the DeepFilterNet3 output with no attenuation limit.
+   * Both apply to the microphone only and leave rawAudio.mic unchanged.
+   * With denoiseEnabled: false the gate is off too.
+   */
+  denoiseMode?: 'close_talk' | 'general';
   /** Enables the native Silero VAD gate. Native default is false. */
   vadEnabled?: boolean;
   /** Processing/mixer settings. */
@@ -240,6 +254,8 @@ export interface AudioEngineDenoiseInitStatus {
   active: boolean;
   reused: boolean;
   model: string;
+  /** Applied denoiseMode. */
+  mode: string;
   modelDir?: string;
   sampleRateHz: number;
   preparedInstances: number;

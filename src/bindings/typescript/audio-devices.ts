@@ -13,6 +13,11 @@ export interface AudioDeviceStatus {
   code: 'pending' | 'ready' | 'unavailable' | 'unsupported' | 'permission_denied' | 'route_mismatch';
   requestedDeviceId?: string;
   actualDeviceId?: string;
+  /**
+   * 준비된 입력에서 OS·브라우저가 엔진 쪽으로 넘기는 레이트(Hz). 알 수 없으면 없다.
+   * 장치의 실제 대역폭 증명이 아니다. Linux 서버 측 리샘플링과 브라우저 리샘플링은 협대역 장치를 숨길 수 있다.
+   */
+  nativeSampleRateHz?: number;
 }
 
 export interface AudioDeviceListResult {

@@ -5,7 +5,7 @@ import type { EngineAuthorizationRequest, EngineAuthorizationStatus } from '../.
 import type { AudioDeviceStatus } from '../../bindings/typescript/audio-devices.js';
 import { CaptureQueue, type CaptureFrame } from './capture-queue.js';
 import { audioDeviceError } from './devices.js';
-import type { DeliveredChunk, NativeStatus, WorkerCommand } from './protocol.js';
+import { DENOISE_MODEL_ID, type DeliveredChunk, type NativeStatus, type WorkerCommand } from './protocol.js';
 import { WorkerClient } from './worker-client.js';
 
 interface NativeAuthorizationStatus {
@@ -117,7 +117,8 @@ export class BrowserCapture implements AudioCapture {
       this.stream = stream;
       await resumed;
       if (epoch !== this.epoch) { stream.getTracks().forEach((track) => track.stop()); return; }
-      const actualDeviceId = stream.getAudioTracks()[0]?.getSettings().deviceId;
+      const settings = stream.getAudioTracks()[0]?.getSettings();
+      const actualDeviceId = settings?.deviceId;
       if (requestedDeviceId !== undefined && actualDeviceId !== requestedDeviceId) {
         throw Object.assign(new Error('tellus_microphone_route_mismatch'), { deviceStatus: {
           source: 'microphone', code: 'route_mismatch', requestedDeviceId, ...(actualDeviceId === undefined ? {} : { actualDeviceId }),
@@ -135,7 +136,9 @@ export class BrowserCapture implements AudioCapture {
       this.source.connect(this.tap);
       this.tap.connect(this.context.destination);
       for (const track of stream.getTracks()) track.addEventListener('ended', this.onDeviceEnded);
-      this.deviceStatus = { source: 'microphone', code: 'ready', ...(requestedDeviceId === undefined ? {} : { requestedDeviceId }), ...(actualDeviceId === undefined ? {} : { actualDeviceId }) };
+      // track에 레이트가 없으면 노드가 실제로 넘기는 AudioContext 레이트를 쓴다. 레이트가 다르면 브라우저가 그 사이를 리샘플한다.
+      const nativeSampleRateHz = settings?.sampleRate ?? this.context.sampleRate;
+      this.deviceStatus = { source: 'microphone', code: 'ready', ...(requestedDeviceId === undefined ? {} : { requestedDeviceId }), ...(actualDeviceId === undefined ? {} : { actualDeviceId }), nativeSampleRateHz };
     } catch (error) {
       if (epoch !== this.epoch) return;
       if (error instanceof Error && 'deviceStatus' in error) this.deviceStatus = error.deviceStatus as AudioDeviceStatus;
@@ -200,9 +203,10 @@ export class BrowserCapture implements AudioCapture {
   async getStatus(): Promise<CaptureStatus> {
     const status = await this.request<NativeStatus>({ operation: 'status' });
     return {
-      state: this.state, denoiseEnabled: status.denoise_enabled, vadEnabled: !!this.config.vadEnabled,
+      state: this.state, denoiseEnabled: status.denoise_enabled, denoiseMode: status.denoise_mode,
+      denoiseLoadFailed: status.denoise_load_failed, vadEnabled: !!this.config.vadEnabled,
       deviceStatus: [this.deviceStatus, ...(this.playbackDeviceStatus ? [this.playbackDeviceStatus] : [])],
-      modelsLoaded: [status.denoise_loaded ? (this.config.processing?.sampleRate ?? 16000) === 16000 ? 'fe-s16' : 'fe-s48' : '', status.vad_loaded ? 'silero-vad' : ''].filter(Boolean),
+      modelsLoaded: [status.denoise_loaded ? DENOISE_MODEL_ID : '', status.vad_loaded ? 'silero-vad' : ''].filter(Boolean),
     };
   }
 

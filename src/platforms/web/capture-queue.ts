@@ -5,7 +5,7 @@ export interface CaptureFrame {
   epoch: number;
 }
 
-/** 입력 큐의 누락 길이는 다음 프레임 전에 처리 레이트 샘플 단위로 보고한다. */
+/** 입력 큐의 누락 길이는 다음 프레임 전에 출력 레이트(processing.sampleRate) 샘플 단위로 보고한다. */
 export class CaptureQueue {
   private frames: CaptureFrame[] = [];
   private droppedSamples = 0;

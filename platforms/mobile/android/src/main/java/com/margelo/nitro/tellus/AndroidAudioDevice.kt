@@ -91,9 +91,26 @@ class AndroidAudioDevice(@Volatile private var nativeHandle: Long) {
   }
 
   fun getAudioDeviceStatus(): String = JSONArray().apply {
-    microphoneStatus?.let { put(it) }
+    microphoneStatusWithRate()?.let { put(it) }
     playbackStatus?.let { put(it) }
   }.toString()
+
+  // 녹음 중인 입력의 레이트를 준비 상태에 붙인다. 기본 장치 캡처에는 선택 상태가 없으므로 녹음 중에만 ready 상태를 만든다.
+  private fun microphoneStatusWithRate(): JSONObject? {
+    val input = recorder?.takeIf { capturing && it.recordingState == AudioRecord.RECORDSTATE_RECORDING }
+      ?: return microphoneStatus
+    val selected = microphoneStatus?.takeIf { micDeviceId != null }
+    val status = selected?.let { JSONObject(it.toString()) } ?: JSONObject().put("source", "microphone").put("code", "ready")
+      .apply { input.routedDevice?.let { put("actualDeviceId", it.id.toString()) } }
+    if (status.optString("code") == "ready") status.put("nativeSampleRateHz", nativeCaptureRate(input))
+    return status
+  }
+
+  // OS가 장치 쪽 형식을 알려 주면 그 레이트를, 아직 없으면 AudioRecord를 연 레이트를 쓴다. 전자는 앱이 받는 레이트보다 낮을 수 있다.
+  // https://developer.android.com/reference/android/media/AudioRecordingConfiguration#getFormat()
+  private fun nativeCaptureRate(input: AudioRecord): Int =
+    audioManager.activeRecordingConfigurations.firstOrNull { it.clientAudioSessionId == input.audioSessionId }
+      ?.format?.sampleRate?.takeIf { it > 0 } ?: input.sampleRate
 
   private fun updateDeviceStatus(source: String, code: String, requested: String?, actual: Int? = null) {
     val status = JSONObject().put("source", source).put("code", code)
@@ -121,10 +138,7 @@ class AndroidAudioDevice(@Volatile private var nativeHandle: Long) {
     check(Looper.myLooper() != Looper.getMainLooper()) { "capture_start_requires_worker_thread" }
     check(recorder == null) { "capture_already_active" }
     if (!playing && playbackDeviceId != null) updateDeviceStatus("playback", "pending", playbackDeviceId)
-    if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-      updateDeviceStatus("microphone", "permission_denied", micDeviceId)
-      error("microphone_permission_required")
-    }
+    requireRecordPermission()
     val preferredDevice = micDeviceId?.let { resolveDevice(it, "microphone") }
     val selectedRoute = preferredDevice?.let { SelectedAudioRoute(it.id) }
     micDeviceId?.let { updateDeviceStatus("microphone", "pending", it) }
@@ -136,15 +150,10 @@ class AndroidAudioDevice(@Volatile private var nativeHandle: Long) {
       capturing = true
       foreground?.update(notification)
       acquireFocus()
-      val minimum = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_FLOAT)
-      check(minimum > 0) { "capture_format_unsupported" }
       val source = if (audioManager.getProperty(AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED) == "true") {
         MediaRecorder.AudioSource.UNPROCESSED
       } else MediaRecorder.AudioSource.VOICE_RECOGNITION
-      val input = AudioRecord.Builder().setAudioSource(source)
-        .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
-          .setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_IN_MONO).build())
-        .setBufferSizeInBytes(maxOf(minimum, rate / 50 * 4)).build()
+      val input = openWithCaptureRateFallback(rate) { openRecorder(it, source) }
       synchronized(captureLock) { recorder = input }
       if (preferredDevice != null && !input.setPreferredDevice(preferredDevice)) {
         updateDeviceStatus("microphone", "unsupported", micDeviceId)
@@ -165,7 +174,6 @@ class AndroidAudioDevice(@Volatile private var nativeHandle: Long) {
       }, Handler(Looper.getMainLooper()))
       synchronized(captureLock) {
         check(capturing) { "capture_interrupted_during_start" }
-        check(input.state == AudioRecord.STATE_INITIALIZED) { "capture_initialization_failed" }
         input.startRecording()
       }
       if (selectedRoute != null) awaitCaptureRoute(input, selectedRoute)
@@ -177,6 +185,35 @@ class AndroidAudioDevice(@Volatile private var nativeHandle: Long) {
       stopCapture()
       throw error
     }
+  }
+
+  private fun requireRecordPermission() {
+    if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+      updateDeviceStatus("microphone", "permission_denied", micDeviceId)
+      error("microphone_permission_required")
+    }
+  }
+
+  // 초기화된 AudioRecord만 반환한다. 권한을 시도마다 확인해 권한 실패가 형식 미지원 재시도로 이어지지 않게 한다.
+  // Builder는 초기화 실패를 UnsupportedOperationException으로 알리며 이때 남는 인스턴스는 없다. 초기화되지 않은 채 돌아온 인스턴스만 해제한다.
+  // https://developer.android.com/reference/android/media/AudioRecord.Builder#build()
+  private fun openRecorder(rate: Int, source: Int): AudioRecord {
+    requireRecordPermission()
+    val minimum = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_FLOAT)
+    if (minimum <= 0) throw CaptureFormatUnsupported()
+    val input = try {
+      AudioRecord.Builder().setAudioSource(source)
+        .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
+          .setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_IN_MONO).build())
+        .setBufferSizeInBytes(maxOf(minimum, rate / 50 * 4)).build()
+    } catch (error: UnsupportedOperationException) {
+      throw CaptureFormatUnsupported()
+    }
+    if (input.state != AudioRecord.STATE_INITIALIZED) {
+      input.release()
+      throw CaptureFormatUnsupported()
+    }
+    return input
   }
 
   private fun awaitCaptureRoute(input: AudioRecord, selection: SelectedAudioRoute) {

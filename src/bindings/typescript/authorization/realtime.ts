@@ -22,11 +22,11 @@ export type {
 
 const MAX_RENEW_INTERVAL_MS = 480_000;
 const RETRY_DELAY_MS = 1_000;
-const MODEL_IDS = ['fe-s16', 'fe-s48', 'silero-vad'];
+const MODEL_IDS = ['dfn3-48', 'silero-vad'];
 const IDENTIFIER = /^[A-Za-z0-9._-]{1,64}(?![\s\S])/;
 
 function modelRequests(requests: EngineModelKeyRequest[]): EngineModelKeyRequest[] {
-  if (!Array.isArray(requests) || requests.length > 3) throw new Error('engine_model_key_request_invalid');
+  if (!Array.isArray(requests) || requests.length > MODEL_IDS.length) throw new Error('engine_model_key_request_invalid');
   const models = new Set<string>();
   for (const request of requests) {
     if (!request || !MODEL_IDS.includes(request.modelId) || typeof request.keyId !== 'string' ||

@@ -2,6 +2,7 @@ import type { AudioCaptureConfig, BrowserEngineAssets, AudioCapture } from '../.
 import type { AudioDeviceStatus } from '../../bindings/typescript/audio-devices.js';
 import { BrowserCapture } from './capture.js';
 import { audioDeviceError } from './devices.js';
+import { denoiseMode, outputSampleRate } from './protocol.js';
 import { WorkerClient } from './worker-client.js';
 
 export type {
@@ -22,6 +23,8 @@ export class AudioEngine {
 
   /** 클릭 전에 준비할 수 있다. AudioContext 재개는 start의 사용자 입력 경계에서 수행한다. */
   static async init(config: AudioCaptureConfig, assets: BrowserEngineAssets): Promise<AudioEngine> {
+    // 잘못된 출력 설정은 AudioContext·Worker를 만들기 전에 거부한다.
+    outputSampleRate(config);
     const base = document.baseURI;
     const resolved: BrowserEngineAssets = {
       ...assets,
@@ -34,6 +37,7 @@ export class AudioEngine {
     const context = new AudioContext();
     const client = new WorkerClient(new Worker(new URL('./worker.js', import.meta.url), { type: 'module' }));
     try {
+      denoiseMode(config);
       if (config.micDeviceId !== undefined && (typeof config.micDeviceId !== 'string' || !config.micDeviceId.trim())) {
         throw audioDeviceError(new Error('tellus_microphone_invalid_device_id'), 'microphone', typeof config.micDeviceId === 'string' ? config.micDeviceId : undefined);
       }

@@ -1,5 +1,5 @@
 import type { AudioCaptureConfig, AudioChunk } from '../../bindings/typescript/capture-types.js';
-import type { DeliveredChunk } from './protocol.js';
+import { denoiseMode, outputSampleRate, type DeliveredChunk } from './protocol.js';
 
 export interface EngineModule {
   HEAPU8: Uint8Array;
@@ -81,16 +81,14 @@ export class NativeEngine {
 }
 
 function nativeConfig(config: AudioCaptureConfig): object {
-  if (config.processing?.chunkDurationMs !== undefined && config.processing.chunkDurationMs !== 20) {
-    throw new Error('tellus_chunk_duration_must_be_20ms');
-  }
   if (config.micEnabled === false || config.speakerEnabled || config.enableRawAudio) {
     throw new Error('tellus_browser_capture_requires_encoded_microphone');
   }
   const vad = config.vad;
   return {
-    sampleRate: config.processing?.sampleRate ?? 16000,
+    sampleRate: outputSampleRate(config),
     denoise: config.denoiseEnabled ?? false,
+    denoiseMode: denoiseMode(config),
     vad: config.vadEnabled ?? false,
     echoCancellation: config.echoCancellationEnabled ?? true,
     micAgc2: config.micAgc2Enabled ?? false,

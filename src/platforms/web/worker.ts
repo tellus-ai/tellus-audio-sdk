@@ -1,6 +1,6 @@
 import type { AudioCaptureConfig, BrowserEngineAssets } from '../../bindings/typescript/capture-types.js';
 import { NativeEngine, type EngineModule, type NativeCapture } from './native.js';
-import type { DeliveredChunk, WorkerCommand, WorkerRequest, WorkerResponse } from './protocol.js';
+import { DENOISE_MODEL_ID, type DeliveredChunk, type NativeStatus, type WorkerCommand, type WorkerRequest, type WorkerResponse } from './protocol.js';
 
 interface EncryptedModel {
   model_id: string;
@@ -71,9 +71,8 @@ async function initialize(assets: BrowserEngineAssets): Promise<void> {
 }
 
 function requiredModels(config: AudioCaptureConfig): EncryptedModel[] {
-  const family = (config.processing?.sampleRate ?? 16000) === 16000 ? 'fe-s16' : 'fe-s48';
-  const selected = models.filter((model) => model.model_id === family || config.vadEnabled && model.model_id === 'silero-vad');
-  for (const required of [config.denoiseEnabled ? family : undefined, config.vadEnabled ? 'silero-vad' : undefined]) {
+  const selected = models.filter((model) => model.model_id === DENOISE_MODEL_ID || config.vadEnabled && model.model_id === 'silero-vad');
+  for (const required of [config.denoiseEnabled ? DENOISE_MODEL_ID : undefined, config.vadEnabled ? 'silero-vad' : undefined]) {
     if (required && !selected.some((model) => model.model_id === required)) throw new Error('tellus_encrypted_model_missing');
   }
   return selected;
@@ -147,7 +146,14 @@ async function loadModels(session: Session, command: Extract<WorkerCommand, { op
     if (decoded.length !== 80) throw new Error('tellus_model_key_invalid');
     await session.native.applyModelKey(key.modelId, key.keyId, decoded);
   }
-  for (const model of session.models) await session.native.loadModel(model.bytes);
+  for (const model of session.models) {
+    try { await session.native.loadModel(model.bytes); }
+    catch (error) {
+      // DFN3를 못 올려도 캡처는 denoise 없이 돌아간다. core가 그렇게 기록한 실패만 넘기고 키·컨테이너 오류는 그대로 던진다.
+      if (model.model_id !== DENOISE_MODEL_ID || !(await session.native.json<NativeStatus>('get_status')).denoise_load_failed) throw error;
+      console.warn('tellus_denoise_load_failed: capture continues without denoise', error);
+    }
+  }
   session.loaded = true;
 }
 

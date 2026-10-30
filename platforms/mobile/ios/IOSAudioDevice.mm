@@ -40,10 +40,12 @@ NSString* deviceString(const std::string& value) {
   }
   return string;
 }
-NSDictionary* deviceStatus(NSString* source, NSString* code, const std::string& requested = {}, NSString* actual = nil) {
+NSDictionary* deviceStatus(NSString* source, NSString* code, const std::string& requested = {}, NSString* actual = nil,
+                           NSNumber* nativeSampleRateHz = nil) {
   NSMutableDictionary* status = [@{@"source": source, @"code": code} mutableCopy];
   if (!requested.empty()) status[@"requestedDeviceId"] = deviceString(requested);
   if (actual.length > 0) status[@"actualDeviceId"] = actual;
+  if (nativeSampleRateHz) status[@"nativeSampleRateHz"] = nativeSampleRateHz;
   return status;
 }
 std::string deviceJson(id object) {
@@ -183,7 +185,8 @@ public:
         verifyRoute(session);
         NSString* input = session.currentRoute.inputs.firstObject.UID;
         NSString* output = session.currentRoute.outputs.firstObject.UID;
-        _micStatus = deviceStatus(@"microphone", input.length > 0 ? @"ready" : @"pending", _micDeviceId, input);
+        // sink callback이 받는 input node 레이트가 엔진에 전달되는 레이트다.
+        _micStatus = deviceStatus(@"microphone", input.length > 0 ? @"ready" : @"pending", _micDeviceId, input, @(rate));
         _playbackStatus = deviceStatus(@"playback", output.length > 0 ? @"ready" : @"pending", {}, output);
         observeSession();
       });
@@ -372,8 +375,8 @@ private:
 
   void observeSession() {
     _observers = [NSMutableArray new];
-    auto observe = [&](NSNotificationName name, std::function<bool(NSNotification*)> applies, const std::string& code) {
-      id observer = [[NSNotificationCenter defaultCenter] addObserverForName:name object:nil
+    auto observe = [&](NSNotificationName name, std::function<bool(NSNotification*)> applies, const std::string& code, id object = nil) {
+      id observer = [[NSNotificationCenter defaultCenter] addObserverForName:name object:object
           queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification* notification) {
         if (_running && applies(notification)) {
           _running = false;
@@ -400,6 +403,13 @@ private:
       }
       return reason == AVAudioSessionRouteChangeReasonNewDeviceAvailable || reason == AVAudioSessionRouteChangeReasonOldDeviceUnavailable;
     }, "audio_route_changed");
+    // 하드웨어 샘플 레이트·채널 수가 바뀌면 엔진이 스스로 멈추고 sink callback도 끊겨, 이 알림 없이는 캡처 중단을 알 수 없다.
+    // 이 엔진 인스턴스의 알림만 받고, 엔진이 아직 돌고 있으면 캡처가 끊긴 것이 아니므로 보고하지 않는다. observer는 시작이 끝난 뒤
+    // 등록되고 stopCapture는 _running을 먼저 내리므로 자체 시작·중지는 보고되지 않는다. 같은 변경으로 route 알림도 오면
+    // observe의 _running 검사로 먼저 도착한 알림의 코드 하나만 전달한다.
+    // 알림 계약: iOS SDK AVFAudio/AVAudioEngine.h의 AVAudioEngineConfigurationChangeNotification.
+    observe(AVAudioEngineConfigurationChangeNotification, [this](NSNotification*) { return !_engine.isRunning; },
+            "audio_configuration_changed", _engine);
     observe(AVAudioSessionMediaServicesWereResetNotification, [](NSNotification*) { return true; }, "audio_services_reset");
     observe(UIApplicationDidEnterBackgroundNotification, [](NSNotification*) {
       return ![[NSBundle mainBundle].infoDictionary[@"UIBackgroundModes"] containsObject:@"audio"];
