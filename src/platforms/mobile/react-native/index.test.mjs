@@ -205,8 +205,8 @@ test('동일 asset 목록의 모델 중복은 거부한다', async () => {
   await assert.rejects((await create()).createModelKeyRequests(), /duplicate_encrypted_model/);
 });
 
-test('runtime denoise 전환에 필요한 dfn3-48과 VAD 모델 구성을 검증한다', async () => {
-  for (const assets of [['fe-s48.temc', 'silero-vad.temc'], ['silero-vad.temc']]) {
+test('runtime denoise 전환에 필요한 denoise 모델과 VAD 모델 구성을 검증한다', async () => {
+  for (const assets of [['dfn3-48.temc'], ['silero-vad.temc']]) {
     const { create } = fixture(assets);
     await assert.rejects((await create()).createModelKeyRequests(), /encrypted_model_binding_invalid/);
   }

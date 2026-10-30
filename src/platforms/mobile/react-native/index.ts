@@ -40,9 +40,6 @@ function denoiseMode(config: AudioCaptureConfig): NonNullable<AudioCaptureConfig
   return mode;
 }
 
-// denoise 암호화 모델 ID다. 내부 처리는 항상 48 kHz이고 출력 sampleRate·denoiseMode와 무관하게 이 모델 하나다.
-const DENOISE_MODEL_ID = 'dfn3-48';
-
 // libopus가 인코딩하는 레이트다. 판단 기준은 core TransportEncoderConfig이고 여기서는 init에서 일찍 실패시킨다.
 const OPUS_SAMPLE_RATES = [8_000, 12_000, 16_000, 24_000, 48_000];
 
@@ -138,8 +135,9 @@ class NativeAudioCapture implements AudioCapture {
         if (registry.has(header.model_id)) throw new Error('duplicate_encrypted_model');
         registry.set(header.model_id, { keyId: header.key_id, path });
       }
-      const expected = [DENOISE_MODEL_ID, ...((this.config.vadEnabled ?? true) ? ['silero-vad'] : [])];
-      if (registry.size !== expected.length || expected.some(model => !registry.has(model))) throw new Error('encrypted_model_binding_invalid');
+      // The engine owns the denoise model choice, so only the model count and the VAD model are checked here. Core rejects a model it does not support.
+      const vad = this.config.vadEnabled ?? true;
+      if (registry.size !== (vad ? 2 : 1) || registry.has('silero-vad') !== vad) throw new Error('encrypted_model_binding_invalid');
       this.models = registry;
     }
     const request = JSON.parse(await this.native.createModelKeyRequest());
@@ -157,8 +155,8 @@ class NativeAudioCapture implements AudioCapture {
       await this.native.applyModelKey(key.modelId, key.keyId, wrappedKeyBytes(key.wrappedKey));
       try { await this.native.loadModelFile(model.path); }
       catch (error) {
-        // DFN3를 못 올려도 캡처는 denoise 없이 돌아간다. core가 그렇게 기록한 실패만 넘기고 키·컨테이너 오류는 그대로 던진다.
-        if (key.modelId !== DENOISE_MODEL_ID || !JSON.parse(await this.native.getStatus()).denoise_load_failed) throw error;
+        // Capture continues without denoise if the denoise model fails to load. Only a failure core recorded that way is tolerated; key and container errors still throw.
+        if (key.modelId === 'silero-vad' || !JSON.parse(await this.native.getStatus()).denoise_load_failed) throw error;
         console.warn('denoise_load_failed: capture continues without denoise', error);
         this.failed.add(key.modelId);
         continue;
@@ -311,7 +309,7 @@ export class AudioEngine {
     if (config.micEnabled === false || config.speakerEnabled === true || config.enableRawAudio === true) throw new Error('unsupported_mobile_capture_config');
     const mode = denoiseMode(config);
     // capture마다 denoise 모델 하나와 선택적 VAD 모델만 load하므로 기본 asset도 그 둘만 고른다.
-    const encryptedModels = assets?.encryptedModels ?? [`${DENOISE_MODEL_ID}.temc`,
+    const encryptedModels = assets?.encryptedModels ?? ['dfn3-48.temc',
       ...((config.vadEnabled ?? true) ? ['silero-vad.temc'] : [])];
     if (!encryptedModels.length || encryptedModels.length > 2 || encryptedModels.some(path => !path)) throw new Error('invalid_encrypted_model_assets');
     return new AudioEngine({ ...config, denoiseMode: mode, processing: { ...config.processing }, transport: { ...config.transport }, vad: config.vad ? { ...config.vad } : undefined },

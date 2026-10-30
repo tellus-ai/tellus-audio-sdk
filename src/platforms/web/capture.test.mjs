@@ -43,7 +43,7 @@ function environment(responses = {}, config = {}) {
       if (command.operation === 'stop') { lifecycle = 'stopped'; return []; }
       if (command.operation === 'denoise') return command.enabled;
       if (command.operation === 'applyAuthorization') return { state: 'authorized', remaining_ms: 100000 };
-      if (command.operation === 'status') return { lifecycle, denoise_enabled: false, denoise_loaded: false, vad_loaded: false };
+      if (command.operation === 'status') return { lifecycle, denoise_enabled: false, denoise_loaded: false, vad_loaded: false, loadedModels: [] };
     },
   };
   return { capture: new BrowserCapture(client, context, config), permissions, rejections, requests, commands, nodes };
@@ -404,16 +404,14 @@ test('a denoise update back to the initial value keeps the latest pending caller
   await capture.dispose();
 });
 
-test('loaded models report dfn3-48 for every mode and output rate', async () => {
-  for (const config of [{}, { processing: { sampleRate: 48000 } }, { denoiseMode: 'general' }]) {
-    const { capture } = environment({ status: () => ({ lifecycle: 'stopped', denoise_enabled: true, denoise_loaded: true, vad_loaded: true }) }, config);
-    assert.deepEqual((await capture.getStatus()).modelsLoaded, ['dfn3-48', 'silero-vad']);
-    await capture.dispose();
-  }
+test('status reports the loaded models the worker resolved', async () => {
+  const { capture } = environment({ status: () => ({ lifecycle: 'stopped', denoise_enabled: true, denoise_loaded: true, vad_loaded: true, loadedModels: ['dfn3-48', 'silero-vad'] }) });
+  assert.deepEqual((await capture.getStatus()).modelsLoaded, ['dfn3-48', 'silero-vad']);
+  await capture.dispose();
 });
 
 test('status reports the applied denoise mode and a DeepFilterNet3 load failure as native reported them', async () => {
-  const native = { lifecycle: 'stopped', denoise_enabled: false, denoise_loaded: false, denoise_load_failed: true, denoise_mode: 'general', vad_loaded: false };
+  const native = { lifecycle: 'stopped', denoise_enabled: false, denoise_loaded: false, denoise_load_failed: true, denoise_mode: 'general', vad_loaded: false, loadedModels: [] };
   const { capture } = environment({ status: () => native }, { denoiseMode: 'general' });
   const status = await capture.getStatus();
   assert.deepEqual([status.denoiseEnabled, status.denoiseMode, status.denoiseLoadFailed, status.modelsLoaded], [false, 'general', true, []]);

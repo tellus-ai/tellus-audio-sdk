@@ -5,7 +5,7 @@ import type { EngineAuthorizationRequest, EngineAuthorizationStatus } from '../.
 import type { AudioDeviceStatus } from '../../bindings/typescript/audio-devices.js';
 import { CaptureQueue, type CaptureFrame } from './capture-queue.js';
 import { audioDeviceError } from './devices.js';
-import { DENOISE_MODEL_ID, type DeliveredChunk, type NativeStatus, type WorkerCommand } from './protocol.js';
+import type { DeliveredChunk, WorkerCommand, WorkerStatus } from './protocol.js';
 import { WorkerClient } from './worker-client.js';
 
 interface NativeAuthorizationStatus {
@@ -201,12 +201,12 @@ export class BrowserCapture implements AudioCapture {
   }
 
   async getStatus(): Promise<CaptureStatus> {
-    const status = await this.request<NativeStatus>({ operation: 'status' });
+    const status = await this.request<WorkerStatus>({ operation: 'status' });
     return {
       state: this.state, denoiseEnabled: status.denoise_enabled, denoiseMode: status.denoise_mode,
       denoiseLoadFailed: status.denoise_load_failed, vadEnabled: !!this.config.vadEnabled,
       deviceStatus: [this.deviceStatus, ...(this.playbackDeviceStatus ? [this.playbackDeviceStatus] : [])],
-      modelsLoaded: [status.denoise_loaded ? DENOISE_MODEL_ID : '', status.vad_loaded ? 'silero-vad' : ''].filter(Boolean),
+      modelsLoaded: status.loadedModels,
     };
   }
 

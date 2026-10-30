@@ -15,6 +15,11 @@ export interface NativeStatus {
   vad_loaded: boolean;
 }
 
+/** Native status plus the IDs of the loaded models, read from the encrypted container headers. */
+export interface WorkerStatus extends NativeStatus {
+  loadedModels: string[];
+}
+
 export type WorkerCommand =
   | { operation: 'init'; assets: BrowserEngineAssets }
   | { operation: 'create'; config: AudioCaptureConfig }
@@ -60,9 +65,6 @@ export function outputSampleRate(config: AudioCaptureConfig): number {
   }
   return rate;
 }
-
-/** denoise 암호화 모델 ID다. 내부 처리는 항상 48 kHz이고 출력 sampleRate·denoiseMode와 무관하게 이 모델 하나다. */
-export const DENOISE_MODEL_ID = 'dfn3-48';
 
 /** 공개 denoiseMode를 core와 같은 규칙(앞뒤 공백·대소문자 무시)으로 검증한다. 생략하면 close_talk이고 모르는 값은 거부한다. */
 export function denoiseMode(config: AudioCaptureConfig): NonNullable<AudioCaptureConfig['denoiseMode']> {
