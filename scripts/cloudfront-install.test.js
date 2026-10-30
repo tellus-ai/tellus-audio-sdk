@@ -13,11 +13,11 @@ const { test } = require('node:test');
 const platformFiles = {
   ios: ['TellusAudioEngine.xcframework/Info.plist', 'TellusAudioEngine.xcframework/ios-arm64/libtellus_audio_engine.a',
     'TellusAudioEngine.xcframework/ios-arm64-simulator/libtellus_audio_engine.a', 'include/tellus_audio_engine.h',
-    'models/manifest.json', 'models/fe-s16.temc', 'models/fe-s48.temc', 'models/silero-vad.temc'],
+    'models/manifest.json', 'models/dfn3-48.temc', 'models/silero-vad.temc'],
   android: ['jniLibs/arm64-v8a/libtellus_audio_engine.so', 'jniLibs/x86_64/libtellus_audio_engine.so',
-    'include/tellus_audio_engine.h', 'models/manifest.json', 'models/fe-s16.temc', 'models/fe-s48.temc', 'models/silero-vad.temc'],
+    'include/tellus_audio_engine.h', 'models/manifest.json', 'models/dfn3-48.temc', 'models/silero-vad.temc'],
   web: ['tellus-audio-engine.mjs', 'tellus-audio-engine.wasm', 'models/manifest.json',
-    'models/fe-s16.temc', 'models/fe-s48.temc', 'models/silero-vad.temc'],
+    'models/dfn3-48.temc', 'models/silero-vad.temc'],
 };
 
 function installerFixture(t, { corrupt = false, denied = false, baseUrl = 'https://speech.example.test', redirectLocation, grantUrl, malformedGrant = false, cdnDenials = 0, platform, missingFile, packagePlatform } = {}) {
