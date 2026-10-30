@@ -46,7 +46,11 @@ async function worker(models, { loadFailures = [], denoiseLoadFailed = false } =
   const responses = new Map();
   const configured = [];
   const loaded = [];
-  const scope = { postMessage: (response) => responses.get(response.id)(response) };
+  const scope = { postMessage: (response) => {
+    const resolve = responses.get(response.id);
+    if (typeof resolve !== 'function') throw new Error(`Unexpected worker response: ${response.id}`);
+    resolve(response);
+  } };
   globalThis.self = scope;
   globalThis.tellusTestEngine = () => engineModule(configured, { loaded, loadFailures, denoiseLoadFailed });
   globalThis.fetch = async (url) => ({ ok: true, arrayBuffer: async () => encoder.encode(new URL(url).pathname.slice(1).replace('.temc', '')).buffer });
