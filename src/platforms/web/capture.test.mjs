@@ -405,8 +405,8 @@ test('a denoise update back to the initial value keeps the latest pending caller
 });
 
 test('status reports the loaded models the worker resolved', async () => {
-  const { capture } = environment({ status: () => ({ lifecycle: 'stopped', denoise_enabled: true, denoise_loaded: true, vad_loaded: true, loadedModels: ['denoise-48', 'vad'] }) });
-  assert.deepEqual((await capture.getStatus()).modelsLoaded, ['denoise-48', 'vad']);
+  const { capture } = environment({ status: () => ({ lifecycle: 'stopped', denoise_enabled: true, denoise_loaded: true, vad_loaded: true, loadedModels: ['denoise', 'vad'] }) });
+  assert.deepEqual((await capture.getStatus()).modelsLoaded, ['denoise', 'vad']);
   await capture.dispose();
 });
 

@@ -20,7 +20,7 @@ const { copyWebAssets } = require('@tellus-ai/audio-sdk-web/installer');
 copyWebAssets('./public/tellus-audio');
 ```
 
-WASM·암호화 모델·Worker·Worklet·ORT·라이선스를 함께 복사합니다. Worker 진입점은 `tellus-audio/platforms/web/worker.js`, Worklet은 `tellus-audio/platforms/web/worklet.js`입니다. SDK 기본 옵션의 자산 경로와 맞춰 제공해야 합니다. HTTPS 또는 localhost에서 마이크 권한을 허용하고 서버의 실행 승인·모델 키를 적용합니다. 기존 Promise 기반 캡처·승인·TTS API를 유지합니다.
+WASM·암호화 모델·Worker·Worklet·ORT·라이선스를 함께 복사합니다. 암호화 모델은 `models/denoise.temc`, `models/vad.temc`이며 `BrowserEngineAssets.encryptedModels`에 이 경로를 넘깁니다. Worker 진입점은 `tellus-audio/platforms/web/worker.js`, Worklet은 `tellus-audio/platforms/web/worklet.js`입니다. SDK 기본 옵션의 자산 경로와 맞춰 제공해야 합니다. HTTPS 또는 localhost에서 마이크 권한을 허용하고 서버의 실행 승인·모델 키를 적용합니다. 기존 Promise 기반 캡처·승인·TTS API를 유지합니다.
 
 ## 장치 선택
 
