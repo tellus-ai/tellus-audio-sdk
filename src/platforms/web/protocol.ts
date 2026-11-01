@@ -66,6 +66,11 @@ export function outputSampleRate(config: AudioCaptureConfig): number {
   return rate;
 }
 
+/** The engine names the VAD model with a `vad` suffix. Every other container is the denoise model. */
+export function isVadModel(modelId: string): boolean {
+  return modelId.endsWith('vad');
+}
+
 /** Validates the public denoiseMode with the same rules as core (surrounding spaces and case ignored). Omitting it selects close_talk; unknown values are rejected. */
 export function denoiseMode(config: AudioCaptureConfig): NonNullable<AudioCaptureConfig['denoiseMode']> {
   const value: unknown = config.denoiseMode ?? 'close_talk';

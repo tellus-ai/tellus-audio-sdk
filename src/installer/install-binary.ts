@@ -50,6 +50,12 @@ type GitHubReleaseAsset = {
   url?: string;
 };
 
+type EngineModel = {
+  id: string;
+  file: string;
+  format?: string;
+};
+
 type GitHubRelease = {
   assets?: GitHubReleaseAsset[];
 };
@@ -333,6 +339,26 @@ function missingRequiredFiles(root: string, asset: ReleaseAsset): string[] {
   });
 }
 
+// Installed models use role names, so the SDK and apps never depend on the engine's own model IDs.
+function renameModelFiles(root: string): void {
+  const manifestPath = join(root, 'models', 'manifest.json');
+  if (!existsSync(manifestPath)) return;
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { models?: EngineModel[] };
+  const models = (manifest.models ?? []).filter((model) => model.format === 'temc');
+  if (models.length === 0) return;
+  for (const model of models) {
+    const source = join(root, 'models', model.file);
+    if (!existsSync(source)) continue;
+    const role = model.id.endsWith('vad') ? 'vad' : 'denoise';
+    const destination = join(root, 'models', `${role}.temc`);
+    if (existsSync(destination)) fail(`Release asset has more than one ${role} model`);
+    renameSync(source, destination);
+    model.id = role;
+    model.file = `${role}.temc`;
+  }
+  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+}
+
 function alreadyInstalled(targetDir: string, expectedSha: string): boolean {
   const statePath = join(targetDir, '.install-state.json');
   if (!existsSync(statePath)) {
@@ -438,6 +464,7 @@ export async function installBinary(platform?: string): Promise<void> {
 
     const extractDir = join(tempDir, 'extract');
     extractTarGz(archivePath, extractDir);
+    renameModelFiles(extractDir);
     const missing = missingRequiredFiles(extractDir, asset);
     if (missing.length > 0) fail(`Release asset is missing required files: ${missing.join(', ')}`);
     rmSync(targetDir, { recursive: true, force: true });

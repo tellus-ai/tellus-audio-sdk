@@ -32,6 +32,11 @@ function wrappedKeyBytes(value: string): ArrayBuffer {
   return bytes.buffer;
 }
 
+// The engine names the VAD model with a `vad` suffix. Every other container is the denoise model.
+function isVadModel(modelId: string): boolean {
+  return modelId.endsWith('vad');
+}
+
 // Validates the public denoiseMode with the same rules as core (surrounding spaces and case ignored). Omitting it selects close_talk; unknown values are rejected.
 function denoiseMode(config: AudioCaptureConfig): NonNullable<AudioCaptureConfig['denoiseMode']> {
   const value: unknown = config.denoiseMode ?? 'close_talk';
@@ -137,7 +142,7 @@ class NativeAudioCapture implements AudioCapture {
       }
       // The engine owns the denoise model choice, so only the model count and the VAD model are checked here. Core rejects a model it does not support.
       const vad = this.config.vadEnabled ?? true;
-      if (registry.size !== (vad ? 2 : 1) || registry.has('silero-vad') !== vad) throw new Error('encrypted_model_binding_invalid');
+      if (registry.size !== (vad ? 2 : 1) || [...registry.keys()].some(isVadModel) !== vad) throw new Error('encrypted_model_binding_invalid');
       this.models = registry;
     }
     const request = JSON.parse(await this.native.createModelKeyRequest());
@@ -156,7 +161,7 @@ class NativeAudioCapture implements AudioCapture {
       try { await this.native.loadModelFile(model.path); }
       catch (error) {
         // Capture continues without denoise if the denoise model fails to load. Only a failure core recorded that way is tolerated; key and container errors still throw.
-        if (key.modelId === 'silero-vad' || !JSON.parse(await this.native.getStatus()).denoise_load_failed) throw error;
+        if (isVadModel(key.modelId) || !JSON.parse(await this.native.getStatus()).denoise_load_failed) throw error;
         console.warn('denoise_load_failed: capture continues without denoise', error);
         this.failed.add(key.modelId);
         continue;
@@ -309,8 +314,8 @@ export class AudioEngine {
     if (config.micEnabled === false || config.speakerEnabled === true || config.enableRawAudio === true) throw new Error('unsupported_mobile_capture_config');
     const mode = denoiseMode(config);
     // Each capture loads one denoise model and an optional VAD model, so the default assets pick only those.
-    const encryptedModels = assets?.encryptedModels ?? ['dfn3-48.temc',
-      ...((config.vadEnabled ?? true) ? ['silero-vad.temc'] : [])];
+    const encryptedModels = assets?.encryptedModels ?? ['denoise.temc',
+      ...((config.vadEnabled ?? true) ? ['vad.temc'] : [])];
     if (!encryptedModels.length || encryptedModels.length > 2 || encryptedModels.some(path => !path)) throw new Error('invalid_encrypted_model_assets');
     return new AudioEngine({ ...config, denoiseMode: mode, processing: { ...config.processing }, transport: { ...config.transport }, vad: config.vad ? { ...config.vad } : undefined },
       { encryptedModels: [...encryptedModels] });

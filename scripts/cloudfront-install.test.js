@@ -13,14 +13,21 @@ const { test } = require('node:test');
 const platformFiles = {
   ios: ['TellusAudioEngine.xcframework/Info.plist', 'TellusAudioEngine.xcframework/ios-arm64/libtellus_audio_engine.a',
     'TellusAudioEngine.xcframework/ios-arm64-simulator/libtellus_audio_engine.a', 'include/tellus_audio_engine.h',
-    'models/manifest.json', 'models/denoise-48.temc', 'models/vad.temc'],
+    'models/manifest.json', 'models/denoise.temc', 'models/vad.temc'],
   android: ['jniLibs/arm64-v8a/libtellus_audio_engine.so', 'jniLibs/x86_64/libtellus_audio_engine.so',
-    'include/tellus_audio_engine.h', 'models/manifest.json', 'models/denoise-48.temc', 'models/vad.temc'],
+    'include/tellus_audio_engine.h', 'models/manifest.json', 'models/denoise.temc', 'models/vad.temc'],
   web: ['tellus-audio-engine.mjs', 'tellus-audio-engine.wasm', 'models/manifest.json',
-    'models/denoise-48.temc', 'models/vad.temc'],
+    'models/denoise.temc', 'models/vad.temc'],
 };
 
-function installerFixture(t, { corrupt = false, denied = false, baseUrl = 'https://speech.example.test', redirectLocation, grantUrl, malformedGrant = false, cdnDenials = 0, platform, missingFile, packagePlatform } = {}) {
+// Engine archives name models by engine ID. The installer gives them role names.
+const archiveModels = { 'models/denoise.temc': 'models/engine-denoise-1.temc', 'models/vad.temc': 'models/engine-vad.temc' };
+const engineManifest = { schemaVersion: 1, models: [
+  { id: 'engine-denoise-1', file: 'engine-denoise-1.temc', format: 'temc', sha256: 'a' },
+  { id: 'engine-vad', file: 'engine-vad.temc', format: 'temc', sha256: 'b' },
+] };
+
+function installerFixture(t, { corrupt = false, denied = false, baseUrl = 'https://speech.example.test', redirectLocation, grantUrl, malformedGrant = false, cdnDenials = 0, platform, missingFile, packagePlatform, archiveManifest } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellus-install-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.cpSync(path.join(__dirname, '../dist'), path.join(root, 'dist'), { recursive: true });
@@ -38,8 +45,13 @@ function installerFixture(t, { corrupt = false, denied = false, baseUrl = 'https
   fs.mkdirSync(content);
   const payloadFiles = platform ? platformFiles[platform] : ['installed.txt'];
   for (const file of payloadFiles.filter((file) => file !== missingFile)) {
-    fs.mkdirSync(path.dirname(path.join(content, file)), { recursive: true });
-    fs.writeFileSync(path.join(content, file), 'verified native archive');
+    const archived = path.join(content, archiveModels[file] || file);
+    fs.mkdirSync(path.dirname(archived), { recursive: true });
+    fs.writeFileSync(archived, 'verified native archive');
+  }
+  if (platform || archiveManifest) {
+    fs.mkdirSync(path.join(content, 'models'), { recursive: true });
+    fs.writeFileSync(path.join(content, 'models/manifest.json'), JSON.stringify(archiveManifest || engineManifest));
   }
   execFileSync('tar', ['-czf', path.join(root, 'archive.tar.gz'), '-C', content, '.']);
   const archive = fs.readFileSync(path.join(root, 'archive.tar.gz'));
@@ -191,6 +203,9 @@ for (const platform of ['ios', 'android', 'web']) {
     await installBinary(platform);
     const target = path.join(root, 'vendor', platform);
     for (const file of platformFiles[platform]) assert.ok(fs.statSync(path.join(target, file)).isFile());
+    assert.deepEqual(fs.readdirSync(path.join(target, 'models')).sort(), ['denoise.temc', 'manifest.json', 'vad.temc']);
+    const { models } = JSON.parse(fs.readFileSync(path.join(target, 'models/manifest.json')));
+    assert.deepEqual(models.map(({ id, file, sha256 }) => [id, file, sha256]), [['denoise', 'denoise.temc', 'a'], ['vad', 'vad.temc', 'b']]);
     assert.ok(requests.some(({ url }) => url.endsWith(`/${asset.file}/token`)));
     assert.equal(JSON.parse(fs.readFileSync(path.join(target, '.install-state.json'))).key, platform);
   });
@@ -204,6 +219,21 @@ for (const platform of ['ios', 'android', 'web']) {
     assert.equal(fs.readFileSync(path.join(target, 'previous.txt'), 'utf8'), 'previous engine');
   });
 }
+
+test('rejects an archive with two models for one role', async (t) => {
+  const [denoise, vad] = engineManifest.models;
+  const archiveManifest = { schemaVersion: 1, models: [denoise, { ...vad, id: 'engine-denoise-2' }] };
+  const { installBinary } = installerFixture(t, { platform: 'web', archiveManifest });
+  await assert.rejects(installBinary('web'), /more than one denoise model/);
+});
+
+test('keeps desktop model files that the engine finds by name', async (t) => {
+  const archiveManifest = { schemaVersion: 1, models: [{ id: 'engine-denoise-1', file: 'engine-denoise-1.onnx', format: 'onnx' }] };
+  const { root, installBinary, asset } = installerFixture(t, { archiveManifest });
+  await installBinary();
+  const installed = fs.readFileSync(path.join(root, 'vendor', asset.platform, 'models/manifest.json'));
+  assert.deepEqual(JSON.parse(installed), archiveManifest);
+});
 
 for (const platform of ['ios', 'android', 'web']) {
   test(`selects ${platform} through the explicit environment and repairs missing installed files`, async (t) => {

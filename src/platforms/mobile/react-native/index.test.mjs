@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 
 // Nitro uses only a JS boundary double; the real public wrapper runs.
-function fixture(assets = ['dfn3-48.temc', 'silero-vad.temc']) {
+function fixture(assets = ['denoise.temc', 'vad.temc']) {
   const status = () => JSON.stringify({ state: 'authorized', remaining_ms: 1000 });
   const warnings = [];
   const native = {
@@ -201,12 +201,12 @@ test('재승인된 capture는 기존 모델과 callback을 재사용한다', asy
 });
 
 test('동일 asset 목록의 모델 중복은 거부한다', async () => {
-  const { create } = fixture(['dfn3-48.temc', 'dfn3-48.temc']);
+  const { create } = fixture(['denoise.temc', 'denoise.temc']);
   await assert.rejects((await create()).createModelKeyRequests(), /duplicate_encrypted_model/);
 });
 
 test('runtime denoise 전환에 필요한 denoise 모델과 VAD 모델 구성을 검증한다', async () => {
-  for (const assets of [['dfn3-48.temc'], ['silero-vad.temc']]) {
+  for (const assets of [['denoise.temc'], ['vad.temc']]) {
     const { create } = fixture(assets);
     await assert.rejects((await create()).createModelKeyRequests(), /encrypted_model_binding_invalid/);
   }
@@ -214,10 +214,10 @@ test('runtime denoise 전환에 필요한 denoise 모델과 VAD 모델 구성을
 
 test('SDK 기본 asset은 모드와 출력 레이트와 무관하게 Denoise 모델과 VAD 모델만 고른다', async () => {
   for (const [config, expected] of [
-    [{}, ['dfn3-48', 'silero-vad']],
-    [{ processing: { sampleRate: 48000 }, vadEnabled: false }, ['dfn3-48']],
-    [{ denoiseMode: 'general' }, ['dfn3-48', 'silero-vad']],
-    [{ denoiseMode: 'close_talk', processing: { sampleRate: 48000 }, vadEnabled: false }, ['dfn3-48']],
+    [{}, ['denoise', 'vad']],
+    [{ processing: { sampleRate: 48000 }, vadEnabled: false }, ['denoise']],
+    [{ denoiseMode: 'general' }, ['denoise', 'vad']],
+    [{ denoiseMode: 'close_talk', processing: { sampleRate: 48000 }, vadEnabled: false }, ['denoise']],
   ]) {
     const { native, create } = fixture(null);
     const requests = await (await create(config)).createModelKeyRequests();
@@ -256,7 +256,7 @@ test('Denoise 모델 로드 실패는 로그를 남기고 VAD 모델을 이어�
   const { native, create, emit, warnings } = fixture();
   const loadModelFile = native.loadModelFile;
   native.loadModelFile = async path => {
-    if (path === 'dfn3-48.temc') throw new Error('model_load_failed');
+    if (path === 'denoise.temc') throw new Error('model_load_failed');
     await loadModelFile(path);
   };
   native.getStatus = async () => JSON.stringify({ lifecycle: 'stopped', denoise_enabled: false, denoise_load_failed: true, denoise_mode: 'close_talk' });
@@ -264,10 +264,10 @@ test('Denoise 모델 로드 실패는 로그를 남기고 VAD 모델을 이어�
 
   await applyAllModelKeys(capture);
 
-  assert.deepEqual(native.loaded, ['silero-vad.temc']);
+  assert.deepEqual(native.loaded, ['vad.temc']);
   assert.equal(warnings.length, 1);
   assert.match(warnings[0][0], /denoise_load_failed/);
-  assert.deepEqual(Array.from((await capture.getStatus()).modelsLoaded), ['silero-vad']);
+  assert.deepEqual(Array.from((await capture.getStatus()).modelsLoaded), ['vad']);
   const received = [];
   await capture.start((error, chunk) => { assert.equal(error, null); received.push(chunk); });
   emit();
@@ -275,7 +275,7 @@ test('Denoise 모델 로드 실패는 로그를 남기고 VAD 모델을 이어�
 });
 
 test('Denoise 모델 로드 실패는 재승인 때 다시 키를 요청하지 않는다', async () => {
-  const { native, create } = fixture(['dfn3-48.temc']);
+  const { native, create } = fixture(['denoise.temc']);
   native.loadModelFile = async () => { throw new Error('model_load_failed'); };
   native.getStatus = async () => JSON.stringify({ lifecycle: 'running', denoise_load_failed: true });
   const capture = await create({ vadEnabled: false });
@@ -285,7 +285,7 @@ test('Denoise 모델 로드 실패는 재승인 때 다시 키를 요청하지 �
 });
 
 test('native가 Denoise 모델 로드 실패로 기록하지 않은 오류와 VAD 모델 로드 실패는 그대로 전달한다', async () => {
-  for (const [failing, recorded] of [['dfn3-48.temc', false], ['silero-vad.temc', true]]) {
+  for (const [failing, recorded] of [['denoise.temc', false], ['vad.temc', true]]) {
     const { native, create, warnings } = fixture();
     native.loadModelFile = async path => { if (path === failing) throw new Error('model_container_authentication_failed'); };
     native.getStatus = async () => JSON.stringify({ lifecycle: 'stopped', denoise_load_failed: recorded });
