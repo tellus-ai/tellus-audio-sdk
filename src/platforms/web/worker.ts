@@ -1,6 +1,6 @@
 import type { AudioCaptureConfig, BrowserEngineAssets } from '../../bindings/typescript/capture-types.js';
 import { NativeEngine, type EngineModule, type NativeCapture } from './native.js';
-import type { DeliveredChunk, NativeStatus, WorkerCommand, WorkerRequest, WorkerResponse, WorkerStatus } from './protocol.js';
+import { isVadModel, type DeliveredChunk, type NativeStatus, type WorkerCommand, type WorkerRequest, type WorkerResponse, WorkerStatus } from './protocol.js';
 
 interface EncryptedModel {
   model_id: string;
@@ -72,9 +72,9 @@ async function initialize(assets: BrowserEngineAssets): Promise<void> {
 
 // The engine owns the denoise model choice, so any container that is not the VAD model counts as the denoise model. Core rejects one it does not support.
 function requiredModels(config: AudioCaptureConfig): EncryptedModel[] {
-  const selected = models.filter((model) => config.vadEnabled || model.model_id !== 'silero-vad');
-  const hasDenoise = selected.some((model) => model.model_id !== 'silero-vad');
-  const hasVad = selected.some((model) => model.model_id === 'silero-vad');
+  const selected = models.filter((model) => config.vadEnabled || !isVadModel(model.model_id));
+  const hasDenoise = selected.some((model) => !isVadModel(model.model_id));
+  const hasVad = selected.some((model) => isVadModel(model.model_id));
   if ((config.denoiseEnabled && !hasDenoise) || (config.vadEnabled && !hasVad)) throw new Error('tellus_encrypted_model_missing');
   return selected;
 }
@@ -121,7 +121,7 @@ async function dispatch(request: WorkerRequest): Promise<unknown> {
     case 'status': {
       const status = await native.json<NativeStatus>('get_status');
       const loadedModels = session.models.map((model) => model.model_id)
-        .filter((id) => id === 'silero-vad' ? status.vad_loaded : status.denoise_loaded);
+        .filter((id) => isVadModel(id) ? status.vad_loaded : status.denoise_loaded);
       return { ...status, loadedModels } satisfies WorkerStatus;
     }
     case 'denoise': await native.call('set_denoise_enabled', [command.enabled ? 1 : 0]); return command.enabled;
@@ -156,7 +156,7 @@ async function loadModels(session: Session, command: Extract<WorkerCommand, { op
     try { await session.native.loadModel(model.bytes); }
     catch (error) {
       // Capture continues without denoise if the denoise model fails to load. Only a failure core recorded that way is tolerated; key and container errors still throw.
-      if (model.model_id === 'silero-vad' || !(await session.native.json<NativeStatus>('get_status')).denoise_load_failed) throw error;
+      if (isVadModel(model.model_id) || !(await session.native.json<NativeStatus>('get_status')).denoise_load_failed) throw error;
       console.warn('tellus_denoise_load_failed: capture continues without denoise', error);
     }
   }
