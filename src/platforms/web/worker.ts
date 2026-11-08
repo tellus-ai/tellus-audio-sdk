@@ -1,4 +1,5 @@
 import type { AudioCaptureConfig, BrowserEngineAssets } from '../../bindings/typescript/capture-types.js';
+import { validateGainDb } from '../../bindings/typescript/audio-gain.js';
 import { NativeEngine, type EngineModule, type NativeCapture } from './native.js';
 import { isVadModel, type DeliveredChunk, type NativeStatus, type WorkerCommand, type WorkerRequest, type WorkerResponse, WorkerStatus } from './protocol.js';
 
@@ -91,6 +92,7 @@ async function dispatch(request: WorkerRequest): Promise<unknown> {
   const session = sessions.get(request.sessionId);
   if (!session) throw new Error('tellus_capture_disposed');
   if (request.epoch !== session.epoch && command.operation !== 'invalidate' && command.operation !== 'destroy') {
+    if (command.operation === 'micGainDb') throw new Error('tellus_capture_cancelled');
     return command.operation === 'capture' || command.operation === 'stop' ? [] : undefined;
   }
   const native = session.native;
@@ -125,6 +127,7 @@ async function dispatch(request: WorkerRequest): Promise<unknown> {
       return { ...status, loadedModels } satisfies WorkerStatus;
     }
     case 'denoise': await native.call('set_denoise_enabled', [command.enabled ? 1 : 0]); return command.enabled;
+    case 'micGainDb': return native.call('set_mic_gain_db', [validateGainDb(command.db)]);
     case 'clearRender': return native.call('clear_render');
     case 'canDeliver': return native.canDeliver(command.nativeEpoch, command.authorizationGeneration);
     case 'render': await native.push(command.samples, command.rate); return;

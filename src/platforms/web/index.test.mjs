@@ -6,6 +6,25 @@ import { outputSampleRate } from '../../../platforms/web/runtime/platforms/web/p
 
 const assets = { engineModuleUrl: 'engine.mjs', wasmUrl: 'engine.wasm', ortWasmBaseUrl: 'ort/', encryptedModels: [] };
 
+test('invalid gain and unsupported system capture gain fail before browser resources are allocated', async () => {
+  const { contexts, workers } = environment();
+  for (const config of [
+    { micGainDb: NaN }, { micGainDb: Infinity }, { micGainDb: -61 }, { micGainDb: 13 }, { micGainDb: null },
+    { autoGainControl: null }, { autoGainControl: { enabled: 'yes' } }, { autoGainControl: { enabled: null } },
+    { autoGainControl: { maximumGain: 5 } }, { micAgc2Enabled: 'yes', autoGainControl: { enabled: false } },
+    { autoGainControl: { maxGainDb: 31 } }, { autoGainControl: { maxGainDb: -1 } },
+    { autoGainControl: { maxOutputNoiseLevelDbfs: -91 } }, { autoGainControl: { maxOutputNoiseLevelDbfs: 1 } },
+    { autoGainControl: { maxGainChangeDbPerSecond: 0 } }, { autoGainControl: { maxGainChangeDbPerSecond: 61 } },
+    { autoGainControl: { headroomDb: -1 } }, { autoGainControl: { headroomDb: 31 } },
+    { autoGainControl: { peakLevelDbfs: -25 } }, { autoGainControl: { peakLevelDbfs: 1 } },
+  ]) await assert.rejects(AudioEngine.init(config, assets), /gain.*invalid|invalid.*gain/);
+  await assert.rejects(AudioEngine.init({ speakerGainDb: 1 }, assets), /speaker_gain_unsupported/);
+  assert.equal(contexts.length, 0);
+  assert.equal(workers.length, 0);
+  const engine = await AudioEngine.init({ speakerGainDb: 0 }, assets);
+  await engine.dispose();
+});
+
 function environment(setSinkId) {
   const contexts = [];
   const workers = [];
@@ -141,7 +160,8 @@ test('device selectors never enter the Rust processing configuration', async () 
     },
   };
   await new NativeEngine(module).create({ micDeviceId: 'mic-b', playbackDeviceId: 'speaker-b', systemAudioDeviceId: 'sink-b', iosOutputRoute: 'speaker' });
-  assert.deepEqual(configured, { sampleRate: 16000, denoise: false, denoiseMode: 'close_talk', vad: false, echoCancellation: true, micAgc2: false, transport: { codec: 'opus' } });
+  assert.deepEqual(configured, { sampleRate: 16000, denoise: false, denoiseMode: 'close_talk', vad: false, echoCancellation: true, micAgc2: false,
+    micGainDb: 0, autoGainControl: { enabled: false, maxGainDb: 12, maxOutputNoiseLevelDbfs: -50, maxGainChangeDbPerSecond: 3, headroomDb: 6, peakLevelDbfs: -3 }, transport: { codec: 'opus' } });
   await new NativeEngine(module).create({ denoiseMode: ' General ', processing: { sampleRate: 16000 } });
   assert.deepEqual([configured.denoiseMode, configured.sampleRate], ['general', 16000]);
   assert.equal('denoiseModel' in configured, false);

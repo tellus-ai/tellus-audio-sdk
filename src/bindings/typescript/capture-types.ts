@@ -1,5 +1,7 @@
 import type { AuthorizableAudioCapture } from './authorization/contracts.js';
 import type { AudioDeviceStatus } from './audio-devices.js';
+import type { AutoGainControlConfig } from './audio-gain.js';
+export type { AutoGainControlConfig } from './audio-gain.js';
 
 export interface AudioCaptureConfig {
   micEnabled?: boolean;
@@ -19,6 +21,12 @@ export interface AudioCaptureConfig {
   denoiseMode?: 'close_talk' | 'general';
   vadEnabled?: boolean;
   echoCancellationEnabled?: boolean;
+  /** Per-session digital microphone gain, -60..12 dB; default 0. Never changes OS input volume. */
+  micGainDb?: number;
+  /** Captured system audio gain; web/mobile support only the neutral default 0. Does not control playback. */
+  speakerGainDb?: number;
+  autoGainControl?: AutoGainControlConfig;
+  /** @deprecated Use autoGainControl. The new config takes precedence when supplied. */
   micAgc2Enabled?: boolean;
   /**
    * sampleRate is the engine output rate: chunks, payloads, and sample clocks the caller receives use it. Defaults to 16000.
@@ -92,6 +100,9 @@ export interface AudioCapture extends AuthorizableAudioCapture {
   dispose(): Promise<void>;
   getStatus(): Promise<CaptureStatus>;
   setDenoiseEnabled(enabled: boolean): Promise<void>;
+  setMicGainDb(db: number): Promise<void>;
+  /** Captured system audio gain. Rejects on web/mobile where system capture is unsupported. */
+  setSpeakerGainDb(db: number): Promise<void>;
   /** Discards processing history and undelivered output while keeping authorization and capture. */
   reset(): Promise<void>;
   /** Waits for playback to finish and passes the same samples to the engine as the AEC reference. */

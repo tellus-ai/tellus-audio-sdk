@@ -1,10 +1,11 @@
 import { NitroModules } from 'react-native-nitro-modules';
+import { gainConfig, validateGainDb } from '../../../bindings/typescript/audio-gain.js';
 import type { TellusCapture } from './TellusCapture.nitro.js';
 import type { AudioCapture, AudioCaptureCallback, AudioCaptureConfig, AudioChunk, CaptureStatus, NativeEngineAssets, RecordingNotificationConfig } from '../../../bindings/typescript/capture-types.js';
 import type { EngineAuthorizationRequest, EngineAuthorizationStatus, EngineModelKey, EngineModelKeyRequest } from '../../../bindings/typescript/authorization/contracts.js';
 import type { AudioDeviceListResult, AudioDeviceSource, AudioDeviceStatus } from '../../../bindings/typescript/audio-devices.js';
 
-export type { AudioCapture, AudioCaptureCallback, AudioCaptureConfig, AudioChunk, CaptureStatus, NativeEngineAssets, RecordingNotificationConfig, VADConfig } from '../../../bindings/typescript/capture-types.js';
+export type { AudioCapture, AudioCaptureCallback, AudioCaptureConfig, AudioChunk, CaptureStatus, NativeEngineAssets, RecordingNotificationConfig, VADConfig, AutoGainControlConfig } from '../../../bindings/typescript/capture-types.js';
 export type { AudioDeviceInfo, AudioDeviceListResult, AudioDeviceOperationError, AudioDeviceSource, AudioDeviceStatus } from '../../../bindings/typescript/audio-devices.js';
 
 /** Lists the devices the OS currently exposes. Does not request permission or start capture. */
@@ -85,8 +86,10 @@ class NativeAudioCapture implements AudioCapture {
 
   constructor(private config: AudioCaptureConfig, private assets: NativeEngineAssets) {
     const rate = config.processing?.sampleRate ?? 16_000;
+    const gain = gainConfig(config);
     this.denoiseEnabled = config.denoiseEnabled ?? true;
     this.ready = this.native.configure(JSON.stringify({
+      micGainDb: gain.micGainDb, autoGainControl: gain.autoGainControl,
       sampleRate: rate, denoise: this.denoiseEnabled, denoiseMode: denoiseMode(config), vad: config.vadEnabled ?? true,
       echoCancellation: config.echoCancellationEnabled ?? true, micAgc2: config.micAgc2Enabled ?? false,
       transport: { codec: config.transport?.codec ?? 'opus', bitrateBps: config.transport?.bitrateBps },
@@ -251,6 +254,18 @@ class NativeAudioCapture implements AudioCapture {
     await this.native.setDenoiseEnabled(enabled);
     this.denoiseEnabled = enabled;
   }
+  async setMicGainDb(db: number): Promise<void> {
+    validateGainDb(db);
+    const revision = this.controlRevision;
+    await this.ready;
+    this.checkControl(revision);
+    if (typeof this.native.setMicGainDb !== 'function') throw new Error('tellus_audio_gain_unsupported');
+    await this.native.setMicGainDb(db);
+  }
+  async setSpeakerGainDb(db: number): Promise<void> {
+    validateGainDb(db);
+    throw new Error('tellus_speaker_gain_unsupported');
+  }
   async setRecordingNotification(config: RecordingNotificationConfig): Promise<void> {
     await this.ready;
     if (!config.title || config.title.length > 256 || config.contentText.length > 1024) throw new Error('invalid_recording_notification');
@@ -301,6 +316,8 @@ class NativeAudioCapture implements AudioCapture {
 export class AudioEngine {
   private constructor(private config: AudioCaptureConfig, private assets: NativeEngineAssets) {}
   static async init(config: AudioCaptureConfig = {}, assets?: NativeEngineAssets): Promise<AudioEngine> {
+    const gain = gainConfig(config);
+    if (gain.speakerGainDb !== 0) throw new Error('tellus_speaker_gain_unsupported');
     for (const id of [config.micDeviceId, config.systemAudioDeviceId, config.playbackDeviceId]) {
       if (id !== undefined && (typeof id !== 'string' || !id.trim() || id.includes('\0'))) throw new Error('invalid_audio_device_id');
     }
@@ -317,7 +334,7 @@ export class AudioEngine {
     const encryptedModels = assets?.encryptedModels ?? ['denoise.temc',
       ...((config.vadEnabled ?? true) ? ['vad.temc'] : [])];
     if (!encryptedModels.length || encryptedModels.length > 2 || encryptedModels.some(path => !path)) throw new Error('invalid_encrypted_model_assets');
-    return new AudioEngine({ ...config, denoiseMode: mode, processing: { ...config.processing }, transport: { ...config.transport }, vad: config.vad ? { ...config.vad } : undefined },
+    return new AudioEngine({ ...config, ...gain, denoiseMode: mode, processing: { ...config.processing }, transport: { ...config.transport }, vad: config.vad ? { ...config.vad } : undefined },
       { encryptedModels: [...encryptedModels] });
   }
   createCapture(): AudioCapture { return new NativeAudioCapture(this.config, this.assets); }

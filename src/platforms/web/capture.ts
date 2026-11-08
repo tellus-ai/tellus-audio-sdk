@@ -3,6 +3,7 @@ import type {
 } from '../../bindings/typescript/capture-types.js';
 import type { EngineAuthorizationRequest, EngineAuthorizationStatus } from '../../bindings/typescript/authorization/contracts.js';
 import type { AudioDeviceStatus } from '../../bindings/typescript/audio-devices.js';
+import { validateGainDb } from '../../bindings/typescript/audio-gain.js';
 import { CaptureQueue, type CaptureFrame } from './capture-queue.js';
 import { audioDeviceError } from './devices.js';
 import type { DeliveredChunk, WorkerCommand, WorkerStatus } from './protocol.js';
@@ -221,6 +222,16 @@ export class BrowserCapture implements AudioCapture {
       this.denoiseUpdates--;
       if (epoch === this.epoch && this.state === 'running') this.tap?.port.postMessage({ active: true, epoch });
     }
+  }
+
+  async setMicGainDb(db: number): Promise<void> {
+    validateGainDb(db);
+    await this.request({ operation: 'micGainDb', db });
+  }
+
+  async setSpeakerGainDb(db: number): Promise<void> {
+    validateGainDb(db);
+    throw new Error('tellus_speaker_gain_unsupported');
   }
 
   async reset(): Promise<void> {

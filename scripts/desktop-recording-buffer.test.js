@@ -37,7 +37,9 @@ test('desktop recording retains configuration and returns the complete native ba
   const capture = new AudioCapture(config);
   capture.enableRecordingBuffer();
   assert.equal(capture.readRecordingBuffer(), batch);
-  assert.deepEqual(calls, [['config', config], ['enable']]);
+  assert.deepEqual(calls.map(([name]) => name), ['config', 'enable']);
+  assert.equal(calls[0][1].deliveryBufferDurationMs, 10000);
+  assert.equal(calls[0][1].enableRawAudio, true);
 });
 
 test('desktop pause/resume waits for native acknowledgement and stop cancels pending transitions', async () => {

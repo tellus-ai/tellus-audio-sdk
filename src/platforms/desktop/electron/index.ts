@@ -1,4 +1,6 @@
 import { release as osRelease } from 'node:os';
+import { gainConfig, validateGainDb, type AutoGainControlConfig } from '../../../bindings/typescript/audio-gain.js';
+export type { AutoGainControlConfig } from '../../../bindings/typescript/audio-gain.js';
 import type { AudioDeviceSource, AudioDeviceStatus, AudioDeviceListResult } from '../../../bindings/typescript/audio-devices.js';
 export type { AudioDeviceSource, AudioDeviceInfo, AudioDeviceStatus, AudioDeviceListResult, AudioDeviceOperationError } from '../../../bindings/typescript/audio-devices.js';
 
@@ -42,6 +44,11 @@ export interface AudioCaptureConfig {
   micEnabled?: boolean;
   /** Enables speaker/system-audio capture. Native default is false. */
   speakerEnabled?: boolean;
+  /** Per-session digital microphone gain, -60..12 dB. Default 0; never changes OS volume. */
+  micGainDb?: number;
+  /** Captured system audio gain, -60..12 dB. Default 0; does not change playback volume. */
+  speakerGainDb?: number;
+  autoGainControl?: AutoGainControlConfig;
   /** Includes synchronized PCM16 raw frames in chunk.rawAudio. */
   enableRawAudio?: boolean;
   /** Queued audio budget: integer 500..10000 ms, default 5000; payload cap 32MiB. */
@@ -747,7 +754,9 @@ export class AudioCapture {
 
   constructor(config?: AudioCaptureConfig | null) {
     validateDeviceSelection(config);
-    this.#native = new NativeAudioCapture(config);
+    const gain = gainConfig(config ?? {});
+    this.#native = new NativeAudioCapture({ ...config, ...gain });
+    if (config?.micGainDb !== undefined || config?.speakerGainDb !== undefined || config?.autoGainControl !== undefined) this.#requireGainSupport();
     if (config?.deliveryBufferDurationMs !== undefined &&
         typeof this.#native.getStatus().deliveryQueueCapacityBytes !== 'number') {
       throw new Error('delivery_buffer_unsupported: install a native engine with configurable delivery retention');
@@ -788,6 +797,26 @@ export class AudioCapture {
         typeof this.#native.setSpeakerMuted !== 'function') {
       throw new Error('source_mute_unsupported: install a native engine with source mute support');
     }
+  }
+
+  #requireGainSupport(): void {
+    if (typeof this.#native.setMicGainDb !== 'function' || typeof this.#native.setSpeakerGainDb !== 'function') {
+      throw new Error('audio_gain_unsupported: install a native engine with digital gain support');
+    }
+  }
+
+  /** Updates digital microphone gain without changing OS input volume or original raw PCM. */
+  setMicGainDb(db: number): void {
+    validateGainDb(db);
+    this.#requireGainSupport();
+    this.#native.setMicGainDb(db);
+  }
+
+  /** Updates captured system audio gain; playback volume is unaffected. */
+  setSpeakerGainDb(db: number): void {
+    validateGainDb(db);
+    this.#requireGainSupport();
+    this.#native.setSpeakerGainDb(db);
   }
 
   /** Mutes or unmutes the microphone from the next chunk. The device stays open and sound during mute is discarded. */
@@ -1009,8 +1038,9 @@ export const isBuiltInSpeaker: () => boolean = nativeIsBuiltInSpeaker;
 export const init: (
   config?: AudioCaptureConfig | null,
   options?: AudioEngineInitOptions | null,
-) => AudioEngineInitStatus = (config, options) => normalizeInitStatus(nativeInit(config, options));
+) => AudioEngineInitStatus = (config, options) => normalizeInitStatus(nativeInit({ ...config, ...gainConfig(config ?? {}) }, options));
 export const preloadModels: (config?: AudioCaptureConfig | null) => AudioEngineModelsPreloadStatus = (config) => {
+  config = { ...config, ...gainConfig(config ?? {}) };
   const nativePreloadModels = nativeBinding.preloadModels;
   if (typeof nativePreloadModels === 'function') {
     return normalizeModelsPreloadStatus(nativePreloadModels(config));
