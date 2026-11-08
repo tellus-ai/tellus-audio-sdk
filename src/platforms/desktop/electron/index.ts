@@ -3,6 +3,7 @@ import type { AudioDeviceSource, AudioDeviceStatus, AudioDeviceListResult } from
 export type { AudioDeviceSource, AudioDeviceInfo, AudioDeviceStatus, AudioDeviceListResult, AudioDeviceOperationError } from '../../../bindings/typescript/audio-devices.js';
 
 import { prepareEngineRuntime } from './runtime/engine-runtime.js';
+import { waitForCaptureTransition } from './capture-transition.js';
 import type { EngineAuthorizationRequest, EngineAuthorizationStatus } from '../../../bindings/typescript/authorization/contracts.js';
 
 export interface AudioProcessingConfig {
@@ -79,7 +80,7 @@ export interface VADConfig {
 export interface AudioCaptureSpan {
   offset: number;
   sampleCount: number;
-  /** Decimal Windows QPC nanoseconds, matching video firstFrame.monotonic. */
+  /** Decimal monotonic nanoseconds in captureClock's domain. */
   capturedAtNs: string;
 }
 
@@ -94,7 +95,7 @@ export interface RawAudioFrame {
   timestamp: number;
   /** RMS level, 0.0 to 1.0. */
   rms: number;
-  captureClock?: 'windows-qpc' | null;
+  captureClock?: 'windows-qpc' | 'macos-monotonic' | null;
   captureSpans?: AudioCaptureSpan[] | null;
 }
 
@@ -142,6 +143,8 @@ export interface AudioChunk {
   sampleRate: number;
   /** Number of samples per channel in this transport chunk. */
   sampleCount: number;
+  /** Valid input prefix; an encoder tail can contain padding after this sample. */
+  validSampleCount?: number | null;
   /** Duration covered by this transport chunk in milliseconds. */
   durationMs: number;
   sample: number;
@@ -738,6 +741,7 @@ const MEETING_SYNC_UNSUPPORTED = 'meeting_sync_unsupported: install a native eng
 
 export class AudioCapture {
   #native: any;
+  #transition = 0;
   // The engine releases the sync callback on stop, so it is kept here to register again before the next start.
   #meetingSyncCallback?: MeetingSyncCallback;
 
@@ -845,13 +849,32 @@ export class AudioCapture {
 
   pause(): void {
     this.#native.pause();
+    this.#transition++;
   }
 
   resume(): void {
     this.#native.resume();
+    this.#transition++;
+  }
+
+  /** Resolve after native inputs close and retained DSP/codec tails are enqueued. */
+  async pauseAndDrain(): Promise<void> {
+    this.pause();
+    const transition = this.#transition;
+    await waitForCaptureTransition(() => this.getState(), 'paused',
+      () => transition === this.#transition, () => this.stop());
+  }
+
+  /** Resolve after enabled native sources have supplied fresh PCM. */
+  async resumeWhenReady(): Promise<void> {
+    this.resume();
+    const transition = this.#transition;
+    await waitForCaptureTransition(() => this.getState(), 'recording',
+      () => transition === this.#transition, () => this.stop());
   }
 
   stop(): void {
+    this.#transition++;
     this.#native.stop();
   }
 

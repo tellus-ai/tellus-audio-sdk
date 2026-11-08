@@ -11,6 +11,8 @@ function loadWrapper(NativeAudioCapture) {
   const exports = {};
   vm.runInNewContext(fs.readFileSync(wrapperPath, 'utf8'), {
     exports,
+    setTimeout,
+    Date,
     require(specifier) {
       if (specifier === './runtime/engine-runtime.js') {
         return { prepareEngineRuntime: () => ({ nativeBinding: { AudioCapture: NativeAudioCapture } }) };
@@ -36,6 +38,30 @@ test('desktop recording retains configuration and returns the complete native ba
   capture.enableRecordingBuffer();
   assert.equal(capture.readRecordingBuffer(), batch);
   assert.deepEqual(calls, [['config', config], ['enable']]);
+});
+
+test('desktop pause/resume waits for native acknowledgement and stop cancels pending transitions', async () => {
+  let state = 'recording';
+  const { AudioCapture } = loadWrapper(class {
+    pause() { state = 'pausing'; }
+    resume() { state = 'resuming'; }
+    stop() { state = 'idle'; }
+    getState() { return state; }
+  });
+  const capture = new AudioCapture();
+  let completed = false;
+  const pausing = capture.pauseAndDrain().then(() => { completed = true; });
+  await new Promise(resolve => setTimeout(resolve, 15));
+  assert.equal(completed, false);
+  state = 'paused';
+  await pausing;
+  const resuming = capture.resumeWhenReady();
+  state = 'recording';
+  await resuming;
+  const cancelled = capture.pauseAndDrain();
+  capture.stop();
+  state = 'paused';
+  await assert.rejects(cancelled, /capture_transition_replaced/);
 });
 
 test('desktop recording refuses an engine without the independent buffer API', () => {

@@ -54,6 +54,10 @@ npm pack --workspace @tellus-ai/audio-sdk-mobile
 
 파일 녹음은 정상 서버 permit을 적용한 idle 상태에서 `enableRecordingBuffer()`를 호출한 뒤 시작합니다. `readRecordingBuffer()`의 `chunks`, `error`, 누적 `droppedChunks`·`droppedSamples`를 검사하고, `stop()` 이후 권한을 해제하기 전에 `queuedChunks === 0`까지 배출합니다. 파일은 콜백 복사본과 중복 저장하지 않습니다. 누락이나 오류가 있으면 불완전 녹음으로 처리합니다. 이 API가 없는 엔진은 `recording_buffer_unsupported`로 거부하며, SDK 버전만으로 지원 여부를 추정하지 않습니다. Windows raw PCM의 `captureClock`·`captureSpans`는 원래 장치 시각 그대로 전달합니다.
 
+`pauseAndDrain()`은 native의 `paused` 확인까지, `resumeWhenReady()`는 `recording` 확인까지 기다립니다. 전환 중 `stop()` 또는 다른 전환이 발생하면 이전 요청은 실패하며, 6초 안에 확인되지 않으면 캡처를 중지하고 오류를 반환합니다. 이 완료 계약은 drain/ready 상태를 구현한 새 native 엔진과 함께 배포해야 합니다. 이전 바이너리가 즉시 `paused`를 반환한다면 wrapper만으로 drain을 보장할 수 없습니다.
+
+raw PCM의 `captureClock`은 Windows의 `windows-qpc`와 macOS의 `macos-monotonic`을 구분합니다. 인코더 tail의 `validSampleCount`는 유효 입력 prefix이며, padding을 실제 입력으로 해석하지 않습니다. 기존 메타데이터를 변환하거나 삭제하지 않고 전달합니다.
+
 ## 장치 조회와 선택
 
 각 플랫폼은 `listAudioDevices('microphone' | 'system_audio' | 'playback')`을 제공합니다. 결과는 `{ status, devices: [{ id, label }] }`이며 ID는 조회한 값을 그대로 사용합니다. 이름이나 목록 순서로 장치를 지정하지 않습니다. 조회는 권한 요청이나 임시 캡처를 수행하지 않으며, 목록 조회의 `ready`는 스트림 선택 성공을 보장하지 않습니다. ID는 OS 재시작이나 브라우저 권한 초기화 이후 유지되지 않을 수 있습니다.
