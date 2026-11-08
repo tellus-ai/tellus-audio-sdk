@@ -39,3 +39,16 @@ async function createEngine(micDeviceId: string, playbackDeviceId: string, asset
 마이크는 `getUserMedia`의 exact `deviceId`로 선택합니다. 재생 출력은 엔진이 공유하는 `AudioContext`에 적용되며 그 엔진의 PCM·encoded 재생 모두에 적용됩니다. 브라우저의 `setSinkId` 지원과 출력 권한이 필요합니다. 앱은 지원되는 경우 사용자 클릭에서 `selectAudioOutput()`으로 출력 권한을 얻고 반환된 ID를 전달할 수 있습니다. 다른 앱의 출력이나 OS 기본 장치는 변경하지 않습니다.
 
 조회는 브라우저가 공개한 ID와 label을 그대로 반환하며 권한 전에는 label이 비어 있을 수 있습니다. 시스템 오디오 캡처 선택은 `unsupported`입니다. 출력 선택 실패 시 init 오류에 `deviceStatus`가 포함되며 AudioContext와 Worker를 정리합니다. 기존 capture의 stop/start는 같은 설정을 다시 사용하므로 장치를 바꾸려면 새 엔진을 생성합니다.
+
+## 마이크 게인
+
+```ts
+const engine = await AudioEngine.init({
+  micGainDb: -3,
+  autoGainControl: { enabled: true, maxGainDb: 8 },
+}, assets);
+const capture = engine.createCapture();
+await capture.setMicGainDb(0);
+```
+
+브라우저 AGC는 `getUserMedia`에서 꺼 두며 OS 입력 볼륨은 조절하지 않습니다. 위 자동 보정은 Worker의 denoise 이후 마이크 처리에만 적용됩니다. `micGainDb` 기본값은 0 dB, 범위는 -60..+12 dB입니다. 자동 보정은 기본 꺼짐이며 `autoGainControl`은 deprecated `micAgc2Enabled`보다 우선합니다. 시스템 오디오 캡처는 지원하지 않으므로 0이 아닌 `speakerGainDb`와 모든 `setSpeakerGainDb()` 호출은 `tellus_speaker_gain_unsupported`로 실패합니다. `playback()` 출력 볼륨은 영향을 받지 않습니다. [공통 한계값과 검증 안내](../../README.md#디지털-게인과-자동-보정)를 확인하고 대응하는 엔진 WASM과 정적 자산을 함께 배포하세요.

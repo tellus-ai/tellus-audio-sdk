@@ -42,3 +42,16 @@ Android는 입력·출력 장치 ID를 조회하고 `micDeviceId`와 `playbackDe
 iOS 입력은 현재 AVAudioSession이 노출한 `availableInputs`의 UID입니다. 조회만으로 권한이나 session category를 바꾸지 않아 준비 전 목록이 비어 있을 수 있습니다. 출력은 `iosOutputRoute: 'speaker' | 'system'`으로 내장 스피커 override 또는 override 해제를 요청합니다. `system`은 기존 OS 라우팅을 따르며 수화기 강제를 의미하지 않습니다. 출력 override가 입력도 바꾸면 명시 입력과 실제 route를 비교하여 실패를 전달합니다. iOS의 임의 `playbackDeviceId`와 모바일 시스템 오디오 선택은 `unsupported`입니다.
 
 선택값은 OS 연결 계층에서만 사용하고 Rust 처리 설정에 전달하지 않습니다. SDK 변경 후 앱의 iOS·Android 네이티브 모듈을 다시 빌드해야 합니다. 장치 제거, 잘못된 ID, pause/resume과 재생 중 route 변경은 실제 장치에서 확인하세요.
+
+## 마이크 게인
+
+```ts
+const engine = await AudioEngine.init({
+  micGainDb: -3,
+  autoGainControl: { enabled: true, maxGainDb: 8 },
+});
+const capture = engine.createCapture();
+await capture.setMicGainDb(0);
+```
+
+게인은 세션의 처리된 마이크 신호만 바꾸며 OS 입력 볼륨과 재생 볼륨은 유지합니다. 기본값은 0 dB, 범위는 -60..+12 dB입니다. 자동 보정은 기본 꺼짐이며 명시한 `autoGainControl`은 deprecated `micAgc2Enabled`보다 우선합니다. 0이 아닌 `speakerGainDb`와 모든 `setSpeakerGainDb()` 호출은 시스템 오디오 캡처 미지원으로 `tellus_speaker_gain_unsupported`를 반환합니다. 대응하는 엔진 라이브러리와 SDK 네이티브 모듈을 함께 다시 빌드하세요. [공통 한계값과 검증 안내](../../README.md#디지털-게인과-자동-보정)를 따르고, OS·장치 자체 입력 처리의 실제 적용 여부는 iOS·Android 장치에서 확인해야 합니다. JS 테스트 통과만으로 하드웨어 처리가 없다고 보장하지 않습니다.

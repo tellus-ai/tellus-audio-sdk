@@ -48,6 +48,18 @@ npm pack --workspace @tellus-ai/audio-sdk-mobile
 
 모든 변경의 완료 조건은 `npm run verify:pre-commit` 통과입니다. 이 명령은 SDK 테스트·JS 구문 검사·세 설치 패키지 검증을 실행합니다.
 
+## 디지털 게인과 자동 보정
+
+새 엔진은 캡처 시작·일시정지·재개·재시도·종료 중 OS 마이크 입력 볼륨을 변경하지 않습니다. 이전의 입력 100% 자동 설정에 의존했다면 OS 입력 수준은 사용자가 정하고, 세션의 처리된 신호만 `micGainDb`로 보정하세요. `micGainDb`와 `speakerGainDb`는 기본 0 dB이며 유한한 -60..+12 dB만 받습니다. 원본 raw PCM, OS 볼륨, SDK 재생 볼륨은 바꾸지 않습니다. `speakerGainDb`는 Desktop에서 캡처한 시스템 오디오에만 적용됩니다. Web·Mobile은 설정의 기본값 0만 허용하고, 0이 아닌 설정 또는 `setSpeakerGainDb()` 호출은 `tellus_speaker_gain_unsupported`로 거부합니다.
+
+Web·Mobile의 `setMicGainDb()`는 Promise를 반환합니다. 설정 대기 중 pause/stop/dispose 또는 승인 취소로 해당 제어 작업이 취소되면 Promise를 reject합니다. 적용되지 않은 변경을 성공으로 처리하지 마세요. 일시정지가 끝난 뒤 새 setter 호출로 다시 요청할 수 있습니다.
+
+`autoGainControl`은 denoise 이후 마이크 신호를 자동 보정하며 기본값은 꺼짐입니다. 명시적으로 `{ enabled: true }`를 전달해야 켜집니다. `maxGainDb` 기본 12(범위 0..30), `maxOutputNoiseLevelDbfs` 기본 -50(-90..0), `maxGainChangeDbPerSecond` 기본 3(0 초과..60), `headroomDb` 기본 6(0..30), `peakLevelDbfs` 기본 -3(-24..0)입니다. 음성 확신과 노이즈 추정에 따라 증가를 제한하고 피크 제한을 적용합니다. 이 기본값은 모든 마이크에 대한 보정값이 아니므로 실제 입력으로 확인하세요. Web·Mobile의 기존 `micAgc2Enabled`는 deprecated 명시 opt-in 별칭입니다. `autoGainControl`을 전달하면 별칭보다 우선하며, 빈 객체도 자동 보정을 켜지 않습니다.
+
+이 기능은 대응하는 새 엔진 바이너리·WASM과 Mobile 네이티브 모듈이 필요합니다. 현재 고정된 release archive를 새 기능의 배포 완료로 해석하지 마세요. Desktop의 구형 엔진은 명시 게인 설정과 setter를 `audio_gain_unsupported`로 거부합니다. SDK 소스 빌드만으로 기존 엔진의 OS 입력 볼륨 동작을 바꿀 수 없습니다.
+
+검증은 `npm run verify:pre-commit`으로 설정 전달, 잘못된 값 거부, Worker 세션 소유권, dispose 이후 명령 취소, 패키지 타입 공개를 확인합니다. 실제 하드웨어 검증 시 시작 전 OS 입력 수준을 기록하고 start/pause/resume/stop 후 같은지 비교하세요. 마이크·시스템 오디오를 각각 녹음해 게인을 바꿔 보고, raw PCM이 있는 Desktop에서는 원본이 유지되는지 확인합니다. 자동 보정은 원본 녹음을 보존한 채 음성·무음·노이즈 구간으로 확인합니다. 이 SDK 테스트는 Windows·iOS·Android 실제 장치 검증을 대신하지 않습니다.
+
 ## Desktop 소비 지연과 파일 녹음
 
 `deliveryBufferDurationMs`는 native 콜백 큐의 시간 예산입니다. 명시한 예산을 지원하지 않는 엔진은 `delivery_buffer_unsupported`로 거부합니다. 설치 검증은 manifest·vendor 메타데이터와 실제 `getStatus().engineVersion`이 고정 버전과 일치하는지도 확인합니다.
