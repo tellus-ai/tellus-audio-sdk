@@ -186,6 +186,14 @@ std::shared_ptr<Promise<void>> HybridTellusCapture::setDenoiseEnabled(bool enabl
   });
 }
 
+std::shared_ptr<Promise<void>> HybridTellusCapture::setMicGainDb(double db) {
+  if (!std::isfinite(db) || db < -60 || db > 12) throw std::invalid_argument("invalid_audio_gain_db");
+  auto session = acquire();
+  return session->submit([state = session.get(), db] {
+    state->check(tellus_audio_session_set_mic_gain_db(state->handle, static_cast<float>(db)));
+  });
+}
+
 std::shared_ptr<Promise<void>> HybridTellusCapture::setRecordingNotification(
     const std::string& title, const std::string& contentText, bool pauseAction, bool resumeAction,
     const std::function<void(const std::string&)>& onAction) {

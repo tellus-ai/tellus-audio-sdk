@@ -1,4 +1,5 @@
 import type { AudioCaptureConfig, AudioChunk } from '../../bindings/typescript/capture-types.js';
+import { gainConfig } from '../../bindings/typescript/audio-gain.js';
 import { denoiseMode, outputSampleRate, type DeliveredChunk } from './protocol.js';
 
 export interface EngineModule {
@@ -81,11 +82,15 @@ export class NativeEngine {
 }
 
 function nativeConfig(config: AudioCaptureConfig): object {
+  const gain = gainConfig(config);
+  if (gain.speakerGainDb !== 0) throw new Error('tellus_speaker_gain_unsupported');
   if (config.micEnabled === false || config.speakerEnabled || config.enableRawAudio) {
     throw new Error('tellus_browser_capture_requires_encoded_microphone');
   }
   const vad = config.vad;
   return {
+    micGainDb: gain.micGainDb,
+    autoGainControl: gain.autoGainControl,
     sampleRate: outputSampleRate(config),
     denoise: config.denoiseEnabled ?? false,
     denoiseMode: denoiseMode(config),

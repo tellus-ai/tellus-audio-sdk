@@ -1,5 +1,6 @@
 import type { AudioCaptureConfig, BrowserEngineAssets, AudioCapture } from '../../bindings/typescript/capture-types.js';
 import type { AudioDeviceStatus } from '../../bindings/typescript/audio-devices.js';
+import { gainConfig } from '../../bindings/typescript/audio-gain.js';
 import { BrowserCapture } from './capture.js';
 import { audioDeviceError } from './devices.js';
 import { denoiseMode, outputSampleRate } from './protocol.js';
@@ -7,7 +8,7 @@ import { WorkerClient } from './worker-client.js';
 
 export type {
   AudioCapture, AudioCaptureCallback, AudioCaptureConfig, AudioChunk, BrowserEngineAssets,
-  CaptureStatus, VADConfig,
+  CaptureStatus, VADConfig, AutoGainControlConfig,
 } from '../../bindings/typescript/capture-types.js';
 export type {
   AudioDeviceInfo, AudioDeviceListResult, AudioDeviceOperationError, AudioDeviceSource, AudioDeviceStatus,
@@ -23,6 +24,9 @@ export class AudioEngine {
 
   /** Can be prepared before a click. AudioContext resume happens at the user input boundary of start. */
   static async init(config: AudioCaptureConfig, assets: BrowserEngineAssets): Promise<AudioEngine> {
+    const gain = gainConfig(config);
+    if (gain.speakerGainDb !== 0) throw new Error('tellus_speaker_gain_unsupported');
+    config = { ...config, ...gain };
     // Rejects invalid output settings before creating the AudioContext and Worker.
     outputSampleRate(config);
     const base = document.baseURI;

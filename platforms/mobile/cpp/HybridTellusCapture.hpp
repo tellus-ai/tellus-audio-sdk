@@ -33,6 +33,7 @@ public:
   std::shared_ptr<Promise<void>> reset() override;
   std::shared_ptr<Promise<std::string>> getStatus() override;
   std::shared_ptr<Promise<void>> setDenoiseEnabled(bool enabled) override;
+  std::shared_ptr<Promise<void>> setMicGainDb(double db) override;
   std::shared_ptr<Promise<void>> setRecordingNotification(const std::string& title, const std::string& contentText,
     bool pauseAction, bool resumeAction, const std::function<void(const std::string&)>& onAction) override;
   std::shared_ptr<Promise<void>> playback(const std::shared_ptr<ArrayBuffer>& samples, double rate) override;

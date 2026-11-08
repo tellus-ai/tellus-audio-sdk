@@ -30,7 +30,22 @@ async function createEngine(micDeviceId: string, systemAudioDeviceId: string) {
 }
 ```
 
-`speakerEnabled`와 `systemAudioDeviceId`는 시스템 소리 녹음 대상입니다. SDK 재생 출력 선택은 Desktop에서 지원하지 않습니다. Windows는 CPAL 출력 ID, macOS는 14.2+ CoreAudio Tap 출력 UID, Linux는 PulseAudio sink ID를 사용합니다. Linux의 ALSA 기본 경로 alias와 macOS ScreenCaptureKit의 명시 출력 선택은 `unsupported`로 거부합니다. 마이크 레벨 조정은 선택한 장치에만 적용합니다.
+`speakerEnabled`와 `systemAudioDeviceId`는 시스템 소리 녹음 대상입니다. SDK 재생 출력 선택은 Desktop에서 지원하지 않습니다. Windows는 CPAL 출력 ID, macOS는 14.2+ CoreAudio Tap 출력 UID, Linux는 PulseAudio sink ID를 사용합니다. Linux의 ALSA 기본 경로 alias와 macOS ScreenCaptureKit의 명시 출력 선택은 `unsupported`로 거부합니다. OS 입력 볼륨은 유지하며 게인은 해당 캡처의 처리된 신호에만 적용합니다.
+
+## 디지털 게인
+
+```ts
+const engine = await AudioEngine.init({
+  micEnabled: true, speakerEnabled: true,
+  micGainDb: -3, speakerGainDb: -6,
+  autoGainControl: { enabled: false }, // 자동 보정은 명시적으로 켤 때만 사용
+});
+const capture = engine.createCapture();
+capture.setMicGainDb(0);
+capture.setSpeakerGainDb(-3);
+```
+
+게인 기본값은 0 dB, 범위는 -60..+12 dB입니다. `speakerGainDb`는 캡처한 시스템 오디오를 조절하며 재생 볼륨을 바꾸지 않습니다. `rawAudio.mic`·`rawAudio.speaker`는 게인 적용 전 원본입니다. 시작·재개 시 마이크 입력을 100%로 올리던 동작은 제거되었고 OS 수준을 그대로 둡니다. 자동 보정은 `autoGainControl: { enabled: true }`로 선택합니다. 한계값·이전 API 호환·배포 요건은 [공통 안내](../../README.md#디지털-게인과-자동-보정)를 참고하세요. 구형 엔진에서 명시 설정과 setter는 `audio_gain_unsupported`입니다.
 
 신규 native API를 포함한 엔진 빌드가 필요합니다. 현재 고정된 release artifact의 갱신 정책은 [저장소 README](../../README.md#유지보수-빌드)를 확인하세요. 기존 `listMicDevices()`와 `listSpeakerDevices()`의 이름 목록 계약은 유지합니다.
 

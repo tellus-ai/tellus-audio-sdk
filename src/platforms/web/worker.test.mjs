@@ -8,7 +8,7 @@ let instances = 0;
 
 // C ABI boundary double. Reports container bytes as model_id and records the configure JSON and loaded models.
 // Models in loadFailures fail to load; denoiseLoadFailed is the value core reports in its status.
-function engineModule(configured, { loaded, loadFailures, denoiseLoadFailed }) {
+function engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gains }) {
   const heap = new ArrayBuffer(1 << 20);
   let next = 8;
   const module = {
@@ -26,6 +26,7 @@ function engineModule(configured, { loaded, loadFailures, denoiseLoadFailed }) {
       if (name === 'tellus_audio_model_container_inspect') reply({ model_id: text(args[0], args[1]), key_id: 'release-1' }, args[2], args[4]);
       if (name === 'tellus_audio_session_create') module.HEAPU32[args[0] / 4] = 7;
       if (name === 'tellus_audio_session_configure') configured.push(JSON.parse(text(args[1], args[2])));
+      if (name === 'tellus_audio_session_set_mic_gain_db') gains.push([...args]);
       if (name === 'tellus_audio_session_model_key_request') reply({ public_key: 'b'.repeat(64) }, args[1], args[3]);
       if (name === 'tellus_audio_session_get_status') {
         reply({ lifecycle: 'stopped', denoise_load_failed: denoiseLoadFailed, denoise_loaded: loaded.includes('denoise-48'), vad_loaded: loaded.includes('vad') }, args[1], args[3]);
@@ -46,26 +47,53 @@ async function worker(models, { loadFailures = [], denoiseLoadFailed = false } =
   const responses = new Map();
   const configured = [];
   const loaded = [];
+  const gains = [];
   const scope = { postMessage: (response) => {
     const resolve = responses.get(response.id);
     if (typeof resolve !== 'function') throw new Error(`Unexpected worker response: ${response.id}`);
     resolve(response);
   } };
   globalThis.self = scope;
-  globalThis.tellusTestEngine = () => engineModule(configured, { loaded, loadFailures, denoiseLoadFailed });
+  globalThis.tellusTestEngine = () => engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gains });
   globalThis.fetch = async (url) => ({ ok: true, arrayBuffer: async () => encoder.encode(new URL(url).pathname.slice(1).replace('.temc', '')).buffer });
   await import(`../../../platforms/web/runtime/platforms/web/worker.js?instance=${++instances}`);
   let id = 0;
-  const send = (sessionId, command) => new Promise((resolve) => {
+  const send = (sessionId, command, epoch = 0) => new Promise((resolve) => {
     responses.set(++id, resolve);
-    scope.onmessage({ data: { id, sessionId, epoch: 0, command } });
+    scope.onmessage({ data: { id, sessionId, epoch, command } });
   });
   const assets = { engineModuleUrl: moduleUrl('export default (options) => globalThis.tellusTestEngine(options);'),
     wasmUrl: 'https://example.test/engine.wasm', ortModuleUrl: moduleUrl('export const env = { wasm: {} };'),
     ortWasmBaseUrl: 'https://example.test/ort/', encryptedModels: models.map((model) => `https://example.test/${model}.temc`) };
   assert.equal((await send(0, { operation: 'init', assets })).error, undefined);
-  return { send, configured, loaded };
+  return { send, configured, loaded, gains, cancel: (sessionId, epoch) => scope.onmessage({ data: { cancel: sessionId, epoch } }) };
 }
+
+test('gain settings survive the worker native serializer and explicit auto gain overrides the old opt-in', async () => {
+  const { send, configured } = await worker([]);
+  for (const config of [{}, { micAgc2Enabled: true }, { micAgc2Enabled: true, micGainDb: -6, autoGainControl: { enabled: false, maxGainDb: 9 } }]) {
+    assert.equal((await send(0, { operation: 'create', config })).error, undefined);
+  }
+  assert.deepEqual(configured.map(c => c.micGainDb), [0, 0, -6]);
+  assert.ok(configured.every(c => !('speakerGainDb' in c)), 'microphone C ABI rejects system audio gain fields');
+  assert.deepEqual(configured.map(c => c.autoGainControl.enabled), [false, true, false]);
+  assert.deepEqual(configured[2].autoGainControl, { enabled: false, maxGainDb: 9, maxOutputNoiseLevelDbfs: -50, maxGainChangeDbPerSecond: 3, headroomDb: 6, peakLevelDbfs: -3 });
+});
+
+test('runtime gain reaches the native session only for a valid live capture epoch', async () => {
+  const { send, gains, cancel } = await worker([]);
+  const { result: id } = await send(0, { operation: 'create', config: {} });
+  assert.equal((await send(id, { operation: 'micGainDb', db: -6 })).error, undefined);
+  assert.deepEqual(gains, [[7, -6]]);
+  assert.match((await send(id, { operation: 'micGainDb', db: Infinity })).error, /gain.*invalid|invalid.*gain/);
+  cancel(id, 1);
+  assert.match((await send(id, { operation: 'micGainDb', db: 2 })).error, /tellus_capture_cancelled/);
+  assert.deepEqual(gains, [[7, -6]]);
+  await send(id, { operation: 'micGainDb', db: 3 }, 1);
+  assert.deepEqual(gains, [[7, -6], [7, 3]]);
+  await send(id, { operation: 'destroy' }, 1);
+  assert.match((await send(id, { operation: 'micGainDb', db: 4 }, 1)).error, /capture_disposed/);
+});
 
 // Builds wrapped keys from the modelRequests response and passes them to the worker.
 async function applyKeys(send, sessionId) {

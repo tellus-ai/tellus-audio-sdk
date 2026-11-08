@@ -30,15 +30,17 @@ for (const platform of ['desktop', 'web', 'mobile']) {
     {
       fs.writeFileSync(path.join(installed, 'consumer.mts'), `
         import { AudioEngine, listAudioDevices } from '@tellus-ai/audio-sdk-${platform}';
-        import type { AudioCaptureConfig, AudioDeviceListResult, AudioDeviceOperationError, CaptureStatus } from '@tellus-ai/audio-sdk-${platform}';
+        import type { AudioCapture, AudioCaptureConfig, AudioDeviceListResult, AudioDeviceOperationError, CaptureStatus, AutoGainControlConfig } from '@tellus-ai/audio-sdk-${platform}';
         import { attachEngineAuthorization } from '@tellus-ai/audio-sdk-${platform}/authorization';
         export const init = AudioEngine.init;
         export const authorize = attachEngineAuthorization;
-        const config: AudioCaptureConfig = { micDeviceId: 'input-id', systemAudioDeviceId: 'system-id', playbackDeviceId: 'playback-id', iosOutputRoute: 'system' };
+        const autoGainControl: AutoGainControlConfig = { enabled: true, maxGainDb: 8, maxOutputNoiseLevelDbfs: -50, maxGainChangeDbPerSecond: 3, headroomDb: 6, peakLevelDbfs: -3 };
+        const config: AudioCaptureConfig = { micDeviceId: 'input-id', systemAudioDeviceId: 'system-id', playbackDeviceId: 'playback-id', iosOutputRoute: 'system', micGainDb: -6, speakerGainDb: 0, autoGainControl };
+        async function gain(capture: AudioCapture) { await capture.setMicGainDb(-3); await capture.setSpeakerGainDb(0); }
         const devices: Promise<AudioDeviceListResult> = listAudioDevices('microphone');
         function selectedId(status: CaptureStatus) { return status.deviceStatus?.[0].actualDeviceId; }
         function errorCode(error: AudioDeviceOperationError) { return error.deviceStatus.code; }
-        void config; void devices; void selectedId; void errorCode;
+        void config; void devices; void selectedId; void errorCode; void gain;
       `);
       const typed = spawnSync(process.execPath, [path.resolve(__dirname, '../node_modules/typescript/bin/tsc'),
         '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2020',

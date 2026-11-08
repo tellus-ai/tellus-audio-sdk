@@ -3,6 +3,55 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import * as audioGain from '../../../../platforms/mobile/runtime/bindings/typescript/audio-gain.js';
+
+test('mobile gain configuration and opt-in precedence survive native JSON filtering', async () => {
+  const { native, create } = fixture();
+  const configured = [];
+  native.configure = async json => { configured.push(JSON.parse(json)); };
+  for (const config of [{}, { micAgc2Enabled: true }, { micGainDb: -6, micAgc2Enabled: true, autoGainControl: { enabled: false, maxGainDb: 8 } }]) await (await create(config)).getStatus();
+  assert.deepEqual(configured.map(c => c.micGainDb), [0, 0, -6]);
+  assert.ok(configured.every(c => !('speakerGainDb' in c)), 'microphone C ABI rejects system audio gain fields');
+  assert.deepEqual(configured.map(c => c.autoGainControl.enabled), [false, true, false]);
+  assert.deepEqual(configured[2].autoGainControl, { enabled: false, maxGainDb: 8, maxOutputNoiseLevelDbfs: -50, maxGainChangeDbPerSecond: 3, headroomDb: 6, peakLevelDbfs: -3 });
+});
+
+test('mobile runtime gain validates and waits for configuration; lifecycle changes cancel waiting updates', async () => {
+  const { native, create } = fixture();
+  const applied = [];
+  let ready;
+  native.configure = () => new Promise(resolve => { ready = resolve; });
+  native.setMicGainDb = async db => { applied.push(db); };
+  const capture = await create();
+  const changing = capture.setMicGainDb(-4);
+  assert.deepEqual(applied, []);
+  ready();
+  await changing;
+  for (const db of [NaN, Infinity, -61, 13, null, '3']) await assert.rejects(capture.setMicGainDb(db), /gain.*invalid|invalid.*gain/);
+  await assert.rejects(capture.setSpeakerGainDb(0), /speaker_gain_unsupported/);
+  assert.deepEqual(applied, [-4]);
+  for (const operation of ['pause', 'stop', 'invalidateAuthorization', 'dispose']) {
+    const second = await create();
+    const pending = second.setMicGainDb(2);
+    const rejected = assert.rejects(pending, /capture_disposed|capture_cancelled/);
+    await second[operation]();
+    ready();
+    await rejected;
+  }
+  await assert.rejects(capture.setSpeakerGainDb(3), /speaker_gain_unsupported/);
+  assert.deepEqual(applied, [-4]);
+});
+
+test('mobile rejects invalid and unsupported gain settings before native configuration', async () => {
+  const { native, create } = fixture();
+  let configurations = 0;
+  native.configure = async () => { configurations++; };
+  for (const config of [{ micGainDb: NaN }, { micGainDb: -61 }, { autoGainControl: { enabled: 1 } }, { autoGainControl: { maxGainDb: 31 } }]) {
+    await assert.rejects(create(config), /gain.*invalid|invalid.*gain/);
+  }
+  await assert.rejects(create({ speakerGainDb: -2 }), /speaker_gain_unsupported/);
+  assert.equal(configurations, 0);
+});
 
 // Nitro uses only a JS boundary double; the real public wrapper runs.
 function fixture(assets = ['denoise.temc', 'vad.temc']) {
@@ -36,7 +85,10 @@ function fixture(assets = ['denoise.temc', 'vad.temc']) {
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const module = { exports: {} };
   vm.runInNewContext(compiled, { module, exports: module.exports, Uint8Array, Map, Set, Error, console: { warn: (...args) => warnings.push(args) },
-    require: name => { assert.equal(name, 'react-native-nitro-modules'); return { NitroModules: { createHybridObject: () => native } }; } });
+    require: name => {
+      if (name === '../../../bindings/typescript/audio-gain.js') return audioGain;
+      assert.equal(name, 'react-native-nitro-modules'); return { NitroModules: { createHybridObject: () => native } };
+    } });
   const create = async (config = {}) => (await module.exports.AudioEngine.init(config, assets ? { encryptedModels: assets } : undefined)).createCapture();
   const emit = () => native.callback(new Uint8Array([1]).buffer, JSON.stringify({ codec: 'opus', sample_rate: 16000,
     sample: 0, sample_count: 320, valid_sample_count: 320, timestamp: 0, rms: 0 }), native.epoch, 1n);

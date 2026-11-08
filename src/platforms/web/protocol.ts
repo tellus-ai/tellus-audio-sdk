@@ -30,6 +30,7 @@ export type WorkerCommand =
   | { operation: 'modelKeys'; keys: { modelId: string; keyId: string; wrappedKey: string }[] }
   | { operation: 'canDeliver'; nativeEpoch: string; authorizationGeneration: string }
   | { operation: 'denoise'; enabled: boolean }
+  | { operation: 'micGainDb'; db: number }
   | { operation: 'start' | 'pause' | 'resume' | 'stop' | 'reset' | 'destroy' | 'invalidate' | 'status' | 'authorizationStatus' | 'modelRequests' | 'clearRender' };
 
 export interface WorkerRequest {

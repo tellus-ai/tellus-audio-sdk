@@ -1,5 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
+test('microphone runtime gain validates and forwards through the capture owner while system gain is unsupported', async () => {
+  const applied = [];
+  const { capture } = environment({ micGainDb: command => { applied.push(command.db); } });
+  await capture.setMicGainDb(-4);
+  await capture.setMicGainDb(12);
+  for (const db of [NaN, Infinity, -61, 13, null, '3']) await assert.rejects(capture.setMicGainDb(db), /gain.*invalid|invalid.*gain/);
+  await assert.rejects(capture.setSpeakerGainDb(0), /speaker_gain_unsupported/);
+  assert.deepEqual(applied, [-4, 12]);
+  await capture.dispose();
+  await assert.rejects(capture.setMicGainDb(0), /capture_disposed/);
+  assert.deepEqual(applied, [-4, 12]);
+});
 import { BrowserCapture } from '../../../platforms/web/runtime/platforms/web/capture.js';
 
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };

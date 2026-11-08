@@ -1,8 +1,11 @@
 import { release as osRelease } from 'node:os';
+import { gainConfig, validateGainDb, type AutoGainControlConfig } from '../../../bindings/typescript/audio-gain.js';
+export type { AutoGainControlConfig } from '../../../bindings/typescript/audio-gain.js';
 import type { AudioDeviceSource, AudioDeviceStatus, AudioDeviceListResult } from '../../../bindings/typescript/audio-devices.js';
 export type { AudioDeviceSource, AudioDeviceInfo, AudioDeviceStatus, AudioDeviceListResult, AudioDeviceOperationError } from '../../../bindings/typescript/audio-devices.js';
 
 import { prepareEngineRuntime } from './runtime/engine-runtime.js';
+import { waitForCaptureTransition } from './capture-transition.js';
 import type { EngineAuthorizationRequest, EngineAuthorizationStatus } from '../../../bindings/typescript/authorization/contracts.js';
 
 export interface AudioProcessingConfig {
@@ -41,8 +44,15 @@ export interface AudioCaptureConfig {
   micEnabled?: boolean;
   /** Enables speaker/system-audio capture. Native default is false. */
   speakerEnabled?: boolean;
+  /** Per-session digital microphone gain, -60..12 dB. Default 0; never changes OS volume. */
+  micGainDb?: number;
+  /** Captured system audio gain, -60..12 dB. Default 0; does not change playback volume. */
+  speakerGainDb?: number;
+  autoGainControl?: AutoGainControlConfig;
   /** Includes synchronized PCM16 raw frames in chunk.rawAudio. */
   enableRawAudio?: boolean;
+  /** Queued audio budget: integer 500..10000 ms, default 5000; payload cap 32MiB. */
+  deliveryBufferDurationMs?: number;
   /** Enables denoise. Native default is true. */
   denoiseEnabled?: boolean;
   /**
@@ -74,6 +84,13 @@ export interface VADConfig {
   vadPreSpeechBufferMs?: number;
 }
 
+export interface AudioCaptureSpan {
+  offset: number;
+  sampleCount: number;
+  /** Decimal monotonic nanoseconds in captureClock's domain. */
+  capturedAtNs: string;
+}
+
 export interface RawAudioFrame {
   /** PCM16 little-endian audio bytes. */
   data: Buffer;
@@ -85,6 +102,8 @@ export interface RawAudioFrame {
   timestamp: number;
   /** RMS level, 0.0 to 1.0. */
   rms: number;
+  captureClock?: 'windows-qpc' | 'macos-monotonic' | null;
+  captureSpans?: AudioCaptureSpan[] | null;
 }
 
 export interface RawAudioBundle {
@@ -131,6 +150,8 @@ export interface AudioChunk {
   sampleRate: number;
   /** Number of samples per channel in this transport chunk. */
   sampleCount: number;
+  /** Valid input prefix; an encoder tail can contain padding after this sample. */
+  validSampleCount?: number | null;
   /** Duration covered by this transport chunk in milliseconds. */
   durationMs: number;
   sample: number;
@@ -148,7 +169,18 @@ export interface AudioChunk {
   discontinuity?: AudioDiscontinuity;
 }
 
+export interface RecordingBufferBatch {
+  chunks: AudioChunk[];
+  queuedChunks: number;
+  capacityChunks: number;
+  capacityBytes: number;
+  droppedChunks: number;
+  droppedSamples: number;
+  error?: string | null;
+}
+
 export interface CaptureStatus {
+  engineVersion: string;
   deviceStatus?: AudioDeviceStatus[];
   state: string;
   micThreadAlive: boolean;
@@ -158,7 +190,7 @@ export interface CaptureStatus {
   aecActive: boolean;
   vadEnabled: boolean;
   vadReady: boolean;
-  vadMode: string;
+  vadMode: 'silero' | 'disabled';
   vadGateState: 'open' | 'closed';
   vadProbability: number;
   vadRms: number;
@@ -174,6 +206,11 @@ export interface CaptureStatus {
   deliveryDroppedChunks: number;
   deliveryDroppedSamples: number;
   deliveryNotificationPending: boolean;
+  deliveryQueueCapacityBytes?: number;
+  deliveryQueueSizeBytes?: number;
+  deliveryQueueDurationMs?: number;
+  deliveryLagging?: boolean;
+  deliveryLagWarningCount?: number;
   rawQueueCapacityMs: number;
   rawMicQueueSamples: number;
   rawSpeakerQueueSamples: number;
@@ -711,12 +748,19 @@ const MEETING_SYNC_UNSUPPORTED = 'meeting_sync_unsupported: install a native eng
 
 export class AudioCapture {
   #native: any;
+  #transition = 0;
   // The engine releases the sync callback on stop, so it is kept here to register again before the next start.
   #meetingSyncCallback?: MeetingSyncCallback;
 
   constructor(config?: AudioCaptureConfig | null) {
     validateDeviceSelection(config);
-    this.#native = new NativeAudioCapture(config);
+    const gain = gainConfig(config ?? {});
+    this.#native = new NativeAudioCapture({ ...config, ...gain });
+    if (config?.micGainDb !== undefined || config?.speakerGainDb !== undefined || config?.autoGainControl !== undefined) this.#requireGainSupport();
+    if (config?.deliveryBufferDurationMs !== undefined &&
+        typeof this.#native.getStatus().deliveryQueueCapacityBytes !== 'number') {
+      throw new Error('delivery_buffer_unsupported: install a native engine with configurable delivery retention');
+    }
   }
 
   #requireAuthorizationSupport(): void {
@@ -753,6 +797,26 @@ export class AudioCapture {
         typeof this.#native.setSpeakerMuted !== 'function') {
       throw new Error('source_mute_unsupported: install a native engine with source mute support');
     }
+  }
+
+  #requireGainSupport(): void {
+    if (typeof this.#native.setMicGainDb !== 'function' || typeof this.#native.setSpeakerGainDb !== 'function') {
+      throw new Error('audio_gain_unsupported: install a native engine with digital gain support');
+    }
+  }
+
+  /** Updates digital microphone gain without changing OS input volume or original raw PCM. */
+  setMicGainDb(db: number): void {
+    validateGainDb(db);
+    this.#requireGainSupport();
+    this.#native.setMicGainDb(db);
+  }
+
+  /** Updates captured system audio gain; playback volume is unaffected. */
+  setSpeakerGainDb(db: number): void {
+    validateGainDb(db);
+    this.#requireGainSupport();
+    this.#native.setSpeakerGainDb(db);
   }
 
   /** Mutes or unmutes the microphone from the next chunk. The device stays open and sound during mute is discarded. */
@@ -814,13 +878,32 @@ export class AudioCapture {
 
   pause(): void {
     this.#native.pause();
+    this.#transition++;
   }
 
   resume(): void {
     this.#native.resume();
+    this.#transition++;
+  }
+
+  /** Resolve after native inputs close and retained DSP/codec tails are enqueued. */
+  async pauseAndDrain(): Promise<void> {
+    this.pause();
+    const transition = this.#transition;
+    await waitForCaptureTransition(() => this.getState(), 'paused',
+      () => transition === this.#transition, () => this.stop());
+  }
+
+  /** Resolve after enabled native sources have supplied fresh PCM. */
+  async resumeWhenReady(): Promise<void> {
+    this.resume();
+    const transition = this.#transition;
+    await waitForCaptureTransition(() => this.getState(), 'recording',
+      () => transition === this.#transition, () => this.stop());
   }
 
   stop(): void {
+    this.#transition++;
     this.#native.stop();
   }
 
@@ -830,6 +913,25 @@ export class AudioCapture {
 
   getStatus(): CaptureStatus {
     return this.#native.getStatus();
+  }
+
+  /** Enable independent post-processing retention while the capture is idle. */
+  enableRecordingBuffer(): void {
+    this.#requireRecordingBufferSupport();
+    this.#native.enableRecordingBuffer();
+  }
+
+  /** Read up to 32 retained chunks, including explicit overflow and sticky errors. */
+  readRecordingBuffer(): RecordingBufferBatch {
+    this.#requireRecordingBufferSupport();
+    return this.#native.readRecordingBuffer();
+  }
+
+  #requireRecordingBufferSupport(): void {
+    if (typeof this.#native.enableRecordingBuffer !== 'function' ||
+        typeof this.#native.readRecordingBuffer !== 'function') {
+      throw new Error('recording_buffer_unsupported: install a recording-buffer-enabled native engine');
+    }
   }
 
   getMicDevices(): string[] {
@@ -936,8 +1038,9 @@ export const isBuiltInSpeaker: () => boolean = nativeIsBuiltInSpeaker;
 export const init: (
   config?: AudioCaptureConfig | null,
   options?: AudioEngineInitOptions | null,
-) => AudioEngineInitStatus = (config, options) => normalizeInitStatus(nativeInit(config, options));
+) => AudioEngineInitStatus = (config, options) => normalizeInitStatus(nativeInit({ ...config, ...gainConfig(config ?? {}) }, options));
 export const preloadModels: (config?: AudioCaptureConfig | null) => AudioEngineModelsPreloadStatus = (config) => {
+  config = { ...config, ...gainConfig(config ?? {}) };
   const nativePreloadModels = nativeBinding.preloadModels;
   if (typeof nativePreloadModels === 'function') {
     return normalizeModelsPreloadStatus(nativePreloadModels(config));

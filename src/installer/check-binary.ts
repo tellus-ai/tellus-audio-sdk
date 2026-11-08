@@ -101,9 +101,24 @@ export function checkBinary(platform?: string): void {
     fail(`ONNX Runtime file is missing: ${ortRuntimePaths.join(', ')}`);
   }
 
+  const expected = (JSON.parse(readFileSync(join(ROOT, 'release-assets.json'), 'utf8')) as {
+    nativeEngineVersion: string;
+  }).nativeEngineVersion;
+  const installed = (JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {
+    version: string;
+  }).version;
+  if (installed !== expected) {
+    fail(`Native engine version mismatch: pinned=${expected}, package=${installed}`);
+  }
+
   const mod = require(ROOT);
   if (typeof mod.AudioCapture !== 'function') {
     fail('AudioCapture export was not found.');
+  }
+  const capture = new mod.AudioCapture({ denoiseEnabled: false });
+  const actual = capture.getStatus().engineVersion;
+  if (actual !== expected) {
+    fail(`Native engine version mismatch: pinned=${expected}, loaded=${actual}`);
   }
 
   console.log(`[tellus-audio-sdk] binary asset verified: vendor/${platformDir}`);
