@@ -48,6 +48,12 @@ npm pack --workspace @tellus-ai/audio-sdk-mobile
 
 모든 변경의 완료 조건은 `npm run verify:pre-commit` 통과입니다. 이 명령은 SDK 테스트·JS 구문 검사·세 설치 패키지 검증을 실행합니다.
 
+## Desktop 소비 지연과 파일 녹음
+
+`deliveryBufferDurationMs`는 native 콜백 큐의 시간 예산입니다. 명시한 예산을 지원하지 않는 엔진은 `delivery_buffer_unsupported`로 거부합니다. 설치 검증은 manifest·vendor 메타데이터와 실제 `getStatus().engineVersion`이 고정 버전과 일치하는지도 확인합니다.
+
+파일 녹음은 정상 서버 permit을 적용한 idle 상태에서 `enableRecordingBuffer()`를 호출한 뒤 시작합니다. `readRecordingBuffer()`의 `chunks`, `error`, 누적 `droppedChunks`·`droppedSamples`를 검사하고, `stop()` 이후 권한을 해제하기 전에 `queuedChunks === 0`까지 배출합니다. 파일은 콜백 복사본과 중복 저장하지 않습니다. 누락이나 오류가 있으면 불완전 녹음으로 처리합니다. 이 API가 없는 엔진은 `recording_buffer_unsupported`로 거부하며, SDK 버전만으로 지원 여부를 추정하지 않습니다. Windows raw PCM의 `captureClock`·`captureSpans`는 원래 장치 시각 그대로 전달합니다.
+
 ## 장치 조회와 선택
 
 각 플랫폼은 `listAudioDevices('microphone' | 'system_audio' | 'playback')`을 제공합니다. 결과는 `{ status, devices: [{ id, label }] }`이며 ID는 조회한 값을 그대로 사용합니다. 이름이나 목록 순서로 장치를 지정하지 않습니다. 조회는 권한 요청이나 임시 캡처를 수행하지 않으며, 목록 조회의 `ready`는 스트림 선택 성공을 보장하지 않습니다. ID는 OS 재시작이나 브라우저 권한 초기화 이후 유지되지 않을 수 있습니다.

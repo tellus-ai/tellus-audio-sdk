@@ -43,6 +43,8 @@ export interface AudioCaptureConfig {
   speakerEnabled?: boolean;
   /** Includes synchronized PCM16 raw frames in chunk.rawAudio. */
   enableRawAudio?: boolean;
+  /** Queued audio budget: integer 500..10000 ms, default 5000; payload cap 32MiB. */
+  deliveryBufferDurationMs?: number;
   /** Enables denoise. Native default is true. */
   denoiseEnabled?: boolean;
   /**
@@ -74,6 +76,13 @@ export interface VADConfig {
   vadPreSpeechBufferMs?: number;
 }
 
+export interface AudioCaptureSpan {
+  offset: number;
+  sampleCount: number;
+  /** Decimal Windows QPC nanoseconds, matching video firstFrame.monotonic. */
+  capturedAtNs: string;
+}
+
 export interface RawAudioFrame {
   /** PCM16 little-endian audio bytes. */
   data: Buffer;
@@ -85,6 +94,8 @@ export interface RawAudioFrame {
   timestamp: number;
   /** RMS level, 0.0 to 1.0. */
   rms: number;
+  captureClock?: 'windows-qpc' | null;
+  captureSpans?: AudioCaptureSpan[] | null;
 }
 
 export interface RawAudioBundle {
@@ -148,7 +159,18 @@ export interface AudioChunk {
   discontinuity?: AudioDiscontinuity;
 }
 
+export interface RecordingBufferBatch {
+  chunks: AudioChunk[];
+  queuedChunks: number;
+  capacityChunks: number;
+  capacityBytes: number;
+  droppedChunks: number;
+  droppedSamples: number;
+  error?: string | null;
+}
+
 export interface CaptureStatus {
+  engineVersion: string;
   deviceStatus?: AudioDeviceStatus[];
   state: string;
   micThreadAlive: boolean;
@@ -158,7 +180,7 @@ export interface CaptureStatus {
   aecActive: boolean;
   vadEnabled: boolean;
   vadReady: boolean;
-  vadMode: string;
+  vadMode: 'silero' | 'disabled';
   vadGateState: 'open' | 'closed';
   vadProbability: number;
   vadRms: number;
@@ -174,6 +196,11 @@ export interface CaptureStatus {
   deliveryDroppedChunks: number;
   deliveryDroppedSamples: number;
   deliveryNotificationPending: boolean;
+  deliveryQueueCapacityBytes?: number;
+  deliveryQueueSizeBytes?: number;
+  deliveryQueueDurationMs?: number;
+  deliveryLagging?: boolean;
+  deliveryLagWarningCount?: number;
   rawQueueCapacityMs: number;
   rawMicQueueSamples: number;
   rawSpeakerQueueSamples: number;
@@ -717,6 +744,10 @@ export class AudioCapture {
   constructor(config?: AudioCaptureConfig | null) {
     validateDeviceSelection(config);
     this.#native = new NativeAudioCapture(config);
+    if (config?.deliveryBufferDurationMs !== undefined &&
+        typeof this.#native.getStatus().deliveryQueueCapacityBytes !== 'number') {
+      throw new Error('delivery_buffer_unsupported: install a native engine with configurable delivery retention');
+    }
   }
 
   #requireAuthorizationSupport(): void {
@@ -830,6 +861,25 @@ export class AudioCapture {
 
   getStatus(): CaptureStatus {
     return this.#native.getStatus();
+  }
+
+  /** Enable independent post-processing retention while the capture is idle. */
+  enableRecordingBuffer(): void {
+    this.#requireRecordingBufferSupport();
+    this.#native.enableRecordingBuffer();
+  }
+
+  /** Read up to 32 retained chunks, including explicit overflow and sticky errors. */
+  readRecordingBuffer(): RecordingBufferBatch {
+    this.#requireRecordingBufferSupport();
+    return this.#native.readRecordingBuffer();
+  }
+
+  #requireRecordingBufferSupport(): void {
+    if (typeof this.#native.enableRecordingBuffer !== 'function' ||
+        typeof this.#native.readRecordingBuffer !== 'function') {
+      throw new Error('recording_buffer_unsupported: install a recording-buffer-enabled native engine');
+    }
   }
 
   getMicDevices(): string[] {
