@@ -156,3 +156,12 @@ export function prepareEngineRuntime(): {
     nativeBinding: loadNativeBinding(),
   };
 }
+
+/** 설치된 native kit의 실행 파일만 찾으며 AudioCapture를 생성하지 않는다. */
+export function resolveScreenCaptureExecutable(): string {
+  if (platform !== 'darwin' && platform !== 'win32') throw new Error('screen capture is unsupported on this desktop platform');
+  const executable = join('bin', platform === 'win32' ? 'screen-capture.exe' : 'screen-capture');
+  const found = findExistingPath([executable]);
+  if (!found) throw new Error('screen capture executable unavailable: install a screen-recording-enabled native engine');
+  return found;
+}

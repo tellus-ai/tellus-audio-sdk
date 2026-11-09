@@ -19,6 +19,13 @@ for (const platform of ['desktop', 'web', 'mobile']) {
   const runtime = path.join(destination, 'runtime');
   fs.rmSync(runtime, { recursive: true, force: true });
   execFileSync(process.execPath, [compiler, '-p', path.join(root, `tsconfig.runtime.${platform}.json`), '--outDir', runtime], { cwd: root, stdio: 'inherit' });
+  if (platform === 'desktop') {
+    for (const entry of ['screen/client/types', 'screen/client/screen-capture-client', 'screen/desktop/electron/screen-capture-process']) {
+      for (const extension of ['js', 'd.ts']) {
+        if (!fs.existsSync(path.join(runtime, `${entry}.${extension}`))) throw new Error(`SDK screen runtime is missing ${entry}.${extension}`);
+      }
+    }
+  }
   fs.writeFileSync(path.join(runtime, 'package.json'), JSON.stringify({ type: platform === 'desktop' ? 'commonjs' : 'module' }) + '\n');
   fs.rmSync(path.join(destination, 'dist'), { recursive: true, force: true });
   fs.cpSync(path.join(root, 'dist'), path.join(destination, 'dist'), { recursive: true });

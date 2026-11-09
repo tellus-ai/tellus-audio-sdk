@@ -13,6 +13,10 @@
     "./authorization": {
       "types": "./runtime/bindings/typescript/authorization/realtime.d.ts",
       "default": "./runtime/bindings/typescript/authorization/realtime.js"
+    },
+    "./screen": {
+      "types": "./runtime/screen/desktop/electron/screen-capture-process.d.ts",
+      "default": "./runtime/screen/desktop/electron/screen-capture-process.js"
     }
   },
   "files": [
