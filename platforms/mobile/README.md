@@ -60,7 +60,7 @@ await capture.setMicGainDb(0);
 
 ```ts
 const engine = await AudioEngine.init({
-  mode: 'close_talk',
+  denoiseMode: 'close_talk',
   closeTalkThresholdDb: 30,        // 게이트 열림 임계값, 기본 30
   denoiseAttenuationLimitDb: 12,   // 소음 저감 상한, 기본 12
 });
