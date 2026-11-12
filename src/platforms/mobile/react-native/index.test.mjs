@@ -86,7 +86,6 @@ test('mobile applies a configured close-talk threshold through the setter after 
   assert.deepEqual(events.map(([name]) => name), ['configure', 'setCloseTalkThresholdDb']);
   assert.equal('closeTalkThresholdDb' in events[0][1], false);
   assert.equal(events[1][1], 25);
-  await assert.rejects((await create({ closeTalkThresholdDb: 61 })).start(() => {}), /invalid_close_talk_threshold_db/);
   delete native.setCloseTalkThresholdDb;
   await assert.rejects((await create({ closeTalkThresholdDb: 25 })).start(() => {}), /tellus_close_talk_threshold_unsupported/);
   assert.equal(events.filter(([name]) => name === 'setCloseTalkThresholdDb').length, 1);
@@ -96,6 +95,73 @@ test('mobile status reports the applied close-talk threshold', async () => {
   const { native, create } = fixture();
   native.getStatus = async () => JSON.stringify({ lifecycle: 'idle', denoise_enabled: true, close_talk_threshold_db: 22 });
   assert.equal((await (await create()).getStatus()).closeTalkThresholdDb, 22);
+});
+
+test('mobile denoise attenuation limit validates, waits for configuration and rejects on native without its own setter', async () => {
+  const { native, create } = fixture();
+  const applied = [];
+  let ready;
+  native.configure = () => new Promise(resolve => { ready = resolve; });
+  native.setCloseTalkThresholdDb = async () => {};
+  const capture = await create();
+  const unsupported = assert.rejects(capture.setDenoiseAttenuationLimitDb(6), /tellus_denoise_attenuation_limit_unsupported/);
+  ready();
+  await unsupported;
+  native.setDenoiseAttenuationLimitDb = async db => { applied.push(db); };
+  const waiting = await create();
+  const changing = waiting.setDenoiseAttenuationLimitDb(6);
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  assert.deepEqual(applied, [], 'the change waits for native configure');
+  ready();
+  await changing;
+  assert.deepEqual(applied, [6]);
+  for (const db of [61, -1, NaN, Infinity, null, '6']) await assert.rejects(capture.setDenoiseAttenuationLimitDb(db), /invalid_denoise_attenuation_limit_db/);
+  assert.deepEqual(applied, [6]);
+  const second = await create();
+  const pending = second.setDenoiseAttenuationLimitDb(4);
+  const cancelled = assert.rejects(pending, /capture_cancelled/);
+  await second.pause();
+  ready();
+  await cancelled;
+  assert.deepEqual(applied, [6]);
+});
+
+test('mobile applies a configured denoise attenuation limit after the close-talk threshold, never in the configure JSON', async () => {
+  const { native, create } = fixture();
+  const events = [];
+  native.configure = async json => { events.push(['configure', JSON.parse(json)]); };
+  native.setCloseTalkThresholdDb = async db => { events.push(['setCloseTalkThresholdDb', db]); };
+  native.setDenoiseAttenuationLimitDb = async db => { events.push(['setDenoiseAttenuationLimitDb', db]); };
+  const capture = await create({ closeTalkThresholdDb: 25, denoiseAttenuationLimitDb: 6 });
+  await capture.start(() => {});
+  assert.deepEqual(events.map(([name]) => name), ['configure', 'setCloseTalkThresholdDb', 'setDenoiseAttenuationLimitDb']);
+  assert.equal('closeTalkThresholdDb' in events[0][1], false);
+  assert.equal('denoiseAttenuationLimitDb' in events[0][1], false);
+  assert.equal(events[2][1], 6);
+  delete native.setDenoiseAttenuationLimitDb;
+  await assert.rejects((await create({ denoiseAttenuationLimitDb: 6 })).start(() => {}), /tellus_denoise_attenuation_limit_unsupported/);
+  assert.equal(events.filter(([name]) => name === 'setDenoiseAttenuationLimitDb').length, 1);
+});
+
+test('mobile rejects invalid configured denoise settings before native configuration', async () => {
+  const { native, create } = fixture();
+  let configurations = 0;
+  native.configure = async () => { configurations++; };
+  native.setCloseTalkThresholdDb = async () => {};
+  native.setDenoiseAttenuationLimitDb = async () => {};
+  for (const db of [61, -1, NaN, Infinity, null, '25']) await assert.rejects(create({ closeTalkThresholdDb: db }), /invalid_close_talk_threshold_db/);
+  for (const db of [61, -1, NaN, Infinity, null, '6']) await assert.rejects(create({ denoiseAttenuationLimitDb: db }), /invalid_denoise_attenuation_limit_db/);
+  assert.equal(configurations, 0);
+});
+
+test('mobile status reports the applied denoise attenuation limit, and kits without the settings leave both absent', async () => {
+  const { native, create } = fixture();
+  native.getStatus = async () => JSON.stringify({ lifecycle: 'idle', denoise_enabled: true, close_talk_threshold_db: 22, denoise_attenuation_limit_db: 6 });
+  assert.equal((await (await create()).getStatus()).denoiseAttenuationLimitDb, 6);
+  native.getStatus = async () => JSON.stringify({ lifecycle: 'idle', denoise_enabled: true });
+  const old = await (await create()).getStatus();
+  assert.equal(old.closeTalkThresholdDb, undefined);
+  assert.equal(old.denoiseAttenuationLimitDb, undefined);
 });
 
 // Nitro uses only a JS boundary double; the real public wrapper runs.

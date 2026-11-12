@@ -20,9 +20,9 @@ Pod::Spec.new do |s|
     'HEADER_SEARCH_PATHS' => '"$(PODS_TARGET_SRCROOT)/vendor/ios/include"',
     'CLANG_CXX_LANGUAGE_STANDARD' => 'c++20'
   }
-  # cpp/CloseTalkThreshold.cpp references this engine function weakly. Apple's linker still rejects a weak reference no
-  # kit defines, so the app link allows it to stay undefined; dyld then binds it to null and the glue reports unsupported.
-  s.user_target_xcconfig = { 'OTHER_LDFLAGS' => '-Wl,-U,_tellus_audio_session_set_close_talk_threshold_db' }
+  # cpp/DenoiseSettings.cpp references these engine functions weakly. Apple's linker still rejects a weak reference no
+  # kit defines, so the app link allows them to stay undefined; dyld then binds them to null and the glue reports unsupported.
+  s.user_target_xcconfig = { 'OTHER_LDFLAGS' => '-Wl,-U,_tellus_audio_session_set_close_talk_threshold_db -Wl,-U,_tellus_audio_session_set_denoise_attenuation_limit_db' }
   load 'nitrogen/generated/ios/TellusAudioSdk+autolinking.rb'
   add_nitrogen_files(s)
   s.dependency 'React-jsi'

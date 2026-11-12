@@ -40,3 +40,30 @@ test('desktop passes the close-talk threshold config to the native constructor u
   new AudioCapture({ closeTalkThresholdDb: 25 });
   assert.equal(configured.closeTalkThresholdDb, 25);
 });
+
+test('desktop denoise attenuation limit requires a native engine with its own setter', () => {
+  const AudioCapture = wrapper(class { constructor(config) { this.config = config; } setCloseTalkThresholdDb() {} getStatus() { return {}; } });
+  assert.throws(() => new AudioCapture({ denoiseAttenuationLimitDb: 6 }), /denoise_attenuation_limit_unsupported: install a native engine with denoise attenuation limit support/);
+  const capture = new AudioCapture({ closeTalkThresholdDb: 25 });
+  assert.throws(() => capture.setDenoiseAttenuationLimitDb(6), /denoise_attenuation_limit_unsupported/);
+});
+
+test('desktop denoise attenuation limit config and runtime changes reach the owning native capture', () => {
+  const calls = [];
+  const AudioCapture = wrapper(class {
+    constructor(config) { this.config = config; }
+    setDenoiseAttenuationLimitDb(db) { calls.push(db); }
+    getStatus() { return { denoiseAttenuationLimitDb: 6 }; }
+  });
+  const capture = new AudioCapture({ denoiseAttenuationLimitDb: 6 });
+  assert.equal(capture.getStatus().denoiseAttenuationLimitDb, 6);
+  capture.setDenoiseAttenuationLimitDb(9);
+  assert.deepEqual(calls, [9]);
+});
+
+test('desktop passes the denoise attenuation limit config to the native constructor unchanged', () => {
+  let configured;
+  const AudioCapture = wrapper(class { constructor(config) { configured = config; } setDenoiseAttenuationLimitDb() {} });
+  new AudioCapture({ denoiseAttenuationLimitDb: 6 });
+  assert.equal(configured.denoiseAttenuationLimitDb, 6);
+});

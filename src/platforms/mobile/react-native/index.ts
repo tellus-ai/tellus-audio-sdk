@@ -52,6 +52,12 @@ function validateCloseTalkThresholdDb(db: number): number {
   return db;
 }
 
+// Same as the core close_talk noise attenuation limit rule: finite 0..=60 dB.
+function validateDenoiseAttenuationLimitDb(db: number): number {
+  if (!Number.isFinite(db) || db < 0 || db > 60) throw new Error('invalid_denoise_attenuation_limit_db');
+  return db;
+}
+
 // Rates libopus encodes. core TransportEncoderConfig decides; this fails early at init.
 const OPUS_SAMPLE_RATES = [8_000, 12_000, 16_000, 24_000, 48_000];
 
@@ -103,8 +109,9 @@ class NativeAudioCapture implements AudioCapture {
         negativeThreshold: config.vad.vadNegativeThreshold, silenceDurationMs: config.vad.vadSilenceDurationMs,
         preSpeechBufferMs: config.vad.vadPreSpeechBufferMs } : undefined,
     }), rate).then(async () => {
-      // Kept out of the configure JSON so kits without the key still configure. An unsupported kit fails the first call that waits for ready.
-      if (config.closeTalkThresholdDb !== undefined) await this.applyCloseTalkThresholdDb(validateCloseTalkThresholdDb(config.closeTalkThresholdDb));
+      // Kept out of the configure JSON so kits without the keys still configure. AudioEngine.init validated them; an unsupported kit fails the first call that waits for ready.
+      if (config.closeTalkThresholdDb !== undefined) await this.applyCloseTalkThresholdDb(config.closeTalkThresholdDb);
+      if (config.denoiseAttenuationLimitDb !== undefined) await this.applyDenoiseAttenuationLimitDb(config.denoiseAttenuationLimitDb);
     });
     this.devicesReady = this.ready.then(async () => {
       if (typeof this.native.configureAudioDevices !== 'function') {
@@ -255,7 +262,8 @@ class NativeAudioCapture implements AudioCapture {
     const deviceStatus = typeof this.native.getAudioDeviceStatus === 'function'
       ? JSON.parse(await this.native.getAudioDeviceStatus()) as AudioDeviceStatus[] : undefined;
     return { state: status.lifecycle, denoiseEnabled: status.denoise_enabled, denoiseMode: status.denoise_mode,
-      denoiseLoadFailed: status.denoise_load_failed, closeTalkThresholdDb: status.close_talk_threshold_db, vadEnabled: this.config.vadEnabled ?? true,
+      denoiseLoadFailed: status.denoise_load_failed, closeTalkThresholdDb: status.close_talk_threshold_db,
+      denoiseAttenuationLimitDb: status.denoise_attenuation_limit_db, vadEnabled: this.config.vadEnabled ?? true,
       modelsLoaded: [...this.loaded], deviceStatus };
   }
   async setDenoiseEnabled(enabled: boolean): Promise<void> {
@@ -285,6 +293,17 @@ class NativeAudioCapture implements AudioCapture {
   private async applyCloseTalkThresholdDb(db: number): Promise<void> {
     if (typeof this.native.setCloseTalkThresholdDb !== 'function') throw new Error('tellus_close_talk_threshold_unsupported');
     await this.native.setCloseTalkThresholdDb(db);
+  }
+  async setDenoiseAttenuationLimitDb(db: number): Promise<void> {
+    validateDenoiseAttenuationLimitDb(db);
+    const revision = this.controlRevision;
+    await this.ready;
+    this.checkControl(revision);
+    await this.applyDenoiseAttenuationLimitDb(db);
+  }
+  private async applyDenoiseAttenuationLimitDb(db: number): Promise<void> {
+    if (typeof this.native.setDenoiseAttenuationLimitDb !== 'function') throw new Error('tellus_denoise_attenuation_limit_unsupported');
+    await this.native.setDenoiseAttenuationLimitDb(db);
   }
   async setRecordingNotification(config: RecordingNotificationConfig): Promise<void> {
     await this.ready;
@@ -350,6 +369,8 @@ export class AudioEngine {
     if (usesOpus(config) && !OPUS_SAMPLE_RATES.includes(rate)) throw new Error('opus_sample_rate_unsupported');
     if (config.micEnabled === false || config.speakerEnabled === true || config.enableRawAudio === true) throw new Error('unsupported_mobile_capture_config');
     const mode = denoiseMode(config);
+    if (config.closeTalkThresholdDb !== undefined) validateCloseTalkThresholdDb(config.closeTalkThresholdDb);
+    if (config.denoiseAttenuationLimitDb !== undefined) validateDenoiseAttenuationLimitDb(config.denoiseAttenuationLimitDb);
     // Each capture loads one denoise model and an optional VAD model, so the default assets pick only those.
     const encryptedModels = assets?.encryptedModels ?? ['denoise.temc',
       ...((config.vadEnabled ?? true) ? ['vad.temc'] : [])];

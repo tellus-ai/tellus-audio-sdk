@@ -505,3 +505,99 @@ test('status reports the applied close-talk threshold from the worker', async ()
   assert.equal((await capture.getStatus()).closeTalkThresholdDb, 22);
   await capture.dispose();
 });
+
+test('runtime denoise attenuation limit validates before reaching the worker', async () => {
+  const values = [];
+  const { capture, commands } = environment({ denoiseAttenuationLimitDb: (command) => { values.push(command.db); } });
+  for (const db of [61, -1, NaN, Infinity, null, '6']) await assert.rejects(capture.setDenoiseAttenuationLimitDb(db), /tellus_denoise_attenuation_limit_db_invalid/);
+  assert.equal(commands.includes('denoiseAttenuationLimitDb'), false);
+  await capture.setDenoiseAttenuationLimitDb(0);
+  await capture.setDenoiseAttenuationLimitDb(60);
+  assert.deepEqual(values, [0, 60]);
+  await capture.dispose();
+});
+
+test('a configured denoise attenuation limit is applied once after the close-talk threshold and before start', async () => {
+  const values = [];
+  const settings = { closeTalkThresholdDb: () => {}, denoiseAttenuationLimitDb: (command) => { values.push(command.db); } };
+  const { capture, permissions, commands } = environment(settings, { closeTalkThresholdDb: 25, denoiseAttenuationLimitDb: 6 });
+  const starting = capture.start(() => {});
+  await flush();
+  permissions[0](stream('mic-a'));
+  await starting;
+  const order = ['create', 'closeTalkThresholdDb', 'denoiseAttenuationLimitDb', 'start'];
+  assert.deepEqual(commands.filter((command) => order.includes(command)), order);
+  assert.deepEqual(values, [6]);
+  await capture.setDenoiseAttenuationLimitDb(9);
+  await capture.stop();
+  const restarting = capture.start(() => {});
+  await flush();
+  permissions[1](stream('mic-a'));
+  await restarting;
+  assert.deepEqual(values, [6, 9], 'a restart keeps the runtime value native already holds');
+  await capture.dispose();
+  const early = environment(settings, { denoiseAttenuationLimitDb: 6 });
+  await early.capture.setDenoiseAttenuationLimitDb(4);
+  const earlyStart = early.capture.start(() => {});
+  await flush();
+  early.permissions[0](stream('mic-a'));
+  await earlyStart;
+  assert.deepEqual(values, [6, 9, 4], 'the configured value never overwrites an earlier runtime change');
+  await early.capture.dispose();
+  const unsupported = environment({ denoiseAttenuationLimitDb: () => { throw new Error('tellus_denoise_attenuation_limit_unsupported'); } }, { denoiseAttenuationLimitDb: 6 });
+  await assert.rejects(unsupported.capture.start(() => {}), /tellus_denoise_attenuation_limit_unsupported/);
+  assert.equal(unsupported.commands.includes('start'), false);
+  await unsupported.capture.dispose();
+});
+
+test('status reports the applied denoise attenuation limit, and engines without the settings leave both absent', async () => {
+  const { capture } = environment({ status: () => ({ lifecycle: 'stopped', denoise_enabled: false, denoise_loaded: false, vad_loaded: false,
+    close_talk_threshold_db: 22, denoise_attenuation_limit_db: 6, loadedModels: [] }) });
+  const status = await capture.getStatus();
+  assert.equal(status.closeTalkThresholdDb, 22);
+  assert.equal(status.denoiseAttenuationLimitDb, 6);
+  await capture.dispose();
+  const old = environment();
+  const oldStatus = await old.capture.getStatus();
+  assert.equal(oldStatus.closeTalkThresholdDb, undefined);
+  assert.equal(oldStatus.denoiseAttenuationLimitDb, undefined);
+  await old.capture.dispose();
+});
+
+test('a runtime change that fails leaves the configured value for the next start unless a newer change replaced it', async () => {
+  for (const [operation, setter, configured, failed, newer] of [
+    ['closeTalkThresholdDb', 'setCloseTalkThresholdDb', 25, 20, 18],
+    ['denoiseAttenuationLimitDb', 'setDenoiseAttenuationLimitDb', 6, 9, 4],
+  ]) {
+    const values = [];
+    let rejectChange;
+    const respond = (command) => {
+      if (command.db !== failed) { values.push(command.db); return; }
+      return new Promise((_resolve, reject) => { rejectChange = reject; });
+    };
+    const kept = environment({ [operation]: respond }, { [operation]: configured });
+    const failing = kept.capture[setter](failed);
+    await flush();
+    rejectChange(new Error('tellus_capture_cancelled'));
+    await assert.rejects(failing, /tellus_capture_cancelled/);
+    const starting = kept.capture.start(() => {});
+    await flush();
+    kept.permissions[0](stream('mic-a'));
+    await starting;
+    assert.deepEqual(values, [configured], `${operation}: the failed change leaves the configured value`);
+    await kept.capture.dispose();
+    values.length = 0;
+    const replaced = environment({ [operation]: respond }, { [operation]: configured });
+    const superseded = replaced.capture[setter](failed);
+    await flush();
+    await replaced.capture[setter](newer);
+    rejectChange(new Error('tellus_capture_cancelled'));
+    await assert.rejects(superseded, /tellus_capture_cancelled/);
+    const restarting = replaced.capture.start(() => {});
+    await flush();
+    replaced.permissions[0](stream('mic-a'));
+    await restarting;
+    assert.deepEqual(values, [newer], `${operation}: the newer change still replaces the configured value`);
+    await replaced.capture.dispose();
+  }
+});

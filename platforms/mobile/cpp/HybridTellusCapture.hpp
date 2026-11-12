@@ -1,7 +1,7 @@
 #pragma once
 
 #include "CaptureSession.hpp"
-#include "CloseTalkThreshold.hpp"
+#include "DenoiseSettings.hpp"
 #include "HybridTellusCaptureSpec.hpp"
 
 namespace margelo::nitro::tellus {
@@ -36,6 +36,7 @@ public:
   std::shared_ptr<Promise<void>> setDenoiseEnabled(bool enabled) override;
   std::shared_ptr<Promise<void>> setMicGainDb(double db) override;
   std::shared_ptr<Promise<void>> setCloseTalkThresholdDb(double db) override;
+  std::shared_ptr<Promise<void>> setDenoiseAttenuationLimitDb(double db) override;
   std::shared_ptr<Promise<void>> setRecordingNotification(const std::string& title, const std::string& contentText,
     bool pauseAction, bool resumeAction, const std::function<void(const std::string&)>& onAction) override;
   std::shared_ptr<Promise<void>> playback(const std::shared_ptr<ArrayBuffer>& samples, double rate) override;
@@ -44,14 +45,16 @@ public:
   bool canDeliver(uint64_t epoch, uint64_t generation) override;
   void acknowledgeChunk() override;
   void dispose() override;
-  // Tests replace the resolver to exercise the old-kit path, then restore resolveSetCloseTalkThresholdDb.
-  static void setCloseTalkThresholdResolverForTesting(SetCloseTalkThresholdFn (*resolver)());
+  // Tests replace a resolver to exercise the old-kit path, then restore resolveSetCloseTalkThresholdDb or resolveSetDenoiseAttenuationLimitDb.
+  static void setCloseTalkThresholdResolverForTesting(DenoiseSettingFn (*resolver)());
+  static void setDenoiseAttenuationLimitResolverForTesting(DenoiseSettingFn (*resolver)());
 
 private:
   std::shared_ptr<CaptureSession> acquire();
   std::mutex _mutex;
   std::shared_ptr<CaptureSession> _session;
-  static SetCloseTalkThresholdFn (*_closeTalkThresholdResolver)();
+  static DenoiseSettingFn (*_closeTalkThresholdResolver)();
+  static DenoiseSettingFn (*_denoiseAttenuationLimitResolver)();
 };
 
 } // namespace margelo::nitro::tellus

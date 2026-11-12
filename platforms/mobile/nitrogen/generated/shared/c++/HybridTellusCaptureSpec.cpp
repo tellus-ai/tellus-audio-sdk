@@ -36,6 +36,7 @@ namespace margelo::nitro::tellus {
       prototype.registerHybridMethod("setDenoiseEnabled", &HybridTellusCaptureSpec::setDenoiseEnabled);
       prototype.registerHybridMethod("setMicGainDb", &HybridTellusCaptureSpec::setMicGainDb);
       prototype.registerHybridMethod("setCloseTalkThresholdDb", &HybridTellusCaptureSpec::setCloseTalkThresholdDb);
+      prototype.registerHybridMethod("setDenoiseAttenuationLimitDb", &HybridTellusCaptureSpec::setDenoiseAttenuationLimitDb);
       prototype.registerHybridMethod("setRecordingNotification", &HybridTellusCaptureSpec::setRecordingNotification);
       prototype.registerHybridMethod("playback", &HybridTellusCaptureSpec::playback);
       prototype.registerHybridMethod("playbackEncoded", &HybridTellusCaptureSpec::playbackEncoded);

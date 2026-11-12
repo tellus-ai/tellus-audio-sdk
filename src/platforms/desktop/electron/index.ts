@@ -68,6 +68,8 @@ export interface AudioCaptureConfig {
   denoiseMode?: 'close_talk' | 'general';
   /** close_talk gate open threshold in dB, finite 0..=60, engine default 30. Changeable at runtime with setCloseTalkThresholdDb. */
   closeTalkThresholdDb?: number;
+  /** close_talk noise attenuation limit in dB (positive magnitude), finite 0..=60, engine default 12. The engine mixes the input back at 10^(-db/20). Changeable at runtime with setDenoiseAttenuationLimitDb; general mode stays unlimited. */
+  denoiseAttenuationLimitDb?: number;
   /** Enables the native VAD gate. Native default is false. */
   vadEnabled?: boolean;
   /** Processing/mixer settings. */
@@ -194,6 +196,8 @@ export interface CaptureStatus {
   denoiseActive: boolean;
   /** Applied close_talk gate open threshold (dB). Absent on native engines without close-talk threshold support. */
   closeTalkThresholdDb?: number;
+  /** Applied close_talk noise attenuation limit (dB). Absent on native engines without denoise attenuation limit support. */
+  denoiseAttenuationLimitDb?: number;
   aecActive: boolean;
   vadEnabled: boolean;
   vadReady: boolean;
@@ -765,6 +769,7 @@ export class AudioCapture {
     this.#native = new NativeAudioCapture({ ...config, ...gain });
     if (config?.micGainDb !== undefined || config?.speakerGainDb !== undefined || config?.autoGainControl !== undefined) this.#requireGainSupport();
     if (config?.closeTalkThresholdDb !== undefined) this.#requireCloseTalkThresholdSupport();
+    if (config?.denoiseAttenuationLimitDb !== undefined) this.#requireDenoiseAttenuationLimitSupport();
     if (config?.deliveryBufferDurationMs !== undefined &&
         typeof this.#native.getStatus().deliveryQueueCapacityBytes !== 'number') {
       throw new Error('delivery_buffer_unsupported: install a native engine with configurable delivery retention');
@@ -819,6 +824,12 @@ export class AudioCapture {
     }
   }
 
+  #requireDenoiseAttenuationLimitSupport(): void {
+    if (typeof this.#native.setDenoiseAttenuationLimitDb !== 'function') {
+      throw new Error('denoise_attenuation_limit_unsupported: install a native engine with denoise attenuation limit support');
+    }
+  }
+
   /** Updates digital microphone gain without changing OS input volume or original raw PCM. */
   setMicGainDb(db: number): void {
     validateGainDb(db);
@@ -837,6 +848,12 @@ export class AudioCapture {
   setCloseTalkThresholdDb(db: number): void {
     this.#requireCloseTalkThresholdSupport();
     this.#native.setCloseTalkThresholdDb(db);
+  }
+
+  /** Updates the close_talk noise attenuation limit from the next 10 ms hop. The native engine rejects values outside finite 0..=60. */
+  setDenoiseAttenuationLimitDb(db: number): void {
+    this.#requireDenoiseAttenuationLimitSupport();
+    this.#native.setDenoiseAttenuationLimitDb(db);
   }
 
   /** Mutes or unmutes the microphone from the next chunk. The device stays open and sound during mute is discarded. */

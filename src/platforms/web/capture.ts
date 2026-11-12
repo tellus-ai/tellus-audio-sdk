@@ -6,7 +6,7 @@ import type { AudioDeviceStatus } from '../../bindings/typescript/audio-devices.
 import { validateGainDb } from '../../bindings/typescript/audio-gain.js';
 import { CaptureQueue, type CaptureFrame } from './capture-queue.js';
 import { audioDeviceError } from './devices.js';
-import { validateCloseTalkThresholdDb, type DeliveredChunk, type WorkerCommand, type WorkerStatus } from './protocol.js';
+import { validateCloseTalkThresholdDb, validateDenoiseAttenuationLimitDb, type DeliveredChunk, type WorkerCommand, type WorkerStatus } from './protocol.js';
 import { WorkerClient } from './worker-client.js';
 
 interface NativeAuthorizationStatus {
@@ -26,8 +26,12 @@ export class BrowserCapture implements AudioCapture {
   private disposed = false;
   private denoiseEnabled: boolean;
   private denoiseUpdates = 0;
-  // The configured threshold is applied by the first start that succeeds. A runtime change replaces it, and native keeps the value across stop and start.
+  // Configured denoise settings are applied by the first start that succeeds. A runtime change replaces them, and native keeps the values across stop and start.
+  // A runtime change that fails puts the configured value back unless a newer change was made; the counters tell the changes apart.
   private pendingCloseTalkThresholdDb?: number;
+  private pendingDenoiseAttenuationLimitDb?: number;
+  private closeTalkThresholdChanges = 0;
+  private denoiseAttenuationLimitChanges = 0;
   private callback?: AudioCaptureCallback;
   private stream?: MediaStream;
   private source?: MediaStreamAudioSourceNode;
@@ -50,6 +54,7 @@ export class BrowserCapture implements AudioCapture {
     this.deviceStatus = { source: 'microphone', code: 'pending', ...(config.micDeviceId === undefined ? {} : { requestedDeviceId: config.micDeviceId }) };
     this.denoiseEnabled = !!config.denoiseEnabled;
     this.pendingCloseTalkThresholdDb = config.closeTalkThresholdDb;
+    this.pendingDenoiseAttenuationLimitDb = config.denoiseAttenuationLimitDb;
     this.ready = client.request<number>(0, 0, { operation: 'create', config }).then((id) => {
       this.sessionId = id;
       if (this.epoch) client.cancel(id, this.epoch);
@@ -113,6 +118,10 @@ export class BrowserCapture implements AudioCapture {
       if (this.pendingCloseTalkThresholdDb !== undefined) {
         await this.request({ operation: 'closeTalkThresholdDb', db: validateCloseTalkThresholdDb(this.pendingCloseTalkThresholdDb) }, epoch);
         this.pendingCloseTalkThresholdDb = undefined;
+      }
+      if (this.pendingDenoiseAttenuationLimitDb !== undefined) {
+        await this.request({ operation: 'denoiseAttenuationLimitDb', db: validateDenoiseAttenuationLimitDb(this.pendingDenoiseAttenuationLimitDb) }, epoch);
+        this.pendingDenoiseAttenuationLimitDb = undefined;
       }
       await this.request({ operation: 'start' }, epoch);
       if (epoch !== this.epoch) return;
@@ -212,7 +221,8 @@ export class BrowserCapture implements AudioCapture {
     const status = await this.request<WorkerStatus>({ operation: 'status' });
     return {
       state: this.state, denoiseEnabled: status.denoise_enabled, denoiseMode: status.denoise_mode,
-      denoiseLoadFailed: status.denoise_load_failed, closeTalkThresholdDb: status.close_talk_threshold_db!, vadEnabled: !!this.config.vadEnabled,
+      denoiseLoadFailed: status.denoise_load_failed, vadEnabled: !!this.config.vadEnabled,
+      closeTalkThresholdDb: status.close_talk_threshold_db ?? undefined, denoiseAttenuationLimitDb: status.denoise_attenuation_limit_db ?? undefined,
       deviceStatus: [this.deviceStatus, ...(this.playbackDeviceStatus ? [this.playbackDeviceStatus] : [])],
       modelsLoaded: status.loadedModels,
     };
@@ -243,8 +253,28 @@ export class BrowserCapture implements AudioCapture {
 
   async setCloseTalkThresholdDb(db: number): Promise<void> {
     validateCloseTalkThresholdDb(db);
+    const configured = this.pendingCloseTalkThresholdDb;
+    const change = ++this.closeTalkThresholdChanges;
     this.pendingCloseTalkThresholdDb = undefined;
-    await this.request({ operation: 'closeTalkThresholdDb', db });
+    try {
+      await this.request({ operation: 'closeTalkThresholdDb', db });
+    } catch (error) {
+      if (change === this.closeTalkThresholdChanges) this.pendingCloseTalkThresholdDb = configured;
+      throw error;
+    }
+  }
+
+  async setDenoiseAttenuationLimitDb(db: number): Promise<void> {
+    validateDenoiseAttenuationLimitDb(db);
+    const configured = this.pendingDenoiseAttenuationLimitDb;
+    const change = ++this.denoiseAttenuationLimitChanges;
+    this.pendingDenoiseAttenuationLimitDb = undefined;
+    try {
+      await this.request({ operation: 'denoiseAttenuationLimitDb', db });
+    } catch (error) {
+      if (change === this.denoiseAttenuationLimitChanges) this.pendingDenoiseAttenuationLimitDb = configured;
+      throw error;
+    }
   }
 
   async reset(): Promise<void> {

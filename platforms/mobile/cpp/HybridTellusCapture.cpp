@@ -5,7 +5,8 @@
 
 namespace margelo::nitro::tellus {
 
-SetCloseTalkThresholdFn (*HybridTellusCapture::_closeTalkThresholdResolver)() = resolveSetCloseTalkThresholdDb;
+DenoiseSettingFn (*HybridTellusCapture::_closeTalkThresholdResolver)() = resolveSetCloseTalkThresholdDb;
+DenoiseSettingFn (*HybridTellusCapture::_denoiseAttenuationLimitResolver)() = resolveSetDenoiseAttenuationLimitDb;
 
 HybridTellusCapture::HybridTellusCapture() : HybridObject(TAG), _session(std::make_shared<CaptureSession>()) {}
 
@@ -206,8 +207,22 @@ std::shared_ptr<Promise<void>> HybridTellusCapture::setCloseTalkThresholdDb(doub
   });
 }
 
-void HybridTellusCapture::setCloseTalkThresholdResolverForTesting(SetCloseTalkThresholdFn (*resolver)()) {
+void HybridTellusCapture::setCloseTalkThresholdResolverForTesting(DenoiseSettingFn (*resolver)()) {
   _closeTalkThresholdResolver = resolver;
+}
+
+std::shared_ptr<Promise<void>> HybridTellusCapture::setDenoiseAttenuationLimitDb(double db) {
+  if (!std::isfinite(db) || db < 0 || db > 60) throw std::invalid_argument("invalid_denoise_attenuation_limit_db");
+  const auto setLimit = _denoiseAttenuationLimitResolver();
+  if (!setLimit) throw std::runtime_error("tellus_denoise_attenuation_limit_unsupported");
+  auto session = acquire();
+  return session->submit([state = session.get(), setLimit, db] {
+    state->check(setLimit(state->handle, static_cast<float>(db)));
+  });
+}
+
+void HybridTellusCapture::setDenoiseAttenuationLimitResolverForTesting(DenoiseSettingFn (*resolver)()) {
+  _denoiseAttenuationLimitResolver = resolver;
 }
 
 std::shared_ptr<Promise<void>> HybridTellusCapture::setRecordingNotification(

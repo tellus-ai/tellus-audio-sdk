@@ -8,8 +8,8 @@ let instances = 0;
 
 // C ABI boundary double. Reports container bytes as model_id and records the configure JSON and loaded models.
 // Models in loadFailures fail to load; denoiseLoadFailed is the value core reports in its status.
-// closeTalkThreshold adds the wasm export an engine with close-talk threshold support has.
-function engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gains, thresholds, closeTalkThreshold }) {
+// closeTalkThreshold and denoiseAttenuationLimit add the wasm exports an engine with each setting has.
+function engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gains, thresholds, limits, closeTalkThreshold, denoiseAttenuationLimit }) {
   const heap = new ArrayBuffer(1 << 20);
   let next = 8;
   const module = {
@@ -18,6 +18,7 @@ function engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gai
     _malloc(size) { const pointer = next; next += Math.ceil(Math.max(size, 1) / 8) * 8; return pointer; },
     _free() {}, addFunction: () => 1, removeFunction() {}, UTF8ToString: () => 'native_failed',
     ...(closeTalkThreshold ? { _tellus_audio_session_set_close_talk_threshold_db() {} } : {}),
+    ...(denoiseAttenuationLimit ? { _tellus_audio_session_set_denoise_attenuation_limit_db() {} } : {}),
     ccall(name, _returnType, _argumentTypes, args) {
       const text = (pointer, length) => decoder.decode(module.HEAPU8.subarray(pointer, pointer + length));
       const reply = (value, output, written) => {
@@ -30,6 +31,7 @@ function engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gai
       if (name === 'tellus_audio_session_configure') configured.push(JSON.parse(text(args[1], args[2])));
       if (name === 'tellus_audio_session_set_mic_gain_db') gains.push([...args]);
       if (name === 'tellus_audio_session_set_close_talk_threshold_db') thresholds.push([...args]);
+      if (name === 'tellus_audio_session_set_denoise_attenuation_limit_db') limits.push([...args]);
       if (name === 'tellus_audio_session_model_key_request') reply({ public_key: 'b'.repeat(64) }, args[1], args[3]);
       if (name === 'tellus_audio_session_get_status') {
         reply({ lifecycle: 'stopped', denoise_load_failed: denoiseLoadFailed, denoise_loaded: loaded.includes('denoise-48'), vad_loaded: loaded.includes('vad') }, args[1], args[3]);
@@ -46,19 +48,20 @@ function engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gai
 }
 
 // Runs the worker module on a fresh worker global and initializes it with only the given encrypted models.
-async function worker(models, { loadFailures = [], denoiseLoadFailed = false, closeTalkThreshold = false } = {}) {
+async function worker(models, { loadFailures = [], denoiseLoadFailed = false, closeTalkThreshold = false, denoiseAttenuationLimit = false } = {}) {
   const responses = new Map();
   const configured = [];
   const loaded = [];
   const gains = [];
   const thresholds = [];
+  const limits = [];
   const scope = { postMessage: (response) => {
     const resolve = responses.get(response.id);
     if (typeof resolve !== 'function') throw new Error(`Unexpected worker response: ${response.id}`);
     resolve(response);
   } };
   globalThis.self = scope;
-  globalThis.tellusTestEngine = () => engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gains, thresholds, closeTalkThreshold });
+  globalThis.tellusTestEngine = () => engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gains, thresholds, limits, closeTalkThreshold, denoiseAttenuationLimit });
   globalThis.fetch = async (url) => ({ ok: true, arrayBuffer: async () => encoder.encode(new URL(url).pathname.slice(1).replace('.temc', '')).buffer });
   await import(`../../../platforms/web/runtime/platforms/web/worker.js?instance=${++instances}`);
   let id = 0;
@@ -70,7 +73,7 @@ async function worker(models, { loadFailures = [], denoiseLoadFailed = false, cl
     wasmUrl: 'https://example.test/engine.wasm', ortModuleUrl: moduleUrl('export const env = { wasm: {} };'),
     ortWasmBaseUrl: 'https://example.test/ort/', encryptedModels: models.map((model) => `https://example.test/${model}.temc`) };
   assert.equal((await send(0, { operation: 'init', assets })).error, undefined);
-  return { send, configured, loaded, gains, thresholds, cancel: (sessionId, epoch) => scope.onmessage({ data: { cancel: sessionId, epoch } }) };
+  return { send, configured, loaded, gains, thresholds, limits, cancel: (sessionId, epoch) => scope.onmessage({ data: { cancel: sessionId, epoch } }) };
 }
 
 test('gain settings survive the worker native serializer and explicit auto gain overrides the old opt-in', async () => {
@@ -115,6 +118,26 @@ test('an engine without the close-talk threshold export rejects the change witho
   const { result: id } = await send(0, { operation: 'create', config: {} });
   assert.match((await send(id, { operation: 'closeTalkThresholdDb', db: 25 })).error, /tellus_close_talk_threshold_unsupported/);
   assert.deepEqual(thresholds, []);
+});
+
+test('runtime denoise attenuation limit reaches the native session only for a valid live capture epoch', async () => {
+  const { send, configured, limits, cancel } = await worker([], { denoiseAttenuationLimit: true });
+  const { result: id } = await send(0, { operation: 'create', config: { denoiseAttenuationLimitDb: 6 } });
+  assert.ok(!('denoiseAttenuationLimitDb' in configured[0]), 'configure JSON stays readable by engines without the key');
+  assert.equal((await send(id, { operation: 'denoiseAttenuationLimitDb', db: 6 })).error, undefined);
+  assert.deepEqual(limits, [[7, 6]]);
+  cancel(id, 1);
+  assert.match((await send(id, { operation: 'denoiseAttenuationLimitDb', db: 9 })).error, /tellus_capture_cancelled/);
+  assert.deepEqual(limits, [[7, 6]]);
+});
+
+test('an engine without the denoise attenuation limit export rejects the change without calling native', async () => {
+  const { send, thresholds, limits } = await worker([], { closeTalkThreshold: true });
+  const { result: id } = await send(0, { operation: 'create', config: {} });
+  assert.match((await send(id, { operation: 'denoiseAttenuationLimitDb', db: 6 })).error, /tellus_denoise_attenuation_limit_unsupported/);
+  assert.deepEqual(limits, []);
+  assert.equal((await send(id, { operation: 'closeTalkThresholdDb', db: 25 })).error, undefined);
+  assert.deepEqual(thresholds, [[7, 25]], 'each setting checks its own export');
 });
 
 // Builds wrapped keys from the modelRequests response and passes them to the worker.
