@@ -199,9 +199,9 @@ std::shared_ptr<Promise<void>> HybridTellusCapture::setMicGainDb(double db) {
 
 std::shared_ptr<Promise<void>> HybridTellusCapture::setCloseTalkThresholdDb(double db) {
   if (!std::isfinite(db) || db < 0 || db > 60) throw std::invalid_argument("invalid_close_talk_threshold_db");
+  auto session = acquire();
   const auto setThreshold = _closeTalkThresholdResolver();
   if (!setThreshold) throw std::runtime_error("tellus_close_talk_threshold_unsupported");
-  auto session = acquire();
   return session->submit([state = session.get(), setThreshold, db] {
     state->check(setThreshold(state->handle, static_cast<float>(db)));
   });
@@ -213,9 +213,9 @@ void HybridTellusCapture::setCloseTalkThresholdResolverForTesting(DenoiseSetting
 
 std::shared_ptr<Promise<void>> HybridTellusCapture::setDenoiseAttenuationLimitDb(double db) {
   if (!std::isfinite(db) || db < 0 || db > 60) throw std::invalid_argument("invalid_denoise_attenuation_limit_db");
+  auto session = acquire();
   const auto setLimit = _denoiseAttenuationLimitResolver();
   if (!setLimit) throw std::runtime_error("tellus_denoise_attenuation_limit_unsupported");
-  auto session = acquire();
   return session->submit([state = session.get(), setLimit, db] {
     state->check(setLimit(state->handle, static_cast<float>(db)));
   });
