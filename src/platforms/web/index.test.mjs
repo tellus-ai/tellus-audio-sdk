@@ -187,6 +187,16 @@ test('an omitted processing.sampleRate configures the 16 kHz engine output and a
   assert.deepEqual(configured, [16000, 16000, 44100, 24000]);
 });
 
+test('out-of-range close_talk threshold and attenuation limit reject init and close init resources', async () => {
+  const { contexts, workers } = environment();
+  for (const value of [-1, 61, Number.NaN, Infinity]) {
+    await assert.rejects(AudioEngine.init({ closeTalkThresholdDb: value }, assets), /tellus_close_talk_threshold_db_invalid/);
+    await assert.rejects(AudioEngine.init({ denoiseAttenuationLimitDb: value }, assets), /tellus_denoise_attenuation_limit_db_invalid/);
+  }
+  assert.ok(contexts.every((context) => context.closed));
+  assert.ok(workers.every((worker) => worker.terminated));
+});
+
 test('an unknown denoise mode rejects init and closes init resources', async () => {
   const { contexts, workers } = environment();
   for (const denoiseMode of ['rnnoise', '', 'close-talk', 'denoise', 3]) {

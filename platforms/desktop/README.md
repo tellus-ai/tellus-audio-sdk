@@ -100,7 +100,7 @@ capture.setCloseTalkThresholdDb(24);
 capture.setDenoiseAttenuationLimitDb(9);
 ```
 
-`closeTalkThresholdDb`는 close_talk 게이트가 열리는 임계값(유한한 0..60 dB, 엔진 기본 30)입니다. 낮추면 작은 소리도 통과해 멀리 있는 말소리가 더 들어오고, 높이면 입에 가까운 큰 소리만 통과해 먼 소리와 소음은 줄지만 작은 목소리가 잘릴 수 있습니다. `denoiseAttenuationLimitDb`는 close_talk의 소음 저감 상한을 양수 dB 크기로 지정합니다(유한한 0..60 dB, 엔진 기본 12). 엔진이 입력을 10^(-dB/20)만큼 되섞어 저감폭을 제한합니다. 값이 클수록 소음이 더 줄지만 목소리가 부자연스러워질 수 있고, 작을수록 자연스럽지만 소음이 더 남습니다. 일반(general) 모드는 상한이 없습니다. 두 setter는 다음 10 ms hop부터 적용되며 보관 중인 오디오와 학습된 레벨은 유지합니다. SDK는 엔진 기본값을 주입하지 않습니다. 
+`closeTalkThresholdDb`는 close_talk 게이트가 열리는 임계값(유한한 0..60 dB, 엔진 기본 30)입니다. 낮추면 작은 소리도 통과해 멀리 있는 말소리가 더 들어오고, 높이면 입에 가까운 큰 소리만 통과해 먼 소리와 소음은 줄지만 작은 목소리가 잘릴 수 있습니다. `denoiseAttenuationLimitDb`는 close_talk의 소음 저감 상한을 양수 dB 크기로 지정합니다(유한한 0..60 dB, 엔진 기본 12). 엔진이 입력을 10^(-dB/20)만큼 되섞어 저감폭을 제한합니다. 상한을 키우면 소음은 더 줄지만 작은 목소리도 함께 지워질 수 있다. 일반(general) 모드는 상한이 없습니다. 두 setter는 다음 10 ms hop부터 적용되며 보관 중인 오디오와 학습된 레벨은 유지합니다. SDK는 엔진 기본값을 주입하지 않습니다.
 
 `getStatus()`의 `closeTalkThresholdDb`·`denoiseAttenuationLimitDb`는 선택 필드이며, 지원하지 않는 엔진에서는 없습니다(`undefined`). 범위를 벗어나거나 유한하지 않은 값은 native가 던지는 `invalid_close_talk_threshold_db...`·`invalid_denoise_attenuation_limit_db...` 오류를 그대로 전달합니다. 이 API는 엔진 v0.4.4 다음 릴리즈 이상이 필요하며, 구형 kit에서는 `close_talk_threshold_unsupported: install a native engine with close-talk threshold support`·`denoise_attenuation_limit_unsupported: install a native engine with denoise attenuation limit support` 오류를 던집니다. 설정을 명시하면 생성자에서, setter는 호출 시점에 던집니다.
 

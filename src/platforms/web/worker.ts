@@ -1,7 +1,7 @@
 import type { AudioCaptureConfig, BrowserEngineAssets } from '../../bindings/typescript/capture-types.js';
 import { validateGainDb } from '../../bindings/typescript/audio-gain.js';
 import { NativeEngine, type EngineModule, type NativeCapture } from './native.js';
-import { isVadModel, type DeliveredChunk, type NativeStatus, type WorkerCommand, type WorkerRequest, type WorkerResponse, WorkerStatus } from './protocol.js';
+import { isVadModel, type DeliveredChunk, type NativeStatus, validateCloseTalkThresholdDb, validateDenoiseAttenuationLimitDb, type WorkerCommand, type WorkerRequest, type WorkerResponse, WorkerStatus } from './protocol.js';
 
 interface EncryptedModel {
   model_id: string;
@@ -130,10 +130,10 @@ async function dispatch(request: WorkerRequest): Promise<unknown> {
     case 'micGainDb': return native.call('set_mic_gain_db', [validateGainDb(command.db)]);
     case 'closeTalkThresholdDb':
       if (!engine.supports('session_set_close_talk_threshold_db')) throw new Error('tellus_close_talk_threshold_unsupported');
-      return native.call('set_close_talk_threshold_db', [command.db]);
+      return native.call('set_close_talk_threshold_db', [validateCloseTalkThresholdDb(command.db)]);
     case 'denoiseAttenuationLimitDb':
       if (!engine.supports('session_set_denoise_attenuation_limit_db')) throw new Error('tellus_denoise_attenuation_limit_unsupported');
-      return native.call('set_denoise_attenuation_limit_db', [command.db]);
+      return native.call('set_denoise_attenuation_limit_db', [validateDenoiseAttenuationLimitDb(command.db)]);
     case 'clearRender': return native.call('clear_render');
     case 'canDeliver': return native.canDeliver(command.nativeEpoch, command.authorizationGeneration);
     case 'render': await native.push(command.samples, command.rate); return;
