@@ -22,6 +22,9 @@ const decoder = new TextDecoder();
 export class NativeEngine {
   constructor(readonly module: EngineModule) {}
 
+  /** Whether the loaded wasm exports a C ABI function, so engines older than an API reject it explicitly. */
+  supports(name: string): boolean { return typeof (this.module as any)[`_tellus_audio_${name}`] === 'function'; }
+
   async call(name: string, args: unknown[] = []): Promise<number> {
     const result = Number(await this.module.ccall(`tellus_audio_${name}`, 'number', args.map(() => 'number'), args, { async: true }));
     return result;

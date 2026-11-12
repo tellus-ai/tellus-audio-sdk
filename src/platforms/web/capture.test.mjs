@@ -457,3 +457,51 @@ test('queue loss is reported at the 16 kHz default output rate when processing.s
     await capture.dispose();
   }
 });
+
+test('runtime close-talk threshold validates before reaching the worker', async () => {
+  const values = [];
+  const { capture, commands } = environment({ closeTalkThresholdDb: (command) => { values.push(command.db); } });
+  for (const db of [61, -1, NaN, Infinity, null, '25']) await assert.rejects(capture.setCloseTalkThresholdDb(db), /tellus_close_talk_threshold_db_invalid/);
+  assert.equal(commands.includes('closeTalkThresholdDb'), false);
+  await capture.setCloseTalkThresholdDb(0);
+  await capture.setCloseTalkThresholdDb(60);
+  assert.deepEqual(values, [0, 60]);
+  await capture.dispose();
+});
+
+test('a configured close-talk threshold is applied once after session creation and before start', async () => {
+  const values = [];
+  const { capture, permissions, commands } = environment({ closeTalkThresholdDb: (command) => { values.push(command.db); } }, { closeTalkThresholdDb: 25 });
+  const starting = capture.start(() => {});
+  await flush();
+  permissions[0](stream('mic-a'));
+  await starting;
+  assert.deepEqual(commands.filter((command) => ['create', 'closeTalkThresholdDb', 'start'].includes(command)), ['create', 'closeTalkThresholdDb', 'start']);
+  assert.deepEqual(values, [25]);
+  await capture.setCloseTalkThresholdDb(20);
+  await capture.stop();
+  const restarting = capture.start(() => {});
+  await flush();
+  permissions[1](stream('mic-a'));
+  await restarting;
+  assert.deepEqual(values, [25, 20], 'a restart keeps the runtime value native already holds');
+  await capture.dispose();
+  const early = environment({ closeTalkThresholdDb: (command) => { values.push(command.db); } }, { closeTalkThresholdDb: 25 });
+  await early.capture.setCloseTalkThresholdDb(18);
+  const earlyStart = early.capture.start(() => {});
+  await flush();
+  early.permissions[0](stream('mic-a'));
+  await earlyStart;
+  assert.deepEqual(values, [25, 20, 18], 'the configured value never overwrites an earlier runtime change');
+  await early.capture.dispose();
+  const unsupported = environment({ closeTalkThresholdDb: () => { throw new Error('tellus_close_talk_threshold_unsupported'); } }, { closeTalkThresholdDb: 25 });
+  await assert.rejects(unsupported.capture.start(() => {}), /tellus_close_talk_threshold_unsupported/);
+  assert.equal(unsupported.commands.includes('start'), false);
+  await unsupported.capture.dispose();
+});
+
+test('status reports the applied close-talk threshold from the worker', async () => {
+  const { capture } = environment({ status: () => ({ lifecycle: 'stopped', denoise_enabled: false, denoise_loaded: false, vad_loaded: false, close_talk_threshold_db: 22, loadedModels: [] }) });
+  assert.equal((await capture.getStatus()).closeTalkThresholdDb, 22);
+  await capture.dispose();
+});

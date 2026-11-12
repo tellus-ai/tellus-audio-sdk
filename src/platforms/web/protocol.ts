@@ -12,6 +12,8 @@ export interface NativeStatus {
   denoise_loaded: boolean;
   denoise_load_failed: boolean;
   denoise_mode: NonNullable<AudioCaptureConfig['denoiseMode']>;
+  /** null only before configure. Worker sessions are configured when they are created. */
+  close_talk_threshold_db: number | null;
   vad_loaded: boolean;
 }
 
@@ -31,6 +33,7 @@ export type WorkerCommand =
   | { operation: 'canDeliver'; nativeEpoch: string; authorizationGeneration: string }
   | { operation: 'denoise'; enabled: boolean }
   | { operation: 'micGainDb'; db: number }
+  | { operation: 'closeTalkThresholdDb'; db: number }
   | { operation: 'start' | 'pause' | 'resume' | 'stop' | 'reset' | 'destroy' | 'invalidate' | 'status' | 'authorizationStatus' | 'modelRequests' | 'clearRender' };
 
 export interface WorkerRequest {
@@ -65,6 +68,12 @@ export function outputSampleRate(config: AudioCaptureConfig): number {
     throw new Error('tellus_opus_sample_rate_unsupported');
   }
   return rate;
+}
+
+/** Validates the close_talk gate open threshold with the same rule as core (finite 0..=60 dB) and returns it. Otherwise throws tellus_close_talk_threshold_db_invalid. */
+export function validateCloseTalkThresholdDb(db: number): number {
+  if (!Number.isFinite(db) || db < 0 || db > 60) throw new Error('tellus_close_talk_threshold_db_invalid');
+  return db;
 }
 
 /** The engine names the VAD model with a `vad` suffix. Every other container is the denoise model. */

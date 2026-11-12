@@ -6,7 +6,7 @@ import type { AudioDeviceStatus } from '../../bindings/typescript/audio-devices.
 import { validateGainDb } from '../../bindings/typescript/audio-gain.js';
 import { CaptureQueue, type CaptureFrame } from './capture-queue.js';
 import { audioDeviceError } from './devices.js';
-import type { DeliveredChunk, WorkerCommand, WorkerStatus } from './protocol.js';
+import { validateCloseTalkThresholdDb, type DeliveredChunk, type WorkerCommand, type WorkerStatus } from './protocol.js';
 import { WorkerClient } from './worker-client.js';
 
 interface NativeAuthorizationStatus {
@@ -26,6 +26,8 @@ export class BrowserCapture implements AudioCapture {
   private disposed = false;
   private denoiseEnabled: boolean;
   private denoiseUpdates = 0;
+  // The configured threshold is applied by the first start that succeeds. A runtime change replaces it, and native keeps the value across stop and start.
+  private pendingCloseTalkThresholdDb?: number;
   private callback?: AudioCaptureCallback;
   private stream?: MediaStream;
   private source?: MediaStreamAudioSourceNode;
@@ -47,6 +49,7 @@ export class BrowserCapture implements AudioCapture {
     this.queue = new CaptureQueue(config.processing?.sampleRate ?? 16000);
     this.deviceStatus = { source: 'microphone', code: 'pending', ...(config.micDeviceId === undefined ? {} : { requestedDeviceId: config.micDeviceId }) };
     this.denoiseEnabled = !!config.denoiseEnabled;
+    this.pendingCloseTalkThresholdDb = config.closeTalkThresholdDb;
     this.ready = client.request<number>(0, 0, { operation: 'create', config }).then((id) => {
       this.sessionId = id;
       if (this.epoch) client.cancel(id, this.epoch);
@@ -107,6 +110,10 @@ export class BrowserCapture implements AudioCapture {
     void resumed.catch(() => {});
     try {
       if (requestedDeviceId !== undefined && (typeof requestedDeviceId !== 'string' || !requestedDeviceId.trim())) throw audioDeviceError(new Error('tellus_microphone_invalid_device_id'), 'microphone', typeof requestedDeviceId === 'string' ? requestedDeviceId : undefined);
+      if (this.pendingCloseTalkThresholdDb !== undefined) {
+        await this.request({ operation: 'closeTalkThresholdDb', db: validateCloseTalkThresholdDb(this.pendingCloseTalkThresholdDb) }, epoch);
+        this.pendingCloseTalkThresholdDb = undefined;
+      }
       await this.request({ operation: 'start' }, epoch);
       if (epoch !== this.epoch) return;
       if (!navigator.mediaDevices?.getUserMedia) throw audioDeviceError(new DOMException('tellus_microphone_requires_secure_context', 'NotSupportedError'), 'microphone', requestedDeviceId);
@@ -205,7 +212,7 @@ export class BrowserCapture implements AudioCapture {
     const status = await this.request<WorkerStatus>({ operation: 'status' });
     return {
       state: this.state, denoiseEnabled: status.denoise_enabled, denoiseMode: status.denoise_mode,
-      denoiseLoadFailed: status.denoise_load_failed, vadEnabled: !!this.config.vadEnabled,
+      denoiseLoadFailed: status.denoise_load_failed, closeTalkThresholdDb: status.close_talk_threshold_db!, vadEnabled: !!this.config.vadEnabled,
       deviceStatus: [this.deviceStatus, ...(this.playbackDeviceStatus ? [this.playbackDeviceStatus] : [])],
       modelsLoaded: status.loadedModels,
     };
@@ -232,6 +239,12 @@ export class BrowserCapture implements AudioCapture {
   async setSpeakerGainDb(db: number): Promise<void> {
     validateGainDb(db);
     throw new Error('tellus_speaker_gain_unsupported');
+  }
+
+  async setCloseTalkThresholdDb(db: number): Promise<void> {
+    validateCloseTalkThresholdDb(db);
+    this.pendingCloseTalkThresholdDb = undefined;
+    await this.request({ operation: 'closeTalkThresholdDb', db });
   }
 
   async reset(): Promise<void> {
