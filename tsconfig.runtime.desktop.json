@@ -2,6 +2,8 @@
   "extends": "./tsconfig.json",
   "include": [
     "src/platforms/desktop/electron/**/*.ts",
-    "src/bindings/typescript/**/*.ts"
+    "src/bindings/typescript/**/*.ts",
+    "src/screen/client/**/*.ts",
+    "src/screen/desktop/electron/**/*.ts"
   ]
 }

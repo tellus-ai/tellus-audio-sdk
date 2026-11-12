@@ -79,3 +79,23 @@ test('an explicit delivery budget is refused when the native engine cannot enfor
   });
   assert.throws(() => new AudioCapture({ deliveryBufferDurationMs: 10000 }), /delivery_buffer_unsupported/);
 });
+
+test('desktop audio recording endpoint delegates one token without stopping shared capture',()=>{
+  const stopped=[];
+  const {AudioCapture}=loadWrapper(class{
+    createRecordingAudioSource(){return {port:12345,token:'session-token'};}
+    stopRecordingAudioSource(token){stopped.push(token);}
+    stop(){throw new Error('shared capture must survive');}
+  });
+  const capture=new AudioCapture();
+  assert.deepEqual(capture.createRecordingAudioSource(),{port:12345,token:'session-token'});
+  capture.stopRecordingAudioSource('session-token');
+  assert.deepEqual(stopped,['session-token']);
+});
+test('desktop audio recording rejects old native method sets before attaching',()=>{
+  let attached=0;
+  const {AudioCapture}=loadWrapper(class{createRecordingAudioSource(){attached++;return {port:1,token:'bad'};}});
+  const capture=new AudioCapture();
+  assert.throws(()=>capture.createRecordingAudioSource(),/recording_audio_unsupported/);
+  assert.equal(attached,0);
+});

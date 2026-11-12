@@ -45,7 +45,7 @@ function fixture({ platform = 'win32', env = {}, packageRoot, assetRoot, nativeN
       return nativeBinding;
     },
   }, { filename: 'engine-runtime.js' });
-  return { runtime: exports, loads, nativeBinding, nativePath, ortPath, modelDir, assetRoot, paths };
+  return { runtime: exports, files, loads, nativeBinding, nativePath, ortPath, modelDir, assetRoot, paths };
 }
 
 for (const pathKey of ['Path', 'PATH', 'path']) {
@@ -109,4 +109,21 @@ test('missing native addon fails before attempting to load a module', () => {
   const f = fixture({ missingNative: true });
   assert.throws(() => f.runtime.prepareEngineRuntime(), /Failed to find Tellus audio engine native binary/);
   assert.equal(f.loads.length, 0);
+});
+
+for (const platform of ['darwin','win32']) {
+  test(`${platform} resolves bundled screen executable without loading the audio addon`,()=>{
+    const f=fixture({platform});
+    const executable=f.paths.join(f.assetRoot,'bin',platform==='win32'?'screen-capture.exe':'screen-capture');
+    f.files.add(executable);
+    assert.equal(f.runtime.resolveScreenCaptureExecutable(),executable);
+    assert.equal(f.loads.length,0);
+  });
+}
+test('screen executable resolver honors Electron ASAR unpacked vendor root',()=>{
+  const packageRoot='C:\\Tellus\\app.asar\\node_modules\\audio-sdk';
+  const assetRoot=path.win32.join(packageRoot.replace('app.asar','app.asar.unpacked'),'vendor','win32-x64-msvc');
+  const f=fixture({platform:'win32',packageRoot,assetRoot});
+  const executable=f.paths.join(assetRoot,'bin','screen-capture.exe');f.files.add(executable);
+  assert.equal(f.runtime.resolveScreenCaptureExecutable(),executable);
 });

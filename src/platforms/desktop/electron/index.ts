@@ -1,3 +1,6 @@
+export { ScreenCaptureProcess, SCREEN_CAPTURE_PROTOCOL_VERSION } from '../../../screen/desktop/electron/screen-capture-process.js';
+export type { ScreenCaptureStartConfig, ScreenCaptureLaunchOptions, ScreenCaptureEvent, RecordingAudioCapture, RecordingAudioSource } from '../../../screen/desktop/electron/screen-capture-process.js';
+export type { CaptureResult as ScreenCaptureResult, CaptureError as ScreenCaptureError, SessionConfig as ScreenSessionConfig, RecordingOutput, RecordingAudioMetadata, SessionSnapshot, CaptureCapabilities, SourceRequest, OutputTarget } from '../../../screen/client/types.js';
 import { release as osRelease } from 'node:os';
 import { gainConfig, validateGainDb, type AutoGainControlConfig } from '../../../bindings/typescript/audio-gain.js';
 export type { AutoGainControlConfig } from '../../../bindings/typescript/audio-gain.js';
@@ -913,6 +916,24 @@ export class AudioCapture {
 
   getStatus(): CaptureStatus {
     return this.#native.getStatus();
+  }
+
+  /** 실행 중인 native capture의 DSP 믹스를 화면 녹화에 연결한다. 공유 capture는 계속 caller 소유다. */
+  createRecordingAudioSource(): import('../../../screen/desktop/electron/screen-capture-process.js').RecordingAudioSource {
+    this.#requireRecordingAudioSupport();
+    return this.#native.createRecordingAudioSource();
+  }
+
+  /** 이 token의 녹화 sink만 종료한다. capture.stop()을 호출하지 않는다. */
+  stopRecordingAudioSource(token: string): void {
+    this.#requireRecordingAudioSupport();
+    this.#native.stopRecordingAudioSource(token);
+  }
+
+  #requireRecordingAudioSupport(): void {
+    if (typeof this.#native.createRecordingAudioSource !== 'function' || typeof this.#native.stopRecordingAudioSource !== 'function') {
+      throw new Error('recording_audio_unsupported: install a mixed-recording-enabled native engine');
+    }
   }
 
   /** Enable independent post-processing retention while the capture is idle. */

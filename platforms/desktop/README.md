@@ -32,6 +32,42 @@ async function createEngine(micDeviceId: string, systemAudioDeviceId: string) {
 
 `speakerEnabled`와 `systemAudioDeviceId`는 시스템 소리 녹음 대상입니다. SDK 재생 출력 선택은 Desktop에서 지원하지 않습니다. Windows는 CPAL 출력 ID, macOS는 14.2+ CoreAudio Tap 출력 UID, Linux는 PulseAudio sink ID를 사용합니다. Linux의 ALSA 기본 경로 alias와 macOS ScreenCaptureKit의 명시 출력 선택은 `unsupported`로 거부합니다. OS 입력 볼륨은 유지하며 게인은 해당 캡처의 처리된 신호에만 적용합니다.
 
+## DSP mixed 오디오를 포함한 MP4
+
+macOS·Windows에서 `ScreenCaptureProcess`를 desktop 진입점 또는 `@tellus-ai/audio-sdk-desktop/screen`으로 가져옵니다. 이 API를 포함한 native kit가 필요하며, 구형 실행 파일이나 오디오 기능이 없는 엔진은 요청을 명시적으로 거부합니다.
+
+```ts
+import { ScreenCaptureProcess } from '@tellus-ai/audio-sdk-desktop';
+
+const launched = await ScreenCaptureProcess.launch({ root: recordingsDirectory });
+if (!launched.ok) throw new Error(launched.error.detail);
+const recorder = launched.value;
+const started = await recorder.start({
+  captureId: conversationId,
+  source: { type: 'display_at', point: { x: 100, y: 100 } },
+  output: { type: 'file', label: 'meeting' },
+  captureCursor: true,
+  includeAudio: true,
+  audioCapture: existingRunningAudioCapture,
+});
+if (!started.ok) throw new Error(started.error.detail);
+const opened = await recorder.openGate();
+if (!opened.ok) throw new Error(opened.error.detail);
+// closeGate/openGate로 일시정지/재개한다.
+const stopped = await recorder.stop();
+if (!stopped.ok) throw new Error(stopped.error.detail);
+console.log(stopped.value.file, stopped.value.audio);
+await recorder.shutdown();
+```
+
+`includeAudio` 기본값은 false입니다. true이면 기존 캡처의 활성 마이크·시스템 오디오를 소스별 DSP 처리 후 녹화 시각에 맞춰 혼합하고 AAC-LC/48kHz/mono/128kbps 한 트랙으로 저장합니다. raw PCM을 대신 저장하지 않습니다. 기본16kHz mix는 녹화 작업자에서48kHz로 변환하며 이미 제거된 주파수 대역을 복원하지 않습니다. 게인·음소거·잡음 제거는 기존 캡처 설정을 따릅니다.
+
+화면 프로세스가 오디오 장치를 다시 열지 않으며, MP4 종료는 해당 녹화 연결만 해제합니다. 기존 AudioCapture는 호출자가 계속 소유합니다. 하나의 AudioCapture에는 녹화 연결 하나만 허용합니다. 장치를 막 시작했다면 실제 PCM 콜백 수신을 확인한 뒤 gate를 여세요. 입력 준비 전 공백은 `audio.gaps`로 보고됩니다. `audio.paddingSamples`는 마지막 영상 표시 구간을 맞추기 위한 끝 무음입니다. 분수 샘플 경계의 반올림도 gaps에 포함할 수 있어 모든 gaps를 장치 손실로 해석하지 않습니다.
+
+웹·모바일의 소리 포함 MP4는 이번 desktop API의 지원 범위에 포함되지 않습니다.
+
+Windows 시험용 엔진·SDK checkout과 로컬 native kit 연결, 장치·재시작·복합 부하·실제 player 검증은 [Windows mixed MP4 인수인계](https://github.com/tellus-ai/Tellus-audio-engine/blob/feat/mp4-mixed-audio-handoff/docs/windows-mp4-mixed-audio-handoff.md)를 따릅니다. 이 소스 PR은 기존 release manifest를 갱신하지 않으므로, 새 SDK 소스만 설치하고 기존0.4.3 native archive로 새 기능을 검증했다고 판정하지 않습니다.
+
 ## 디지털 게인
 
 ```ts
