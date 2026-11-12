@@ -53,6 +53,51 @@ test('mobile rejects invalid and unsupported gain settings before native configu
   assert.equal(configurations, 0);
 });
 
+test('mobile close-talk threshold validates, waits for configuration and rejects on native without the setter', async () => {
+  const { native, create } = fixture();
+  const applied = [];
+  let ready;
+  native.configure = () => new Promise(resolve => { ready = resolve; });
+  const capture = await create();
+  const unsupported = assert.rejects(capture.setCloseTalkThresholdDb(25), /tellus_close_talk_threshold_unsupported/);
+  ready();
+  await unsupported;
+  native.setCloseTalkThresholdDb = async db => { applied.push(db); };
+  await capture.setCloseTalkThresholdDb(25);
+  assert.deepEqual(applied, [25]);
+  for (const db of [61, -1, NaN, Infinity, null, '25']) await assert.rejects(capture.setCloseTalkThresholdDb(db), /invalid_close_talk_threshold_db/);
+  assert.deepEqual(applied, [25]);
+  const second = await create();
+  const pending = second.setCloseTalkThresholdDb(20);
+  const cancelled = assert.rejects(pending, /capture_cancelled/);
+  await second.pause();
+  ready();
+  await cancelled;
+  assert.deepEqual(applied, [25]);
+});
+
+test('mobile applies a configured close-talk threshold through the setter after configure, never in the configure JSON', async () => {
+  const { native, create } = fixture();
+  const events = [];
+  native.configure = async json => { events.push(['configure', JSON.parse(json)]); };
+  native.setCloseTalkThresholdDb = async db => { events.push(['setCloseTalkThresholdDb', db]); };
+  const capture = await create({ closeTalkThresholdDb: 25 });
+  await capture.start(() => {});
+  assert.deepEqual(events.map(([name]) => name), ['configure', 'setCloseTalkThresholdDb']);
+  assert.equal('closeTalkThresholdDb' in events[0][1], false);
+  assert.equal(events[1][1], 25);
+  await assert.rejects((await create({ closeTalkThresholdDb: 61 })).start(() => {}), /invalid_close_talk_threshold_db/);
+  delete native.setCloseTalkThresholdDb;
+  await assert.rejects((await create({ closeTalkThresholdDb: 25 })).start(() => {}), /tellus_close_talk_threshold_unsupported/);
+  assert.equal(events.filter(([name]) => name === 'setCloseTalkThresholdDb').length, 1);
+});
+
+test('mobile status reports the applied close-talk threshold', async () => {
+  const { native, create } = fixture();
+  native.getStatus = async () => JSON.stringify({ lifecycle: 'idle', denoise_enabled: true, close_talk_threshold_db: 22 });
+  assert.equal((await (await create()).getStatus()).closeTalkThresholdDb, 22);
+});
+
 // Nitro uses only a JS boundary double; the real public wrapper runs.
 function fixture(assets = ['denoise.temc', 'vad.temc']) {
   const status = () => JSON.stringify({ state: 'authorized', remaining_ms: 1000 });

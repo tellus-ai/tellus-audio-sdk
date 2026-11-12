@@ -46,6 +46,12 @@ function denoiseMode(config: AudioCaptureConfig): NonNullable<AudioCaptureConfig
   return mode;
 }
 
+// Same as the core close_talk threshold rule: finite 0..=60 dB.
+function validateCloseTalkThresholdDb(db: number): number {
+  if (!Number.isFinite(db) || db < 0 || db > 60) throw new Error('invalid_close_talk_threshold_db');
+  return db;
+}
+
 // Rates libopus encodes. core TransportEncoderConfig decides; this fails early at init.
 const OPUS_SAMPLE_RATES = [8_000, 12_000, 16_000, 24_000, 48_000];
 
@@ -96,7 +102,10 @@ class NativeAudioCapture implements AudioCapture {
       vadGate: config.vad ? { positiveThreshold: config.vad.vadPositiveThreshold,
         negativeThreshold: config.vad.vadNegativeThreshold, silenceDurationMs: config.vad.vadSilenceDurationMs,
         preSpeechBufferMs: config.vad.vadPreSpeechBufferMs } : undefined,
-    }), rate);
+    }), rate).then(async () => {
+      // Kept out of the configure JSON so kits without the key still configure. An unsupported kit fails the first call that waits for ready.
+      if (config.closeTalkThresholdDb !== undefined) await this.applyCloseTalkThresholdDb(validateCloseTalkThresholdDb(config.closeTalkThresholdDb));
+    });
     this.devicesReady = this.ready.then(async () => {
       if (typeof this.native.configureAudioDevices !== 'function') {
         const source = config.micDeviceId !== undefined ? 'microphone' : 'playback';
@@ -246,7 +255,7 @@ class NativeAudioCapture implements AudioCapture {
     const deviceStatus = typeof this.native.getAudioDeviceStatus === 'function'
       ? JSON.parse(await this.native.getAudioDeviceStatus()) as AudioDeviceStatus[] : undefined;
     return { state: status.lifecycle, denoiseEnabled: status.denoise_enabled, denoiseMode: status.denoise_mode,
-      denoiseLoadFailed: status.denoise_load_failed, vadEnabled: this.config.vadEnabled ?? true,
+      denoiseLoadFailed: status.denoise_load_failed, closeTalkThresholdDb: status.close_talk_threshold_db, vadEnabled: this.config.vadEnabled ?? true,
       modelsLoaded: [...this.loaded], deviceStatus };
   }
   async setDenoiseEnabled(enabled: boolean): Promise<void> {
@@ -265,6 +274,17 @@ class NativeAudioCapture implements AudioCapture {
   async setSpeakerGainDb(db: number): Promise<void> {
     validateGainDb(db);
     throw new Error('tellus_speaker_gain_unsupported');
+  }
+  async setCloseTalkThresholdDb(db: number): Promise<void> {
+    validateCloseTalkThresholdDb(db);
+    const revision = this.controlRevision;
+    await this.ready;
+    this.checkControl(revision);
+    await this.applyCloseTalkThresholdDb(db);
+  }
+  private async applyCloseTalkThresholdDb(db: number): Promise<void> {
+    if (typeof this.native.setCloseTalkThresholdDb !== 'function') throw new Error('tellus_close_talk_threshold_unsupported');
+    await this.native.setCloseTalkThresholdDb(db);
   }
   async setRecordingNotification(config: RecordingNotificationConfig): Promise<void> {
     await this.ready;

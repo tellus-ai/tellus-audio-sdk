@@ -5,6 +5,8 @@
 
 namespace margelo::nitro::tellus {
 
+SetCloseTalkThresholdFn (*HybridTellusCapture::_closeTalkThresholdResolver)() = resolveSetCloseTalkThresholdDb;
+
 HybridTellusCapture::HybridTellusCapture() : HybridObject(TAG), _session(std::make_shared<CaptureSession>()) {}
 
 std::shared_ptr<CaptureSession> HybridTellusCapture::acquire() {
@@ -192,6 +194,20 @@ std::shared_ptr<Promise<void>> HybridTellusCapture::setMicGainDb(double db) {
   return session->submit([state = session.get(), db] {
     state->check(tellus_audio_session_set_mic_gain_db(state->handle, static_cast<float>(db)));
   });
+}
+
+std::shared_ptr<Promise<void>> HybridTellusCapture::setCloseTalkThresholdDb(double db) {
+  if (!std::isfinite(db) || db < 0 || db > 60) throw std::invalid_argument("invalid_close_talk_threshold_db");
+  const auto setThreshold = _closeTalkThresholdResolver();
+  if (!setThreshold) throw std::runtime_error("tellus_close_talk_threshold_unsupported");
+  auto session = acquire();
+  return session->submit([state = session.get(), setThreshold, db] {
+    state->check(setThreshold(state->handle, static_cast<float>(db)));
+  });
+}
+
+void HybridTellusCapture::setCloseTalkThresholdResolverForTesting(SetCloseTalkThresholdFn (*resolver)()) {
+  _closeTalkThresholdResolver = resolver;
 }
 
 std::shared_ptr<Promise<void>> HybridTellusCapture::setRecordingNotification(

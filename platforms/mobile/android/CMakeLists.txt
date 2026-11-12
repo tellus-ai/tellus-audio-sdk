@@ -9,6 +9,7 @@ if(NOT EXISTS "${ENGINE_LIBRARY}")
 endif()
 add_library(TellusAudioSdk SHARED
   ../cpp/HybridTellusCapture.cpp
+  ../cpp/CloseTalkThreshold.cpp
   ../cpp/CaptureSession.cpp
   ../cpp/CaptureWorker.cpp
   src/main/cpp/AndroidAudioDevice.cpp
