@@ -19,6 +19,8 @@ export interface AudioCaptureConfig {
    * 'general' keeps the denoise model output with no attenuation limit. With denoiseEnabled: false the gate is off too.
    */
   denoiseMode?: 'close_talk' | 'general';
+  /** close_talk gate open threshold in dB, finite 0..=60, engine default 30. Changeable at runtime with setCloseTalkThresholdDb. */
+  closeTalkThresholdDb?: number;
   vadEnabled?: boolean;
   echoCancellationEnabled?: boolean;
   /** Per-session digital microphone gain, -60..12 dB; default 0. Never changes OS input volume. */
@@ -78,6 +80,8 @@ export interface CaptureStatus {
   denoiseMode: 'close_talk' | 'general';
   /** The denoise model failed to load, so input passes through without denoise or the gate. */
   denoiseLoadFailed: boolean;
+  /** Applied close_talk gate open threshold (dB). */
+  closeTalkThresholdDb: number;
   vadEnabled: boolean;
   modelsLoaded: string[];
   deviceStatus?: AudioDeviceStatus[];
@@ -101,6 +105,8 @@ export interface AudioCapture extends AuthorizableAudioCapture {
   getStatus(): Promise<CaptureStatus>;
   setDenoiseEnabled(enabled: boolean): Promise<void>;
   setMicGainDb(db: number): Promise<void>;
+  /** Updates the close_talk gate open threshold from the next 10 ms hop. Rejects with a platform unsupported error on engines without the API. */
+  setCloseTalkThresholdDb(db: number): Promise<void>;
   /** Captured system audio gain. Rejects on web/mobile where system capture is unsupported. */
   setSpeakerGainDb(db: number): Promise<void>;
   /** Discards processing history and undelivered output while keeping authorization and capture. */
