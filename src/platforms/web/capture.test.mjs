@@ -601,3 +601,56 @@ test('a runtime change that fails leaves the configured value for the next start
     await replaced.capture.dispose();
   }
 });
+
+test('overlapping runtime changes that all fail keep the configured value for start, and a successful one supersedes it', async () => {
+  for (const [operation, setter, configured, first, second, unsupported] of [
+    ['closeTalkThresholdDb', 'setCloseTalkThresholdDb', 25, 20, 18, /tellus_close_talk_threshold_unsupported/],
+    ['denoiseAttenuationLimitDb', 'setDenoiseAttenuationLimitDb', 6, 9, 4, /tellus_denoise_attenuation_limit_unsupported/],
+  ]) {
+    const sent = [];
+    const settle = new Map();
+    const respond = (command) => {
+      sent.push(command.db);
+      if (command.db === configured) return;
+      return new Promise((resolve, reject) => { settle.set(command.db, { resolve, reject }); });
+    };
+    const failed = environment({ [operation]: respond }, { [operation]: configured });
+    const changes = [failed.capture[setter](first), failed.capture[setter](second)];
+    await flush();
+    settle.get(first).reject(new Error('tellus_capture_cancelled'));
+    settle.get(second).reject(new Error('tellus_capture_cancelled'));
+    await Promise.all(changes.map((change) => assert.rejects(change, /tellus_capture_cancelled/)));
+    const starting = failed.capture.start(() => {});
+    await flush();
+    failed.permissions[0](stream('mic-a'));
+    await starting;
+    assert.deepEqual(sent, [first, second, configured], `${operation}: start sends the configured value once after both failures`);
+    assert.deepEqual(failed.commands.filter((command) => [operation, 'start'].includes(command)), [operation, operation, operation, 'start']);
+    await failed.capture.dispose();
+
+    const oldKit = environment({ [operation]: () => { throw new Error(unsupported.source); } }, { [operation]: configured });
+    await Promise.all([oldKit.capture[setter](first), oldKit.capture[setter](second)].map((change) => assert.rejects(change, unsupported)));
+    const oldStart = oldKit.capture.start(() => {});
+    await flush();
+    oldKit.permissions[0]?.(stream('mic-a'));
+    await assert.rejects(oldStart, unsupported, `${operation}: an old kit still fails start instead of silently using the engine default`);
+    assert.equal(oldKit.commands.includes('start'), false);
+    await oldKit.capture.dispose();
+
+    sent.length = 0;
+    settle.clear();
+    const superseded = environment({ [operation]: respond }, { [operation]: configured });
+    const overlapping = [superseded.capture[setter](first), superseded.capture[setter](second)];
+    await flush();
+    settle.get(first).reject(new Error('tellus_capture_cancelled'));
+    settle.get(second).resolve();
+    await assert.rejects(overlapping[0], /tellus_capture_cancelled/);
+    await overlapping[1];
+    const restarting = superseded.capture.start(() => {});
+    await flush();
+    superseded.permissions[0](stream('mic-a'));
+    await restarting;
+    assert.deepEqual(sent, [first, second], `${operation}: a successful runtime change supersedes the configured value`);
+    await superseded.capture.dispose();
+  }
+});
