@@ -41,15 +41,17 @@ export interface ScreenCaptureLaunchOptions {
 export interface RecordingAudioSource { port: number; token: string }
 
 /** caller 소유 캡처. 녹화 종료는 이 캡처의 stop을 호출하지 않는다. */
+export type RecordingAudioPauseMode = 'abort' | 'keepalive';
+export interface RecordingAudioSourceOptions { pauseMode?: RecordingAudioPauseMode }
 export interface RecordingAudioCapture {
-  createRecordingAudioSource(): RecordingAudioSource | Promise<RecordingAudioSource>;
+  createRecordingAudioSource(options?: RecordingAudioSourceOptions): RecordingAudioSource | Promise<RecordingAudioSource>;
   stopRecordingAudioSource(token: string): void | Promise<void>;
 }
 
-export type ScreenCaptureStartConfig = Omit<SessionConfig, 'audioInput'> & { audioCapture?: RecordingAudioCapture };
+export type ScreenCaptureStartConfig = Omit<SessionConfig, 'audioInput'> & { audioCapture?: RecordingAudioCapture; audioPauseMode?: RecordingAudioPauseMode };
 type Listener = (event: ScreenCaptureEvent) => void;
 interface AudioBinding { capture: RecordingAudioCapture; token: string; detaching?: Promise<void>; error?: string }
-interface StartIdentity { captureId: string; includeAudio: boolean; capture?: RecordingAudioCapture; ended: boolean; sessionId?: string; earlyTerminalSessions: Set<string>; wire?: SessionConfig }
+interface StartIdentity { captureId: string; includeAudio: boolean; audioPauseMode?: RecordingAudioPauseMode; capture?: RecordingAudioCapture; ended: boolean; sessionId?: string; earlyTerminalSessions: Set<string>; wire?: SessionConfig }
 
 /** 화면 캡처 실행 파일 하나를 띄우고 표준 입출력 프로토콜로 제어한다. Electron main에서 쓴다. */
 export class ScreenCaptureProcess {
@@ -171,6 +173,9 @@ export class ScreenCaptureProcess {
   /** native 실행 파일이 DSP 믹스 AAC 녹화를 지원하는지. 구버전 hello에서는 false다. */
   get recordingAudioSupported(): boolean { return this.#client.recordingAudioSupported; }
 
+  /** native 실행 파일이 일시정지 중에도 녹화 오디오 소스를 유지(keepalive)하는지. 구버전 hello에서는 false다. */
+  get recordingAudioPauseKeepaliveSupported(): boolean { return this.#client.recordingAudioPauseKeepaliveSupported; }
+
   /** 세션을 armed로 준비한다. includeAudio를 켜면 caller의 실행 중인 AudioCapture를 연결한다. */
   start(config: ScreenCaptureStartConfig): Promise<CaptureResult<SessionSnapshot>> {
     const audio = config.includeAudio === undefined ? false : config.includeAudio;
@@ -179,11 +184,13 @@ export class ScreenCaptureProcess {
     if (this.#closing || !this.#client.running) return invalid('screen capture process is closing');
     if (audio && (!this.recordingAudioSupported || config.output.type !== 'file')) return Promise.resolve({ ok: false, error: { code: 'capture_unavailable', detail: 'screen recording audio is unsupported by this backend' } });
     if (audio && (typeof config.audioCapture?.createRecordingAudioSource !== 'function' || typeof config.audioCapture?.stopRecordingAudioSource !== 'function')) return invalid('includeAudio requires a recording-audio-enabled native AudioCapture');
-    const identity: StartIdentity = { captureId: config.captureId, includeAudio: audio, capture: config.audioCapture, ended: false, earlyTerminalSessions: new Set() };
+    if (config.audioPauseMode !== undefined && config.audioPauseMode !== 'abort' && config.audioPauseMode !== 'keepalive') return invalid('audioPauseMode must be abort or keepalive');
+    if (config.audioPauseMode === 'keepalive' && !this.recordingAudioPauseKeepaliveSupported) return invalid('audioPauseMode keepalive requires recording audio pause keepalive support');
+    const identity: StartIdentity = { captureId: config.captureId, includeAudio: audio, audioPauseMode: config.audioPauseMode, capture: config.audioCapture, ended: false, earlyTerminalSessions: new Set() };
     const current = this.#starting?.identity ?? this.#current;
     if (current && (!current.ended || this.#starting)) {
       if (current.captureId === identity.captureId) {
-        if (current.includeAudio !== audio || current.capture !== config.audioCapture) return invalid('captureId already has a different recording audio source or setting');
+        if (current.includeAudio !== audio || current.audioPauseMode !== config.audioPauseMode || current.capture !== config.audioCapture) return invalid('captureId already has a different recording audio source or setting');
         if (this.#starting) return this.#starting.promise;
         return this.#client.start(current.wire!);
       }
@@ -196,11 +203,11 @@ export class ScreenCaptureProcess {
 
   async #start(config: ScreenCaptureStartConfig, identity: StartIdentity): Promise<CaptureResult<SessionSnapshot>> {
     await this.#detaching;
-    const { audioCapture, ...wire } = config;
+    const { audioCapture, audioPauseMode, ...wire } = config;
     let binding: AudioBinding | null = null;
     try {
       if (identity.includeAudio) {
-        const endpoint = await audioCapture!.createRecordingAudioSource();
+        const endpoint = await audioCapture!.createRecordingAudioSource({ pauseMode: audioPauseMode ?? 'abort' });
         if (typeof endpoint?.token === 'string') this.#audio = binding = { capture: audioCapture!, token: endpoint.token };
         if (!Number.isInteger(endpoint?.port) || endpoint.port < 1 || endpoint.port > 65535 || typeof endpoint.token !== 'string' || endpoint.token.length === 0 || endpoint.token.length > 256) throw new Error('invalid recording audio endpoint');
         Object.assign(wire, { audioInput: { port: endpoint.port, token: endpoint.token } });
