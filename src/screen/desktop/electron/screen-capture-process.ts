@@ -40,9 +40,9 @@ export interface ScreenCaptureLaunchOptions {
 
 export interface RecordingAudioSource { port: number; token: string }
 
-/** caller 소유 캡처. 녹화 종료는 이 캡처의 stop을 호출하지 않는다. */
 export type RecordingAudioPauseMode = 'abort' | 'keepalive';
 export interface RecordingAudioSourceOptions { pauseMode?: RecordingAudioPauseMode }
+/** caller 소유 캡처. 녹화 종료는 이 캡처의 stop을 호출하지 않는다. */
 export interface RecordingAudioCapture {
   createRecordingAudioSource(options?: RecordingAudioSourceOptions): RecordingAudioSource | Promise<RecordingAudioSource>;
   stopRecordingAudioSource(token: string): void | Promise<void>;
@@ -190,7 +190,7 @@ export class ScreenCaptureProcess {
     const current = this.#starting?.identity ?? this.#current;
     if (current && (!current.ended || this.#starting)) {
       if (current.captureId === identity.captureId) {
-        if (current.includeAudio !== audio || current.audioPauseMode !== config.audioPauseMode || current.capture !== config.audioCapture) return invalid('captureId already has a different recording audio source or setting');
+        if (current.includeAudio !== audio || (current.audioPauseMode ?? 'abort') !== (config.audioPauseMode ?? 'abort') || current.capture !== config.audioCapture) return invalid('captureId already has a different recording audio source or setting');
         if (this.#starting) return this.#starting.promise;
         return this.#client.start(current.wire!);
       }

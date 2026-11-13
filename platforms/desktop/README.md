@@ -80,7 +80,7 @@ if (recorder.recordingAudioPauseKeepaliveSupported) {
 
 `AudioCapture`를 직접 연결할 때는 `capture.createRecordingAudioSource({ pauseMode: 'keepalive' })`를 씁니다. 방식은 소스를 만들 때 정하며 세션 중에는 바꿀 수 없습니다. `audioPauseMode`는 화면 실행 파일로 전달하지 않습니다.
 
-- 닫힌 게이트 중 일시정지를 허용하며 엔진이 500ms마다 Keepalive를 보냅니다.
+- 닫힌 게이트 중 일시정지를 허용합니다. 엔진은 일시정지 중과 재개 뒤 첫 PCM 전에만 500ms마다 Keepalive를 보냅니다. 녹화 중에는 보내지 않으므로 오디오가 2초 넘게 멈추면 화면 실행 파일이 `recording audio link idle timeout`으로 실패시킵니다.
 - 열린 게이트 중 일시정지한 구간은 무음으로 기록합니다.
 - `RecordingOutput.pauses`는 정상 결과이며 오류가 아닙니다.
 - 재개 뒤 `resumeWhenReady()`가 끝나면 게이트를 엽니다.
