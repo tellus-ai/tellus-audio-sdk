@@ -16,6 +16,8 @@ export interface NativeStatus {
   close_talk_threshold_db?: number | null;
   /** Absent on engines without denoise attenuation limit support. null only before configure, and worker sessions are configured when they are created. */
   denoise_attenuation_limit_db?: number | null;
+  /** Absent on engines without input hold support. null before configure. */
+  input_held?: boolean | null;
   vad_loaded: boolean;
 }
 
@@ -37,6 +39,7 @@ export type WorkerCommand =
   | { operation: 'micGainDb'; db: number }
   | { operation: 'closeTalkThresholdDb'; db: number }
   | { operation: 'denoiseAttenuationLimitDb'; db: number }
+  | { operation: 'holdInput' | 'releaseInput' }
   | { operation: 'start' | 'pause' | 'resume' | 'stop' | 'reset' | 'destroy' | 'invalidate' | 'status' | 'authorizationStatus' | 'modelRequests' | 'clearRender' };
 
 export interface WorkerRequest {

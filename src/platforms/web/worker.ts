@@ -91,7 +91,9 @@ async function dispatch(request: WorkerRequest): Promise<unknown> {
   }
   const session = sessions.get(request.sessionId);
   if (!session) throw new Error('tellus_capture_disposed');
-  if (request.epoch !== session.epoch && command.operation !== 'invalidate' && command.operation !== 'destroy') {
+  // Hold and release are idempotent state changes, so they apply in call order even after the epoch changes. Cancelling would leave the engine held after reset() or drop the hold.
+  const epochExempt = command.operation === 'invalidate' || command.operation === 'destroy' || command.operation === 'holdInput' || command.operation === 'releaseInput';
+  if (request.epoch !== session.epoch && !epochExempt) {
     if (command.operation === 'micGainDb' || command.operation === 'closeTalkThresholdDb' || command.operation === 'denoiseAttenuationLimitDb') throw new Error('tellus_capture_cancelled');
     return command.operation === 'capture' || command.operation === 'stop' ? [] : undefined;
   }
@@ -134,6 +136,12 @@ async function dispatch(request: WorkerRequest): Promise<unknown> {
     case 'denoiseAttenuationLimitDb':
       if (!engine.supports('session_set_denoise_attenuation_limit_db')) throw new Error('tellus_denoise_attenuation_limit_unsupported');
       return native.call('set_denoise_attenuation_limit_db', [validateDenoiseAttenuationLimitDb(command.db)]);
+    case 'holdInput':
+      if (!engine.supports('session_hold_input')) throw new Error('tellus_input_hold_unsupported');
+      return native.call('hold_input');
+    case 'releaseInput':
+      if (!engine.supports('session_release_input')) throw new Error('tellus_input_hold_unsupported');
+      return native.call('release_input');
     case 'clearRender': return native.call('clear_render');
     case 'canDeliver': return native.canDeliver(command.nativeEpoch, command.authorizationGeneration);
     case 'render': await native.push(command.samples, command.rate); return;

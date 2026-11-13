@@ -9,7 +9,7 @@ let instances = 0;
 // C ABI boundary double. Reports container bytes as model_id and records the configure JSON and loaded models.
 // Models in loadFailures fail to load; denoiseLoadFailed is the value core reports in its status.
 // closeTalkThreshold and denoiseAttenuationLimit add the wasm exports an engine with each setting has.
-function engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gains, thresholds, limits, closeTalkThreshold, denoiseAttenuationLimit }) {
+function engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gains, thresholds, limits, closeTalkThreshold, denoiseAttenuationLimit, inputHold, holds }) {
   const heap = new ArrayBuffer(1 << 20);
   let next = 8;
   const module = {
@@ -19,6 +19,7 @@ function engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gai
     _free() {}, addFunction: () => 1, removeFunction() {}, UTF8ToString: () => 'native_failed',
     ...(closeTalkThreshold ? { _tellus_audio_session_set_close_talk_threshold_db() {} } : {}),
     ...(denoiseAttenuationLimit ? { _tellus_audio_session_set_denoise_attenuation_limit_db() {} } : {}),
+    ...(inputHold ? { _tellus_audio_session_hold_input() {}, _tellus_audio_session_release_input() {} } : {}),
     ccall(name, _returnType, _argumentTypes, args) {
       const text = (pointer, length) => decoder.decode(module.HEAPU8.subarray(pointer, pointer + length));
       const reply = (value, output, written) => {
@@ -29,6 +30,7 @@ function engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gai
       if (name === 'tellus_audio_model_container_inspect') reply({ model_id: text(args[0], args[1]), key_id: 'release-1' }, args[2], args[4]);
       if (name === 'tellus_audio_session_create') module.HEAPU32[args[0] / 4] = 7;
       if (name === 'tellus_audio_session_configure') configured.push(JSON.parse(text(args[1], args[2])));
+      if (name === 'tellus_audio_session_hold_input' || name === 'tellus_audio_session_release_input') holds.push([name, ...args]);
       if (name === 'tellus_audio_session_set_mic_gain_db') gains.push([...args]);
       if (name === 'tellus_audio_session_set_close_talk_threshold_db') thresholds.push([...args]);
       if (name === 'tellus_audio_session_set_denoise_attenuation_limit_db') limits.push([...args]);
@@ -48,20 +50,21 @@ function engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gai
 }
 
 // Runs the worker module on a fresh worker global and initializes it with only the given encrypted models.
-async function worker(models, { loadFailures = [], denoiseLoadFailed = false, closeTalkThreshold = false, denoiseAttenuationLimit = false } = {}) {
+async function worker(models, { loadFailures = [], denoiseLoadFailed = false, closeTalkThreshold = false, denoiseAttenuationLimit = false, inputHold = false } = {}) {
   const responses = new Map();
   const configured = [];
   const loaded = [];
   const gains = [];
   const thresholds = [];
   const limits = [];
+  const holds = [];
   const scope = { postMessage: (response) => {
     const resolve = responses.get(response.id);
     if (typeof resolve !== 'function') throw new Error(`Unexpected worker response: ${response.id}`);
     resolve(response);
   } };
   globalThis.self = scope;
-  globalThis.tellusTestEngine = () => engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gains, thresholds, limits, closeTalkThreshold, denoiseAttenuationLimit });
+  globalThis.tellusTestEngine = () => engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gains, thresholds, limits, closeTalkThreshold, denoiseAttenuationLimit, inputHold, holds });
   globalThis.fetch = async (url) => ({ ok: true, arrayBuffer: async () => encoder.encode(new URL(url).pathname.slice(1).replace('.temc', '')).buffer });
   await import(`../../../platforms/web/runtime/platforms/web/worker.js?instance=${++instances}`);
   let id = 0;
@@ -73,7 +76,7 @@ async function worker(models, { loadFailures = [], denoiseLoadFailed = false, cl
     wasmUrl: 'https://example.test/engine.wasm', ortModuleUrl: moduleUrl('export const env = { wasm: {} };'),
     ortWasmBaseUrl: 'https://example.test/ort/', encryptedModels: models.map((model) => `https://example.test/${model}.temc`) };
   assert.equal((await send(0, { operation: 'init', assets })).error, undefined);
-  return { send, configured, loaded, gains, thresholds, limits, cancel: (sessionId, epoch) => scope.onmessage({ data: { cancel: sessionId, epoch } }) };
+  return { send, configured, loaded, gains, thresholds, limits, holds, cancel: (sessionId, epoch) => scope.onmessage({ data: { cancel: sessionId, epoch } }) };
 }
 
 test('gain settings survive the worker native serializer and explicit auto gain overrides the old opt-in', async () => {
@@ -154,6 +157,37 @@ async function warnings(body) {
   try { await body(); } finally { console.warn = original; }
   return logged;
 }
+
+test('input hold and release reach the native session when the engine exports them', async () => {
+  const { send, holds } = await worker([], { inputHold: true });
+  const { result: id } = await send(0, { operation: 'create', config: {} });
+  assert.equal((await send(id, { operation: 'holdInput' })).error, undefined);
+  assert.equal((await send(id, { operation: 'releaseInput' })).error, undefined);
+  assert.deepEqual(holds, [['tellus_audio_session_hold_input', 7], ['tellus_audio_session_release_input', 7]]);
+});
+
+// Mutation to catch: restoring the stale-epoch rejection for either command turns the next two tests RED.
+test('a hold request from a previous epoch is not cancelled and reaches native', async () => {
+  const { send, holds } = await worker([], { inputHold: true });
+  const { result: id } = await send(0, { operation: 'create', config: {} });
+  assert.equal((await send(id, { operation: 'holdInput' }, 3)).error, undefined);
+  assert.deepEqual(holds, [['tellus_audio_session_hold_input', 7]]);
+});
+
+test('a release request from a previous epoch is not cancelled and reaches native', async () => {
+  const { send, holds } = await worker([], { inputHold: true });
+  const { result: id } = await send(0, { operation: 'create', config: {} });
+  assert.equal((await send(id, { operation: 'releaseInput' }, 3)).error, undefined);
+  assert.deepEqual(holds, [['tellus_audio_session_release_input', 7]]);
+});
+
+test('an engine without the input hold exports rejects hold and release without calling native', async () => {
+  const { send, holds } = await worker([]);
+  const { result: id } = await send(0, { operation: 'create', config: {} });
+  assert.match((await send(id, { operation: 'holdInput' })).error, /^tellus_input_hold_unsupported$/);
+  assert.match((await send(id, { operation: 'releaseInput' })).error, /^tellus_input_hold_unsupported$/);
+  assert.deepEqual(holds, []);
+});
 
 test('each capture requests the denoise container for every mode and the VAD model only with VAD', async () => {
   const { send } = await worker(['denoise-48', 'vad']);

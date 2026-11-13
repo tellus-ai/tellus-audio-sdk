@@ -45,10 +45,13 @@ function environment(responses = {}, config = {}) {
     decodeAudioData: (bytes) => responses.decodeAudioData(bytes) };
   let lifecycle = 'stopped';
   const commands = [];
+  const cancels = [];
+  const epochs = [];
   const client = {
-    cancel() {},
-    request: async (_id, _epoch, command) => {
+    cancel(_id, epoch) { cancels.push(epoch); },
+    request: async (_id, epoch, command) => {
       commands.push(command.operation);
+      epochs.push([command.operation, epoch]);
       if (responses[command.operation]) return responses[command.operation](command);
       if (command.operation === 'create') return 1;
       if (command.operation === 'start' || command.operation === 'resume') lifecycle = 'running';
@@ -59,7 +62,7 @@ function environment(responses = {}, config = {}) {
       if (command.operation === 'status') return { lifecycle, denoise_enabled: false, denoise_loaded: false, vad_loaded: false, loadedModels: [] };
     },
   };
-  return { capture: new BrowserCapture(client, context, config), permissions, rejections, requests, commands, nodes };
+  return { capture: new BrowserCapture(client, context, config), permissions, rejections, requests, commands, nodes, cancels, epochs };
 }
 
 test('an exact microphone selection is pending until the actual input is acquired', async () => {
@@ -746,4 +749,120 @@ test('start waits before each configured value, so a runtime change made while a
   assert.deepEqual(sent, [['closeTalkThresholdDb', 25], ['denoiseAttenuationLimitDb', 4]]);
   assert.deepEqual(commands.filter((command) => ['closeTalkThresholdDb', 'denoiseAttenuationLimitDb', 'start'].includes(command)), ['closeTalkThresholdDb', 'denoiseAttenuationLimitDb', 'start']);
   await capture.dispose();
+});
+
+// Starts a session for the input hold scenarios.
+async function startedSession(responses = {}) {
+  const session = environment(responses);
+  await session.capture.applyAuthorization('permit');
+  const starting = session.capture.start(() => {});
+  await flush();
+  session.permissions[0](stream());
+  await starting;
+  return session;
+}
+
+test('release while held cuts the epoch like reset and reactivates the tap', async () => {
+  const { capture, nodes, cancels, epochs } = await startedSession();
+  await capture.holdInput();
+  const cancelsBeforeRelease = cancels.length;
+  await capture.releaseInput();
+  assert.equal(cancels.length, cancelsBeforeRelease + 1, 'release cancels the epoch once');
+  const release = epochs.find(([operation]) => operation === 'releaseInput');
+  assert.equal(release[1], cancels.at(-1), 'release is requested under the new epoch');
+  assert.deepEqual(nodes[0].controls.at(-2), { active: false, epoch: cancels.at(-1) });
+  assert.deepEqual(nodes[0].controls.at(-1), { active: true, epoch: cancels.at(-1) });
+  await capture.dispose();
+});
+
+// Mutations to catch: release does not cut the epoch, or removing both the pump's frame.epoch skip and the queue clear makes the capture commands two and goes RED.
+test('release while held drops a delivery and a queued frame from the previous epoch', async () => {
+  let allow;
+  let checks = 0;
+  const validation = new Promise((resolve) => { allow = resolve; });
+  const output = { epoch: '1', authorizationGeneration: '1', chunk: { data: { microphone: new Uint8Array([1]) }, sampleCount: 320, validSampleCount: 320 } };
+  const environmentResponses = { capture: () => [output], canDeliver: () => ++checks === 1 ? validation : true };
+  const { capture, nodes, permissions, commands } = environment(environmentResponses);
+  await capture.applyAuthorization('permit');
+  const received = [];
+  const starting = capture.start((error, chunk) => received.push({ error, chunk }));
+  await flush();
+  permissions[0](stream());
+  await starting;
+  await capture.holdInput();
+  nodes[0].port.onmessage({ data: { samples: new Float32Array(128), nativeRate: 48000, timestamp: 1, epoch: 0 } });
+  await flush();
+  nodes[0].port.onmessage({ data: { samples: new Float32Array(128), nativeRate: 48000, timestamp: 2, epoch: 0 } });
+  await flush();
+  await capture.releaseInput();
+  allow(true);
+  await flush();
+  assert.deepEqual(received, []);
+  assert.equal(commands.filter((command) => command === 'capture').length, 1, 'the frame queued behind the blocked one never reaches the engine');
+  await capture.dispose();
+});
+
+test('hold is an ordered request that does not cancel in-flight capture', async () => {
+  const { capture, nodes, cancels, epochs } = await startedSession();
+  const controls = nodes[0].controls.length;
+  await capture.holdInput();
+  assert.deepEqual(cancels, []);
+  assert.equal(nodes[0].controls.length, controls, 'the tap stays active');
+  assert.deepEqual(epochs.find(([operation]) => operation === 'holdInput'), ['holdInput', 0]);
+  await capture.dispose();
+});
+
+test('release while not held is a plain ordered request that keeps queued capture', async () => {
+  const { capture, nodes, cancels, commands } = await startedSession();
+  const controls = nodes[0].controls.length;
+  await capture.releaseInput();
+  assert.deepEqual(cancels, []);
+  assert.equal(nodes[0].controls.length, controls);
+  assert.ok(commands.includes('releaseInput'));
+  await capture.holdInput();
+  await capture.releaseInput();
+  assert.equal(cancels.length, 1);
+  await capture.releaseInput();
+  assert.equal(cancels.length, 1, 'a second release is not held again');
+  await capture.dispose();
+});
+
+test('release called while the hold request is pending sees the hold and cuts the epoch', async () => {
+  let accept;
+  const { capture, cancels } = await startedSession({ holdInput: () => new Promise((resolve) => { accept = resolve; }) });
+  const holding = capture.holdInput();
+  const releasing = capture.releaseInput();
+  await flush();
+  assert.deepEqual(cancels, [], 'release waits for the hold before deciding');
+  accept();
+  await holding;
+  await releasing;
+  assert.equal(cancels.length, 1);
+  await capture.dispose();
+});
+
+test('a failed hold reverts the desired state so release does not cancel', async () => {
+  const { capture, cancels, commands } = await startedSession({ holdInput: () => { throw new Error('tellus_input_hold_unsupported'); } });
+  await assert.rejects(capture.holdInput(), /tellus_input_hold_unsupported/);
+  await capture.releaseInput().catch(() => {});
+  assert.deepEqual(cancels, [], 'unsupported is rejected before any cancel');
+  assert.ok(commands.includes('releaseInput'));
+  await capture.dispose();
+});
+
+test('hold and release reject after dispose', async () => {
+  const { capture } = environment();
+  await capture.dispose();
+  await assert.rejects(capture.holdInput(), /tellus_capture_disposed/);
+  await assert.rejects(capture.releaseInput(), /tellus_capture_disposed/);
+});
+
+test('status reports inputHeld only when native reports a boolean', async () => {
+  for (const [reported, expected] of [[true, true], [false, false], [null, undefined], [undefined, undefined]]) {
+    const { capture } = environment({ status: () => ({ lifecycle: 'stopped', denoise_enabled: false, denoise_loaded: false, vad_loaded: false, loadedModels: [], input_held: reported }) });
+    const status = await capture.getStatus();
+    assert.equal(status.inputHeld, expected);
+    assert.equal('inputHeld' in status, expected !== undefined, 'the field is omitted, not false');
+    await capture.dispose();
+  }
 });
