@@ -31,6 +31,7 @@ export class BrowserCapture implements AudioCapture {
   // Configured denoise settings stay here until they reach native, and start applies them once. A runtime change replaces them, and native keeps the values across stop and start.
   // Only a successful start application or runtime change clears them, so failed changes never drop the configured value, even when they overlap.
   private readonly unappliedDenoiseSettings: Partial<Record<DenoiseSetting, number>>;
+  private readonly denoiseSettingChanges = new Set<Promise<void>>();
   private callback?: AudioCaptureCallback;
   private stream?: MediaStream;
   private source?: MediaStreamAudioSourceNode;
@@ -114,6 +115,8 @@ export class BrowserCapture implements AudioCapture {
     try {
       if (requestedDeviceId !== undefined && (typeof requestedDeviceId !== 'string' || !requestedDeviceId.trim())) throw audioDeviceError(new Error('tellus_microphone_invalid_device_id'), 'microphone', typeof requestedDeviceId === 'string' ? requestedDeviceId : undefined);
       for (const setting of ['closeTalkThresholdDb', 'denoiseAttenuationLimitDb'] as const) {
+        // Sends only what is still unapplied once in-flight runtime changes settle, so a configured value never lands after a newer runtime value.
+        while (this.denoiseSettingChanges.size) await Promise.allSettled(this.denoiseSettingChanges);
         const db = this.unappliedDenoiseSettings[setting];
         if (db !== undefined) await this.setDenoiseSetting(setting, db, epoch);
       }
@@ -255,8 +258,10 @@ export class BrowserCapture implements AudioCapture {
 
   private async setDenoiseSetting(setting: DenoiseSetting, db: number, epoch = this.epoch): Promise<void> {
     const validate = setting === 'closeTalkThresholdDb' ? validateCloseTalkThresholdDb : validateDenoiseAttenuationLimitDb;
-    await this.request({ operation: setting, db: validate(db) }, epoch);
-    this.unappliedDenoiseSettings[setting] = undefined;
+    const change = this.request({ operation: setting, db: validate(db) }, epoch).then(() => { this.unappliedDenoiseSettings[setting] = undefined; });
+    this.denoiseSettingChanges.add(change);
+    try { await change; }
+    finally { this.denoiseSettingChanges.delete(change); }
   }
 
   async reset(): Promise<void> {

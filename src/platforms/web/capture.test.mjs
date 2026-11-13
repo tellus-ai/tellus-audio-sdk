@@ -654,3 +654,96 @@ test('overlapping runtime changes that all fail keep the configured value for st
     await superseded.capture.dispose();
   }
 });
+
+test('start waits for runtime changes still in flight and never sends the configured value after a newer runtime value', async () => {
+  for (const [operation, setter, configured, first, second] of [
+    ['closeTalkThresholdDb', 'setCloseTalkThresholdDb', 25, 20, 18],
+    ['denoiseAttenuationLimitDb', 'setDenoiseAttenuationLimitDb', 6, 9, 4],
+  ]) {
+    const deferred = () => {
+      const sent = [];
+      const settle = new Map();
+      const respond = (command) => {
+        sent.push(command.db);
+        if (command.db === configured) return;
+        return new Promise((resolve, reject) => { settle.set(command.db, { resolve, reject }); });
+      };
+      return { sent, settle, ...environment({ [operation]: respond }, { [operation]: configured }) };
+    };
+    const order = (commands) => commands.filter((command) => [operation, 'start'].includes(command));
+
+    const succeeded = deferred();
+    const change = succeeded.capture[setter](first);
+    await flush();
+    const starting = succeeded.capture.start(() => {});
+    await flush();
+    assert.deepEqual(order(succeeded.commands), [operation], `${operation}: start sends nothing while the runtime change is in flight`);
+    succeeded.settle.get(first).resolve();
+    await change;
+    await flush();
+    succeeded.permissions[0](stream('mic-a'));
+    await starting;
+    assert.deepEqual(succeeded.sent, [first], `${operation}: a successful runtime change is never overwritten by the configured value`);
+    assert.deepEqual(order(succeeded.commands), [operation, 'start']);
+    await succeeded.capture.dispose();
+
+    const failed = deferred();
+    const failing = failed.capture[setter](first);
+    await flush();
+    const restarting = failed.capture.start(() => {});
+    await flush();
+    assert.deepEqual(failed.sent, [first], `${operation}: start sends nothing while the runtime change is in flight`);
+    failed.settle.get(first).reject(new Error('tellus_capture_cancelled'));
+    await assert.rejects(failing, /tellus_capture_cancelled/);
+    await flush();
+    failed.permissions[0](stream('mic-a'));
+    await restarting;
+    assert.deepEqual(failed.sent, [first, configured], `${operation}: start applies the configured value once the runtime change failed`);
+    assert.deepEqual(order(failed.commands), [operation, operation, 'start']);
+    await failed.capture.dispose();
+
+    const queued = deferred();
+    const older = queued.capture[setter](first);
+    await flush();
+    const queuedStart = queued.capture.start(() => {});
+    await flush();
+    const newer = queued.capture[setter](second);
+    await flush();
+    queued.settle.get(first).reject(new Error('tellus_capture_cancelled'));
+    await assert.rejects(older, /tellus_capture_cancelled/);
+    await flush();
+    assert.deepEqual(queued.sent, [first, second], `${operation}: start keeps waiting for a change made while it waited`);
+    queued.settle.get(second).resolve();
+    await newer;
+    await flush();
+    queued.permissions[0](stream('mic-a'));
+    await queuedStart;
+    assert.deepEqual(queued.sent, [first, second], `${operation}: the newer change made while start waited supersedes the configured value`);
+    await queued.capture.dispose();
+  }
+});
+
+test('start waits before each configured value, so a runtime change made while an earlier one applies is never overwritten', async () => {
+  const sent = [];
+  const settle = new Map();
+  const respond = (command) => {
+    sent.push([command.operation, command.db]);
+    return new Promise((resolve, reject) => { settle.set(command.db, { resolve, reject }); });
+  };
+  const { capture, permissions, commands } = environment({ closeTalkThresholdDb: respond, denoiseAttenuationLimitDb: respond }, { closeTalkThresholdDb: 25, denoiseAttenuationLimitDb: 6 });
+  const starting = capture.start(() => {});
+  await flush();
+  const change = capture.setDenoiseAttenuationLimitDb(4);
+  await flush();
+  settle.get(25).resolve();
+  await flush();
+  assert.deepEqual(sent, [['closeTalkThresholdDb', 25], ['denoiseAttenuationLimitDb', 4]], 'start waits for the runtime change before the next configured value');
+  settle.get(4).resolve();
+  await change;
+  await flush();
+  permissions[0](stream('mic-a'));
+  await starting;
+  assert.deepEqual(sent, [['closeTalkThresholdDb', 25], ['denoiseAttenuationLimitDb', 4]]);
+  assert.deepEqual(commands.filter((command) => ['closeTalkThresholdDb', 'denoiseAttenuationLimitDb', 'start'].includes(command)), ['closeTalkThresholdDb', 'denoiseAttenuationLimitDb', 'start']);
+  await capture.dispose();
+});
