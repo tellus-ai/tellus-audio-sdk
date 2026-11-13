@@ -72,3 +72,23 @@ await capture.setDenoiseAttenuationLimitDb(9);
 `closeTalkThresholdDb`는 close_talk 게이트가 열리는 임계값(유한한 0..60 dB, 엔진 기본 30)입니다. 낮추면 작은 소리도 통과해 멀리 있는 말소리가 더 들어오고, 높이면 입에 가까운 큰 소리만 통과해 먼 소리와 소음은 줄지만 작은 목소리가 잘릴 수 있습니다. `denoiseAttenuationLimitDb`는 close_talk의 소음 저감 상한을 양수 dB 크기로 지정합니다(유한한 0..60 dB, 엔진 기본 12). 엔진이 입력을 10^(-dB/20)만큼 되섞어 저감폭을 제한합니다. 상한을 키우면 소음은 더 줄지만 작은 목소리도 함께 지워질 수 있다. 일반(general) 모드는 상한이 없습니다. 두 setter는 다음 10 ms hop부터 적용되며 보관 중인 오디오와 학습된 레벨은 유지합니다. 엔진 기본값을 SDK가 주입하지 않으며, 모바일·웹은 configure 뒤에 설정값을 setter로 적용합니다.
 
 `getStatus()`의 `closeTalkThresholdDb`·`denoiseAttenuationLimitDb`는 선택 필드이며, 지원하지 않는 엔진에서는 없습니다(`undefined`). 범위를 벗어나거나 유한하지 않은 값은 `invalid_close_talk_threshold_db`·`invalid_denoise_attenuation_limit_db`. 이 API는 엔진 v0.4.5 이상이 필요하며, 구형 kit에서는 `tellus_close_talk_threshold_unsupported`·`tellus_denoise_attenuation_limit_unsupported`로 Promise를 거부합니다. C++ 글루는 약한 참조로 엔진 심볼을 찾고, podspec의 `-Wl,-U` 플래그로 구형 라이브러리와도 링크됩니다.
+
+## 입력 hold
+
+앱의 업링크를 끄는 동안(예: TTS 재생) 입력을 보류합니다. 업링크를 끌 때 `holdInput()`, 다시 켤 때 `releaseInput()`을 호출하며, 지금까지 이 시점에 호출하던 `reset()`을 대체합니다.
+
+```ts
+await capture.holdInput();     // 업링크 끔
+await capture.releaseInput();  // 업링크 켬
+```
+
+두 메서드는 `Promise<void>`를 반환합니다.
+
+- 멱등입니다. 이미 hold 중인 `holdInput()`과 hold 중이 아닌 `releaseInput()`은 아무것도 하지 않고 성공합니다.
+- 시작 전에 호출해도 되고, 상태는 `pause()`/`resume()`, `stop()`/`start()` 뒤에도 유지됩니다.
+- hold 동안 엔진은 소음 추정치, close_talk 학습 레벨, AGC 같은 적응 상태를 얼려 두고 출력 청크를 내지 않으며 VAD도 돌지 않습니다. 그래서 TTS 소리가 학습에 섞이지 않습니다.
+- `releaseInput()`은 엔진 안에 있던 hold 이전 오디오를 버리고 VAD 게이트를 이벤트 없이 닫힌 상태로 되돌립니다. `speech_gate_opened`는 release 뒤 다음 발화에서 나옵니다. 다음 청크의 `discontinuity`는 reason `input_held`입니다.
+- release는 적응 상태(소음 추정치·close_talk 학습값·AGC)를 hold 직전 값 그대로 이어 갑니다. `reset()`은 처리 이력을 모두 지우고 AEC 필터까지 초기화하므로 같은 효과가 아닙니다.
+- `getStatus().inputHeld`는 선택 필드이며, 입력 hold를 지원하지 않는 엔진에서는 없습니다(`undefined`).
+- `setMicGainDb`와 마찬가지로 `holdInput()`·`releaseInput()`을 `await`한 뒤에 같은 tick에서 start/resume/pause/reset/stop을 호출하세요. 기다리지 않으면 그 호출이 `capture_cancelled`로 거부될 수 있습니다.
+- 이 API는 엔진 v0.4.5 다음 엔진 릴리즈 이상이 필요하며, 구형 kit에서는 `tellus_input_hold_unsupported`로 Promise를 거부합니다. iOS 링크 플래그(`-Wl,-U`)는 podspec이 자동으로 추가하고, C++ 글루는 약한 참조로 엔진 심볼을 찾습니다.

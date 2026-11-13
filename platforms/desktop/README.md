@@ -104,6 +104,29 @@ capture.setDenoiseAttenuationLimitDb(9);
 
 `getStatus()`의 `closeTalkThresholdDb`·`denoiseAttenuationLimitDb`는 선택 필드이며, 지원하지 않는 엔진에서는 없습니다(`undefined`). 범위를 벗어나거나 유한하지 않은 값은 native가 던지는 `invalid_close_talk_threshold_db...`·`invalid_denoise_attenuation_limit_db...` 오류를 그대로 전달합니다. 이 API는 엔진 v0.4.5 이상이 필요하며, 구형 kit에서는 `close_talk_threshold_unsupported: install a native engine with close-talk threshold support`·`denoise_attenuation_limit_unsupported: install a native engine with denoise attenuation limit support` 오류를 던집니다. 설정을 명시하면 생성자에서, setter는 호출 시점에 던집니다.
 
+## 입력 hold
+
+앱의 업링크를 끄는 동안(예: TTS 재생) 마이크 입력이 적응 상태를 오염시키지 않도록 입력을 보류합니다.
+
+```ts
+// 업링크를 끌 때
+capture.holdInput();
+// 업링크를 다시 켤 때
+capture.releaseInput();
+```
+
+두 메서드는 `void`를 반환하며 동기로 실행됩니다. 데스크톱 캡처에는 `reset()`이 없으므로 release 뒤에 따로 호출할 것은 없습니다.
+
+- 멱등입니다. 이미 hold 중인 `holdInput()`과 hold 중이 아닌 `releaseInput()`은 아무것도 하지 않고 성공합니다.
+- 시작 전에 호출해도 되고, 상태는 `pause()`/`resume()`, `stop()`/`start()` 뒤에도 유지됩니다.
+- hold 동안 엔진은 소음 추정치, close_talk 학습 레벨, AGC 같은 적응 상태를 얼려 두고 출력 청크를 내지 않으며 VAD도 돌지 않습니다. 그래서 TTS 소리가 학습에 섞이지 않습니다.
+- `releaseInput()`은 엔진 안에 있던 hold 이전 오디오를 버리고 VAD 게이트를 이벤트 없이 닫힌 상태로 되돌립니다. `speech_gate_opened`는 release 뒤 다음 발화에서 나옵니다. 다음 청크의 `discontinuity`는 reason `input_held`입니다.
+- release는 적응 상태(소음 추정치·close_talk 학습값·AGC)를 hold 직전 값 그대로 이어 갑니다. `reset()`은 처리 이력을 모두 지우고 AEC 필터까지 초기화하므로 같은 효과가 아닙니다.
+- `getStatus().inputHeld`는 선택 필드이며, 입력 hold를 지원하지 않는 엔진에서는 없습니다(`undefined`).
+- 실시간 전달은 믹서 청크 단위로 멈춥니다. release 뒤 첫 청크에는 release 직전의 시스템 오디오가 들어 있을 수 있습니다.
+- hold 중 마이크는 녹음 경로에서도 무음입니다(음소거와 같습니다). 청크 간격과 스피커 소리는 유지됩니다.
+- 이 API는 엔진 v0.4.5 다음 릴리즈 이상이 필요하며, 구형 kit에서는 `input_hold_unsupported: install a native engine with input hold support` 오류를 던집니다.
+
 ## 마이크·스피커 따로 음소거
 
 `pause()`는 마이크와 스피커를 모두 멈춥니다. 한쪽만 녹음에서 빼려면 해당 소스를 음소거합니다.
