@@ -23,8 +23,6 @@ export interface AudioCaptureConfig {
   closeTalkThresholdDb?: number;
   /** close_talk noise attenuation limit in dB (positive magnitude), finite 0..=60, engine default 12. The engine mixes the input back at 10^(-db/20). Changeable at runtime with setDenoiseAttenuationLimitDb; general mode stays unlimited. */
   denoiseAttenuationLimitDb?: number;
-  /** Whether input is held (see holdInput). Absent on engines without input hold support. */
-  inputHeld?: boolean;
   vadEnabled?: boolean;
   echoCancellationEnabled?: boolean;
   /** Per-session digital microphone gain, -60..12 dB; default 0. Never changes OS input volume. */
