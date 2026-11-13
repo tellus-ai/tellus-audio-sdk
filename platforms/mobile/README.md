@@ -55,3 +55,20 @@ await capture.setMicGainDb(0);
 ```
 
 게인은 세션의 처리된 마이크 신호만 바꾸며 OS 입력 볼륨과 재생 볼륨은 유지합니다. 기본값은 0 dB, 범위는 -60..+12 dB입니다. 자동 보정은 기본 꺼짐이며 명시한 `autoGainControl`은 deprecated `micAgc2Enabled`보다 우선합니다. 0이 아닌 `speakerGainDb`와 모든 `setSpeakerGainDb()` 호출은 시스템 오디오 캡처 미지원으로 `tellus_speaker_gain_unsupported`를 반환합니다. 대응하는 엔진 라이브러리와 SDK 네이티브 모듈을 함께 다시 빌드하세요. [공통 한계값과 검증 안내](../../README.md#디지털-게인과-자동-보정)를 따르고, OS·장치 자체 입력 처리의 실제 적용 여부는 iOS·Android 장치에서 확인해야 합니다. JS 테스트 통과만으로 하드웨어 처리가 없다고 보장하지 않습니다.
+
+## close_talk 임계값과 소음 저감 상한
+
+```ts
+const engine = await AudioEngine.init({
+  denoiseMode: 'close_talk',
+  closeTalkThresholdDb: 30,        // 게이트 열림 임계값, 기본 30
+  denoiseAttenuationLimitDb: 12,   // 소음 저감 상한, 기본 12
+});
+const capture = engine.createCapture();
+await capture.setCloseTalkThresholdDb(24);
+await capture.setDenoiseAttenuationLimitDb(9);
+```
+
+`closeTalkThresholdDb`는 close_talk 게이트가 열리는 임계값(유한한 0..60 dB, 엔진 기본 30)입니다. 낮추면 작은 소리도 통과해 멀리 있는 말소리가 더 들어오고, 높이면 입에 가까운 큰 소리만 통과해 먼 소리와 소음은 줄지만 작은 목소리가 잘릴 수 있습니다. `denoiseAttenuationLimitDb`는 close_talk의 소음 저감 상한을 양수 dB 크기로 지정합니다(유한한 0..60 dB, 엔진 기본 12). 엔진이 입력을 10^(-dB/20)만큼 되섞어 저감폭을 제한합니다. 상한을 키우면 소음은 더 줄지만 작은 목소리도 함께 지워질 수 있다. 일반(general) 모드는 상한이 없습니다. 두 setter는 다음 10 ms hop부터 적용되며 보관 중인 오디오와 학습된 레벨은 유지합니다. 엔진 기본값을 SDK가 주입하지 않으며, 모바일·웹은 configure 뒤에 설정값을 setter로 적용합니다.
+
+`getStatus()`의 `closeTalkThresholdDb`·`denoiseAttenuationLimitDb`는 선택 필드이며, 지원하지 않는 엔진에서는 없습니다(`undefined`). 범위를 벗어나거나 유한하지 않은 값은 `invalid_close_talk_threshold_db`·`invalid_denoise_attenuation_limit_db`. 이 API는 엔진 v0.4.4 다음 릴리즈 이상이 필요하며, 구형 kit에서는 `tellus_close_talk_threshold_unsupported`·`tellus_denoise_attenuation_limit_unsupported`로 Promise를 거부합니다. C++ 글루는 약한 참조로 엔진 심볼을 찾고, podspec의 `-Wl,-U` 플래그로 구형 라이브러리와도 링크됩니다.

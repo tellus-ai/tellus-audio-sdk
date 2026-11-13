@@ -26,6 +26,8 @@ Desktop의 마이크·스피커 음소거 API(`setMicMuted`·`setSpeakerMuted`)�
 
 Desktop의 회의 앱 마이크 동기화 API(`setMeetingSync`·`getMeetingSyncState`·`onMeetingSync`·`getMeetingCandidates`)와 손쉬운 사용 권한 API(`checkAccessibilityPermissionInfo`·`requestAccessibilityPermission`)는 엔진 `0.4.0`부터 지원합니다. 그보다 오래된 엔진에서는 호출하면 `meeting_sync_unsupported`로 거부합니다.
 
+close_talk 설정 `closeTalkThresholdDb`(게이트 임계값, 기본 30)와 `denoiseAttenuationLimitDb`(소음 저감 상한, 기본 12), 런타임 setter `setCloseTalkThresholdDb`·`setDenoiseAttenuationLimitDb`는 세 플랫폼 모두 유한한 0..60 dB만 받습니다. 이 API는 다음 엔진 릴리즈(v0.4.4 다음 버전) 이상이 필요하며, 그 전 kit에서는 `unsupported`를 냅니다. 상세는 각 플랫폼 README를 참고하세요.
+
 ```sh
 npm ci --ignore-scripts
 npm run build

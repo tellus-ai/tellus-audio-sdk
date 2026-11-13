@@ -3,7 +3,7 @@ import type { AudioDeviceStatus } from '../../bindings/typescript/audio-devices.
 import { gainConfig } from '../../bindings/typescript/audio-gain.js';
 import { BrowserCapture } from './capture.js';
 import { audioDeviceError } from './devices.js';
-import { denoiseMode, outputSampleRate } from './protocol.js';
+import { denoiseMode, outputSampleRate, validateCloseTalkThresholdDb, validateDenoiseAttenuationLimitDb } from './protocol.js';
 import { WorkerClient } from './worker-client.js';
 
 export type {
@@ -42,6 +42,8 @@ export class AudioEngine {
     const client = new WorkerClient(new Worker(new URL('./worker.js', import.meta.url), { type: 'module' }));
     try {
       denoiseMode(config);
+      if (config.closeTalkThresholdDb !== undefined) validateCloseTalkThresholdDb(config.closeTalkThresholdDb);
+      if (config.denoiseAttenuationLimitDb !== undefined) validateDenoiseAttenuationLimitDb(config.denoiseAttenuationLimitDb);
       if (config.micDeviceId !== undefined && (typeof config.micDeviceId !== 'string' || !config.micDeviceId.trim())) {
         throw audioDeviceError(new Error('tellus_microphone_invalid_device_id'), 'microphone', typeof config.micDeviceId === 'string' ? config.micDeviceId : undefined);
       }

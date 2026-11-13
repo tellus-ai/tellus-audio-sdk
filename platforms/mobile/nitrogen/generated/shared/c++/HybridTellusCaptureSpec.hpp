@@ -72,6 +72,8 @@ namespace margelo::nitro::tellus {
       virtual std::shared_ptr<Promise<std::string>> getStatus() = 0;
       virtual std::shared_ptr<Promise<void>> setDenoiseEnabled(bool enabled) = 0;
       virtual std::shared_ptr<Promise<void>> setMicGainDb(double db) = 0;
+      virtual std::shared_ptr<Promise<void>> setCloseTalkThresholdDb(double db) = 0;
+      virtual std::shared_ptr<Promise<void>> setDenoiseAttenuationLimitDb(double db) = 0;
       virtual std::shared_ptr<Promise<void>> setRecordingNotification(const std::string& title, const std::string& contentText, bool pauseAction, bool resumeAction, const std::function<void(const std::string& /* action */)>& onAction) = 0;
       virtual std::shared_ptr<Promise<void>> playback(const std::shared_ptr<ArrayBuffer>& samples, double rate) = 0;
       virtual std::shared_ptr<Promise<void>> playbackEncoded(const std::shared_ptr<ArrayBuffer>& encoded) = 0;
