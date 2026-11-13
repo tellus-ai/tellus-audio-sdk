@@ -23,6 +23,8 @@ export interface AudioCaptureConfig {
   closeTalkThresholdDb?: number;
   /** close_talk noise attenuation limit in dB (positive magnitude), finite 0..=60, engine default 12. The engine mixes the input back at 10^(-db/20). Changeable at runtime with setDenoiseAttenuationLimitDb; general mode stays unlimited. */
   denoiseAttenuationLimitDb?: number;
+  /** Whether input is held (see holdInput). Absent on engines without input hold support. */
+  inputHeld?: boolean;
   vadEnabled?: boolean;
   echoCancellationEnabled?: boolean;
   /** Per-session digital microphone gain, -60..12 dB; default 0. Never changes OS input volume. */
@@ -66,7 +68,7 @@ export interface AudioChunk {
   vadRms?: number;
   sequence?: number;
   discontinuity?: {
-    reason: 'consumer_lag' | 'native_overrun' | 'device_gap' | 'authorization_lost' | 'processing_error';
+    reason: 'consumer_lag' | 'native_overrun' | 'device_gap' | 'authorization_lost' | 'processing_error' | 'input_held';
     droppedChunks: number;
     droppedSamples: number;
     fromSample: number;
@@ -86,6 +88,8 @@ export interface CaptureStatus {
   closeTalkThresholdDb?: number;
   /** Applied close_talk noise attenuation limit (dB). Absent on engines without denoise attenuation limit support. */
   denoiseAttenuationLimitDb?: number;
+  /** Whether input is held (see holdInput). Absent on engines without input hold support. */
+  inputHeld?: boolean;
   vadEnabled: boolean;
   modelsLoaded: string[];
   deviceStatus?: AudioDeviceStatus[];
@@ -117,6 +121,18 @@ export interface AudioCapture extends AuthorizableAudioCapture {
   setSpeakerGainDb(db: number): Promise<void>;
   /** Discards processing history and undelivered output while keeping authorization and capture. */
   reset(): Promise<void>;
+  /**
+   * Holds input while the app's uplink is stopped, e.g. during TTS playback. Freezes adaptive state
+   * (noise estimate, close_talk learned level, AGC) and stops output. Idempotent; callable before start.
+   * The state persists across pause/resume and stop/start. Rejects with a platform unsupported error on engines without the API.
+   */
+  holdInput(): Promise<void>;
+  /**
+   * Ends a hold. Discards audio held inside the engine and silently resets the VAD gate (no event; the next speech opens it).
+   * The next chunk carries an `input_held` discontinuity. Idempotent; callable before start.
+   * Rejects with a platform unsupported error on engines without the API.
+   */
+  releaseInput(): Promise<void>;
   /** Waits for playback to finish and passes the same samples to the engine as the AEC reference. */
   playback(samples: Float32Array, nativeRate: number): Promise<void>;
   /** Reads MP3/WAV with the OS decoder and passes it to the same playback and AEC path. */
