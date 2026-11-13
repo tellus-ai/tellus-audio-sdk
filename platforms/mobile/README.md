@@ -90,5 +90,5 @@ await capture.releaseInput();  // 업링크 켬
 - `releaseInput()`은 엔진 안에 있던 hold 이전 오디오를 버리고 VAD 게이트를 이벤트 없이 닫힌 상태로 되돌립니다. `speech_gate_opened`는 release 뒤 다음 발화에서 나옵니다. 다음 청크의 `discontinuity`는 reason `input_held`입니다.
 - release는 적응 상태(소음 추정치·close_talk 학습값·AGC)를 hold 직전 값 그대로 이어 갑니다. `reset()`은 처리 이력을 모두 지우고 AEC 필터까지 초기화하므로 같은 효과가 아닙니다.
 - `getStatus().inputHeld`는 선택 필드이며, 입력 hold를 지원하지 않는 엔진에서는 없습니다(`undefined`).
-- `setMicGainDb`와 마찬가지로 `holdInput()`·`releaseInput()`을 `await`한 뒤에 같은 tick에서 start/resume/pause/reset/stop을 호출하세요. 기다리지 않으면 그 호출이 `capture_cancelled`로 거부될 수 있습니다.
+- `holdInput()`·`releaseInput()`을 `await`한 뒤에 start/resume/pause/reset/stop을 호출하세요. 같은 tick에서 기다리지 않고 이어 호출하면 나중 호출이 제어 순서를 바꿔 먼저 호출한 `holdInput()`·`releaseInput()`이 `capture_cancelled`로 거부될 수 있습니다(start 등이 취소되는 것이 아닙니다). 거부된 `holdInput()`은 hold가 적용되지 않았다는 뜻이므로 다시 호출하거나 `await`로 순서를 맞추세요.
 - 이 API는 엔진 v0.4.5 다음 엔진 릴리즈 이상이 필요하며, 구형 kit에서는 `tellus_input_hold_unsupported`로 Promise를 거부합니다. iOS 링크 플래그(`-Wl,-U`)는 podspec이 자동으로 추가하고, C++ 글루는 약한 참조로 엔진 심볼을 찾습니다.
