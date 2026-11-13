@@ -7,6 +7,8 @@ namespace margelo::nitro::tellus {
 
 DenoiseSettingFn (*HybridTellusCapture::_closeTalkThresholdResolver)() = resolveSetCloseTalkThresholdDb;
 DenoiseSettingFn (*HybridTellusCapture::_denoiseAttenuationLimitResolver)() = resolveSetDenoiseAttenuationLimitDb;
+InputHoldFn (*HybridTellusCapture::_holdInputResolver)() = resolveHoldInput;
+InputHoldFn (*HybridTellusCapture::_releaseInputResolver)() = resolveReleaseInput;
 
 HybridTellusCapture::HybridTellusCapture() : HybridObject(TAG), _session(std::make_shared<CaptureSession>()) {}
 
@@ -223,6 +225,29 @@ std::shared_ptr<Promise<void>> HybridTellusCapture::setDenoiseAttenuationLimitDb
 
 void HybridTellusCapture::setDenoiseAttenuationLimitResolverForTesting(DenoiseSettingFn (*resolver)()) {
   _denoiseAttenuationLimitResolver = resolver;
+}
+
+std::shared_ptr<Promise<void>> HybridTellusCapture::holdInput() {
+  auto session = acquire();
+  const auto hold = _holdInputResolver();
+  if (!hold) throw std::runtime_error("tellus_input_hold_unsupported");
+  return session->submit([state = session.get(), hold] { state->holdInput(hold); });
+}
+
+void HybridTellusCapture::setHoldInputResolverForTesting(InputHoldFn (*resolver)()) {
+  _holdInputResolver = resolver;
+}
+
+// Check support before touching the session. Stopping delivery and discarding the queue happen only inside the worker's CaptureSession::releaseInput.
+std::shared_ptr<Promise<void>> HybridTellusCapture::releaseInput() {
+  auto session = acquire();
+  const auto release = _releaseInputResolver();
+  if (!release) throw std::runtime_error("tellus_input_hold_unsupported");
+  return session->submit([state = session.get(), release] { state->releaseInput(release); });
+}
+
+void HybridTellusCapture::setReleaseInputResolverForTesting(InputHoldFn (*resolver)()) {
+  _releaseInputResolver = resolver;
 }
 
 std::shared_ptr<Promise<void>> HybridTellusCapture::setRecordingNotification(

@@ -10,6 +10,7 @@ endif()
 add_library(TellusAudioSdk SHARED
   ../cpp/HybridTellusCapture.cpp
   ../cpp/DenoiseSettings.cpp
+  ../cpp/InputHold.cpp
   ../cpp/CaptureSession.cpp
   ../cpp/CaptureWorker.cpp
   src/main/cpp/AndroidAudioDevice.cpp

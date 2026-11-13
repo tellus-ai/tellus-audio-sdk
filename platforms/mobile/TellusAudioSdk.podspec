@@ -22,7 +22,7 @@ Pod::Spec.new do |s|
   }
   # cpp/DenoiseSettings.cpp references these engine functions weakly. Apple's linker still rejects a weak reference no
   # kit defines, so the app link allows them to stay undefined; dyld then binds them to null and the glue reports unsupported.
-  s.user_target_xcconfig = { 'OTHER_LDFLAGS' => '-Wl,-U,_tellus_audio_session_set_close_talk_threshold_db -Wl,-U,_tellus_audio_session_set_denoise_attenuation_limit_db' }
+  s.user_target_xcconfig = { 'OTHER_LDFLAGS' => '-Wl,-U,_tellus_audio_session_set_close_talk_threshold_db -Wl,-U,_tellus_audio_session_set_denoise_attenuation_limit_db -Wl,-U,_tellus_audio_session_hold_input -Wl,-U,_tellus_audio_session_release_input' }
   load 'nitrogen/generated/ios/TellusAudioSdk+autolinking.rb'
   add_nitrogen_files(s)
   s.dependency 'React-jsi'

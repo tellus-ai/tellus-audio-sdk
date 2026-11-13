@@ -2,6 +2,7 @@
 
 #include "AudioDevice.hpp"
 #include "CaptureWorker.hpp"
+#include "InputHold.hpp"
 #include "tellus_audio_engine.h"
 #include <NitroModules/ArrayBuffer.hpp>
 #include <NitroModules/Promise.hpp>
@@ -50,6 +51,9 @@ public:
   void stop();
   void close();
   void reset(uint64_t revision, bool capturing);
+  // hold and release run on the worker. The function is the C function found by the InputHold resolver and is not nullptr.
+  void holdInput(InputHoldFn hold);
+  void releaseInput(InputHoldFn release);
   void invalidate();
   void setRecordingNotification(const std::string& title, const std::string& contentText,
                                 bool pauseAction, bool resumeAction,
@@ -91,6 +95,8 @@ private:
   bool _started = false;
   bool _deviceSelectionLocked = false;
   bool _authorizationMonitored = false;
+  // Core hold state, changed on the worker only after the C hold or release has succeeded.
+  bool _inputHeld = false;
   std::unique_ptr<AudioDevice> _device;
   std::unique_ptr<CaptureWorker> _worker;
 };
