@@ -858,7 +858,7 @@ export class AudioCapture {
     this.#native.setCloseTalkThresholdDb(db);
   }
 
-  /** Stops uplink input (e.g. during TTS playback) while keeping the capture session alive. Callable before start; the native engine keeps it idempotent. */
+  /** Stops all real-time chunks (microphone, system audio, mixed, raw) while the recording path continues with a silent microphone and the capture session stays alive (e.g. during TTS playback). Callable before start; the native engine keeps it idempotent. */
   holdInput(): void {
     this.#requireInputHoldSupport();
     this.#native.holdInput();

@@ -88,4 +88,5 @@ await capture.releaseInput();  // 업링크 켬
 - release는 적응 상태(소음 추정치·close_talk 학습값·AGC)를 hold 직전 값 그대로 이어 갑니다. `reset()`은 처리 이력을 모두 지우고 AEC 필터까지 초기화하므로 같은 효과가 아닙니다.
 - `getStatus().inputHeld`는 선택 필드이며, 입력 hold를 지원하지 않는 엔진에서는 없습니다(`undefined`).
 - hold·release는 호출한 순서대로 적용되며, 이후의 reset/pause/denoise 토글로 취소되지 않습니다.
+- hold 중에도 `reset()`과 `setDenoiseEnabled()`는 기존 동작 그대로이며 hold를 풀지 않습니다. hold를 푸는 것은 `releaseInput()`뿐입니다.
 - 이 API는 엔진 v0.4.5 다음 엔진 릴리즈 이상이 필요하며, 구형 kit에서는 `tellus_input_hold_unsupported`로 거부합니다. WASM export가 없으면 호출 전에 확인합니다.

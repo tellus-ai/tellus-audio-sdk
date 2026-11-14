@@ -123,11 +123,13 @@ export interface AudioCapture extends AuthorizableAudioCapture {
    * Holds input while the app's uplink is stopped, e.g. during TTS playback. Freezes adaptive state
    * (noise estimate, close_talk learned level, AGC) and stops output. Idempotent; callable before start.
    * The state persists across pause/resume and stop/start. Rejects with a platform unsupported error on engines without the API.
+   * Hold and release are applied in call order and are never cancelled by a later start/resume/pause/reset/stop, even unawaited in the same tick;
+   * only dispose() (`capture_disposed`) and old engines (`tellus_input_hold_unsupported`) reject.
    */
   holdInput(): Promise<void>;
   /**
    * Ends a hold. Discards audio held inside the engine and silently resets the VAD gate (no event; the next speech opens it).
-   * The next chunk carries an `input_held` discontinuity. Idempotent; callable before start.
+   * After an actual hold, the next chunk carries an `input_held` discontinuity (a release while not held is a no-op). Idempotent; callable before start.
    * Rejects with a platform unsupported error on engines without the API.
    */
   releaseInput(): Promise<void>;
