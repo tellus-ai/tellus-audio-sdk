@@ -193,7 +193,24 @@ test('mobile forwards holdInput and releaseInput to native once each, in call or
   assert.deepEqual(calls, ['hold', 'release']);
 });
 
-test('mobile holdInput and releaseInput waiting for the initial configure are not applied late to an interrupted session', async () => {
+test('mobile holdInput and releaseInput waiting for the initial configure are not cancelled by a later start, pause, resume, reset or stop and apply in call order', async () => {
+  for (const interrupt of ['start', 'pause', 'resume', 'reset', 'stop']) {
+    const { native, create } = fixture();
+    let configured;
+    const calls = [];
+    native.configure = () => new Promise(resolve => { configured = resolve; });
+    native.holdInput = async () => { calls.push('hold'); };
+    native.releaseInput = async () => { calls.push('release'); };
+    const capture = await create();
+    const pending = [capture.holdInput(), capture.releaseInput(), capture.holdInput()];
+    const control = interrupt === 'start' ? capture.start(() => {}) : capture[interrupt]();
+    configured();
+    await Promise.all([...pending, control]);
+    assert.deepEqual(calls, ['hold', 'release', 'hold'], interrupt);
+  }
+});
+
+test('mobile holdInput and releaseInput waiting for the initial configure reject with capture_disposed when disposed meanwhile and never reach native', async () => {
   const { native, create } = fixture();
   let configured;
   const calls = [];
@@ -202,9 +219,10 @@ test('mobile holdInput and releaseInput waiting for the initial configure are no
   native.releaseInput = async () => { calls.push('release'); };
   const capture = await create();
   const pending = [capture.holdInput(), capture.releaseInput()];
-  await capture.pause();
+  const disposing = capture.dispose();
   configured();
-  for (const control of pending) await assert.rejects(control, /capture_cancelled/);
+  for (const control of pending) await assert.rejects(control, /capture_disposed/);
+  await disposing;
   assert.deepEqual(calls, []);
 });
 
