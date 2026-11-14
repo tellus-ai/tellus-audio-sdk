@@ -87,9 +87,10 @@ await capture.releaseInput();  // 업링크 켬
 - 멱등입니다. 이미 hold 중인 `holdInput()`과 hold 중이 아닌 `releaseInput()`은 아무것도 하지 않고 성공합니다.
 - 시작 전에 호출해도 되고, 상태는 `pause()`/`resume()`, `stop()`/`start()` 뒤에도 유지됩니다.
 - hold 동안 엔진은 소음 추정치, close_talk 학습 레벨, AGC 같은 적응 상태를 얼려 두고 출력 청크를 내지 않으며 VAD도 돌지 않습니다. 그래서 TTS 소리가 학습에 섞이지 않습니다.
-- `releaseInput()`은 엔진 안에 있던 hold 이전 오디오를 버리고 VAD 게이트를 이벤트 없이 닫힌 상태로 되돌립니다. `speech_gate_opened`는 release 뒤 다음 발화에서 나옵니다. 실제로 hold가 있었던 뒤라면 다음 청크의 `discontinuity`가 reason `input_held`입니다(hold 중이 아닐 때의 release는 아무것도 하지 않습니다).
-- release는 적응 상태(소음 추정치·close_talk 학습값·AGC)를 hold 직전 값 그대로 이어 갑니다. `reset()`은 처리 이력을 모두 지우고 AEC 필터까지 초기화하므로 같은 효과가 아닙니다.
+- `releaseInput()`은 엔진 안에 보류된 오디오(denoise 모델이 가진 오디오 이력 포함)를 버리고 VAD 게이트를 이벤트 없이 닫힌 상태로 되돌립니다. `speech_gate_opened`는 release 뒤 다음 발화에서 나옵니다. 실제로 hold가 있었던 뒤라면 다음 청크의 `discontinuity`가 reason `input_held`입니다(hold 중이 아닐 때의 release는 아무것도 하지 않습니다).
+- release는 적응 상태(DFN3 소음 추정치·close_talk 학습값·AGC)를 hold 직전 값 그대로 이어 갑니다. `reset()`은 처리 이력을 모두 지우고 AEC 필터까지 초기화하므로 같은 효과가 아닙니다.
 - `getStatus().inputHeld`는 선택 필드이며, 입력 hold를 지원하지 않는 엔진에서는 없습니다(`undefined`).
 - `holdInput()`·`releaseInput()`은 호출한 순서대로 적용되며, 이후의 `start()`/`resume()`/`pause()`/`reset()`/`stop()`에 취소되지 않습니다. `await` 없이 같은 tick에 이어 불러도 마찬가지입니다. `dispose()`를 부르면 `capture_disposed`로, 구형 kit에서는 `tellus_input_hold_unsupported`로만 거부합니다.
+- release 뒤에는 hold 이전·도중의 소리가 출력되지 않습니다. 단 release 때 AEC가 실제로 처리 중이면(엔진 재생(`playback()`·`playbackEncoded()`)이 진행 중이라 render reference가 들어오고 있을 때) release 뒤 AEC 출력 앞 25 ms가 무음이 되고 그 뒤 hold 중 소리의 잔향이 1e-3 peak(약 −60 dBFS) 아래로 감쇠하며 남을 수 있습니다(250 ms 안에 정확히 0). AEC가 처리 중이 아니면 경계는 정확히 0입니다. 엔진 재생이 끝나면 엔진이 AEC를 새로 만들므로, 보통 흐름(TTS를 엔진 재생으로 틀고 재생이 끝난 뒤 release)에서는 이 구간이 없습니다. 앱이 TTS를 자체 플레이어로 틀면 모바일·웹 AEC는 켜지지 않습니다.
 - hold 중에도 `reset()`과 `setDenoiseEnabled()`는 기존 동작 그대로이며 hold를 풀지 않습니다. hold를 푸는 것은 `releaseInput()`뿐입니다.
 - 이 API는 엔진 v0.4.5 다음 엔진 릴리즈 이상이 필요하며, 구형 kit에서는 `tellus_input_hold_unsupported`로 Promise를 거부합니다. iOS 링크 플래그(`-Wl,-U`)는 podspec이 자동으로 추가하고, C++ 글루는 약한 참조로 엔진 심볼을 찾습니다.

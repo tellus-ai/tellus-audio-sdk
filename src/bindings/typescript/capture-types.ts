@@ -121,15 +121,18 @@ export interface AudioCapture extends AuthorizableAudioCapture {
   reset(): Promise<void>;
   /**
    * Holds input while the app's uplink is stopped, e.g. during TTS playback. Freezes adaptive state
-   * (noise estimate, close_talk learned level, AGC) and stops output. Idempotent; callable before start.
+   * (DFN3 noise estimate, close_talk learned level, AGC) and stops output. Idempotent; callable before start.
    * The state persists across pause/resume and stop/start. Rejects with a platform unsupported error on engines without the API.
    * Hold and release are applied in call order and are never cancelled by a later start/resume/pause/reset/stop, even unawaited in the same tick;
    * only dispose() (`capture_disposed` on mobile, `tellus_capture_disposed` on web; the desktop wrapper has no dispose rejection) and old engines (`tellus_input_hold_unsupported`) reject.
    */
   holdInput(): Promise<void>;
   /**
-   * Ends a hold. Discards audio held inside the engine and silently resets the VAD gate (no event; the next speech opens it).
+   * Ends a hold. Discards audio held inside the engine (including the denoise model's audio history; the noise estimate, close_talk learned values and AGC are kept) and silently resets the VAD gate (no event; the next speech opens it).
    * After an actual hold, the next chunk carries an `input_held` discontinuity (a release while not held is a no-op). Idempotent; callable before start.
+   * No audio from before or during the hold is output after release, except while the AEC is actively processing (a render reference is flowing: engine playback on mobile/web,
+   * speaker capture with a non-head-worn output on desktop): then the first 25 ms of echo-cancelled audio is silenced and a decaying residue below 1e-3 peak (about -60 dBFS) can follow, exactly 0 within 250 ms.
+   * When engine playback ends the AEC is recreated, so in the usual flow (TTS through engine playback, then release) the boundary is exactly 0. An app playing TTS through its own player never activates the AEC on mobile/web.
    * Rejects with a platform unsupported error on engines without the API.
    */
   releaseInput(): Promise<void>;
