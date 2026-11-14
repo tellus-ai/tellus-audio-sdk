@@ -266,10 +266,11 @@ export class BrowserCapture implements AudioCapture {
    * It neither cuts the epoch nor stops engine playback, so earlier settings (setMicGainDb and the like) and an in-flight start, pause, stop or playback finish as they were.
    * While held and with a running tap (the only time held captures queue on the main thread or are on their way over the port), it sets only a capture boundary.
    * - Queued held captures are sent to the worker before the release request. The core, still held, counts their length and the queue loss length (droppedSamples) and drops them.
-   *   Resulting chunks are not delivered (held captures are never emitted live after the release).
+   *   Resulting chunks are not delivered (held captures are never emitted live after the release). If pause, reset, stop or a denoise toggle is called in the same tick,
+   *   that call cuts the epoch before the worker receives this capture, so it is dropped without being counted, like the other pending audio that call discards.
    * - The tap is re-armed with a new capture generation. Frames the tap stamped before it received this (the frame on its way over the port at release and the frames it made before it got the message)
    *   are dropped even if they arrive after the release. This length is not reported to the engine, so the input_held discontinuity after the release is that much shorter. Its size is
-   *   the render quanta (128 samples each) during one port round trip, and can grow by however long the main thread was busy just before the release. Handing the queue loss length to the released core would become a full discard, so it is not counted.
+   *   the number of render quanta (128 samples each, about 2.7 ms at 48 kHz) during one port round trip, typically a few ms, and can grow by however long the main thread was busy just before the release. Handing the queue loss length to the released core would become a full discard, so it is not counted.
    * - A capture the pump already sent reaches the worker before the release, and the held core drops it.
    * Otherwise (not held, not started, during the permission prompt, during pause or stop) it only sends the ordered request.
    */

@@ -871,6 +871,42 @@ test('a tap frame stamped before the release that arrives after it never reaches
   await capture.dispose();
 });
 
+// Mutation caught: if start does not reset the capture generation to 0, then after a held release raised it to 1, a stop and start (or a resume that reopens the microphone)
+// creates a new tap whose generation-0 frames the main thread drops, so the microphone silently stops and this goes RED.
+test('a new microphone tap after a held release starts at capture generation 0, so its frames are live after stop and start or a reopening resume', async () => {
+  for (const reopen of ['stop and start', 'resume']) {
+    const worker = heldCoreWorker();
+    const { capture, nodes, permissions } = environment({}, {}, worker);
+    await capture.applyAuthorization('permit');
+    const microphone = stream();
+    const starting = capture.start(() => {});
+    await flush();
+    permissions[0](microphone);
+    await starting;
+    await capture.holdInput();
+    await capture.releaseInput();
+    assert.deepEqual(nodes[0].controls.at(-1), { active: true, epoch: 0, generation: 1 });
+    let reopening;
+    if (reopen === 'resume') {
+      await capture.pause();
+      microphone.track.readyState = 'ended';
+      reopening = capture.resume();
+    } else {
+      await capture.stop();
+      reopening = capture.start(() => {});
+    }
+    await flush();
+    permissions[1](stream());
+    await reopening;
+    const { epoch } = nodes[1].controls.at(-1);
+    assert.notEqual(epoch, 0, reopen);
+    nodes[1].port.onmessage({ data: { ...tapFrame(1, 0).data, epoch } });
+    await flush();
+    assert.deepEqual(worker.captures, { held: [], live: [[1, 0]] }, reopen);
+    await capture.dispose();
+  }
+});
+
 test('hold is an ordered request that does not cancel in-flight capture', async () => {
   const { capture, nodes, cancels, epochs } = await startedSession();
   const controls = nodes[0].controls.length;
