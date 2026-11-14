@@ -124,7 +124,7 @@ export interface AudioCapture extends AuthorizableAudioCapture {
    * (noise estimate, close_talk learned level, AGC) and stops output. Idempotent; callable before start.
    * The state persists across pause/resume and stop/start. Rejects with a platform unsupported error on engines without the API.
    * Hold and release are applied in call order and are never cancelled by a later start/resume/pause/reset/stop, even unawaited in the same tick;
-   * only dispose() (`capture_disposed`) and old engines (`tellus_input_hold_unsupported`) reject.
+   * only dispose() (`capture_disposed` on mobile, `tellus_capture_disposed` on web; the desktop wrapper has no dispose rejection) and old engines (`tellus_input_hold_unsupported`) reject.
    */
   holdInput(): Promise<void>;
   /**

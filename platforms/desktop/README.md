@@ -120,12 +120,12 @@ capture.releaseInput();
 - 멱등입니다. 이미 hold 중인 `holdInput()`과 hold 중이 아닌 `releaseInput()`은 아무것도 하지 않고 성공합니다.
 - 시작 전에 호출해도 되고, 상태는 `pause()`/`resume()`, `stop()`/`start()` 뒤에도 유지됩니다.
 - hold 동안 엔진은 소음 추정치, close_talk 학습 레벨, AGC 같은 적응 상태를 얼려 두고 출력 청크를 내지 않으며 VAD도 돌지 않습니다. 그래서 TTS 소리가 학습에 섞이지 않습니다.
-- `releaseInput()`은 엔진 안에 있던 hold 이전 오디오를 버리고 VAD 게이트를 이벤트 없이 닫힌 상태로 되돌립니다. `speech_gate_opened`는 release 뒤 다음 발화에서 나옵니다. 다음 청크의 `discontinuity`는 reason `input_held`입니다.
+- `releaseInput()`은 엔진 안에 있던 hold 이전 오디오를 버리고 VAD 게이트를 이벤트 없이 닫힌 상태로 되돌립니다. `speech_gate_opened`는 release 뒤 다음 발화에서 나옵니다. 실제로 hold가 있었던 뒤라면 다음 청크의 `discontinuity`가 reason `input_held`입니다(hold 중이 아닐 때의 release는 아무것도 하지 않습니다).
 - release는 적응 상태(소음 추정치·close_talk 학습값·AGC)를 hold 직전 값 그대로 이어 갑니다. 캡처를 새로 만들면 처리 이력이 모두 사라지므로 같은 효과가 아닙니다.
 - `getStatus().inputHeld`는 선택 필드이며, 입력 hold를 지원하지 않는 엔진에서는 없습니다(`undefined`).
 - 실시간 전달은 믹서 청크 단위로 멈춥니다. release 뒤 첫 청크에는 release 직전의 시스템 오디오가 들어 있을 수 있습니다.
 - hold 중 마이크는 녹음 경로에서도 무음이며, `enableRawAudio`의 `rawAudio.mic`도 음소거(`setMicMuted()`)와 같게 무음입니다(처리된 마이크와 같은 장치 청크 경계). 녹음 경로(화면 녹화 믹스 오디오·녹음 버퍼)는 청크 간격과 시스템 오디오(스피커 소리)를 그대로 유지합니다.
-- hold 중에는 VAD가 돌지 않으므로 `vadGateState`·`vadIsSpeech`는 hold 직전 값을 유지합니다. hold 시점에 버려진 청크는 `deliveryDroppedChunks`·`deliveryDroppedSamples`에 집계되며 전달 지연이 아닙니다.
+- hold 중에는 VAD가 돌지 않으므로 `vadGateState`·`vadIsSpeech`는 hold 직전 값을 유지합니다. hold 시점에 버려진 청크는 `deliveryDroppedChunks`·`deliveryDroppedSamples`에 집계됩니다.
 - 녹음 버퍼를 붙여 둔 경우 release 뒤 첫 실시간 패킷에 작은 잔여(최대 약 −43 dBFS)가 실릴 수 있고, 믹서 청크 약 2개보다 짧은 hold는 녹음용 인코더를 다시 만들어 녹음 인코더가 재시작됩니다(엔진 `docs/desktop-api.md` 참고).
 - 이 API는 엔진 v0.4.5 다음 릴리즈 이상이 필요하며, 구형 kit에서는 `input_hold_unsupported: install a native engine with input hold support` 오류를 던집니다.
 

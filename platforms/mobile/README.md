@@ -87,7 +87,7 @@ await capture.releaseInput();  // 업링크 켬
 - 멱등입니다. 이미 hold 중인 `holdInput()`과 hold 중이 아닌 `releaseInput()`은 아무것도 하지 않고 성공합니다.
 - 시작 전에 호출해도 되고, 상태는 `pause()`/`resume()`, `stop()`/`start()` 뒤에도 유지됩니다.
 - hold 동안 엔진은 소음 추정치, close_talk 학습 레벨, AGC 같은 적응 상태를 얼려 두고 출력 청크를 내지 않으며 VAD도 돌지 않습니다. 그래서 TTS 소리가 학습에 섞이지 않습니다.
-- `releaseInput()`은 엔진 안에 있던 hold 이전 오디오를 버리고 VAD 게이트를 이벤트 없이 닫힌 상태로 되돌립니다. `speech_gate_opened`는 release 뒤 다음 발화에서 나옵니다. 다음 청크의 `discontinuity`는 reason `input_held`입니다.
+- `releaseInput()`은 엔진 안에 있던 hold 이전 오디오를 버리고 VAD 게이트를 이벤트 없이 닫힌 상태로 되돌립니다. `speech_gate_opened`는 release 뒤 다음 발화에서 나옵니다. 실제로 hold가 있었던 뒤라면 다음 청크의 `discontinuity`가 reason `input_held`입니다(hold 중이 아닐 때의 release는 아무것도 하지 않습니다).
 - release는 적응 상태(소음 추정치·close_talk 학습값·AGC)를 hold 직전 값 그대로 이어 갑니다. `reset()`은 처리 이력을 모두 지우고 AEC 필터까지 초기화하므로 같은 효과가 아닙니다.
 - `getStatus().inputHeld`는 선택 필드이며, 입력 hold를 지원하지 않는 엔진에서는 없습니다(`undefined`).
 - `holdInput()`·`releaseInput()`은 호출한 순서대로 적용되며, 이후의 `start()`/`resume()`/`pause()`/`reset()`/`stop()`에 취소되지 않습니다. `await` 없이 같은 tick에 이어 불러도 마찬가지입니다. `dispose()`를 부르면 `capture_disposed`로, 구형 kit에서는 `tellus_input_hold_unsupported`로만 거부합니다.
