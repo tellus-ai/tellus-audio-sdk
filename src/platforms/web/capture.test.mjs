@@ -22,8 +22,9 @@ const stream = (deviceId, settings = {}) => {
   return { track, getTracks: () => [track], getAudioTracks: () => [track] };
 };
 
-function environment(responses = {}, config = {}) {
+function environment(responses = {}, config = {}, worker) {
   const nodes = [];
+  const sources = [];
   const requests = [];
   const permissions = [];
   const rejections = [];
@@ -42,27 +43,37 @@ function environment(responses = {}, config = {}) {
   };
   const context = { resume: responses.contextResume ?? (async () => {}), currentTime: 0, destination: {}, sampleRate: 48000,
     createMediaStreamSource: () => ({ connect() {}, disconnect() {} }),
+    createBuffer: () => ({ copyToChannel() {} }),
+    createBufferSource: () => {
+      const source = { stopped: false, connect() {}, disconnect() {}, start() {}, stop() { this.stopped = true; } };
+      sources.push(source);
+      return source;
+    },
     decodeAudioData: (bytes) => responses.decodeAudioData(bytes) };
   let lifecycle = 'stopped';
   const commands = [];
   const cancels = [];
   const epochs = [];
+  const respond = (command) => {
+    if (responses[command.operation]) return responses[command.operation](command);
+    if (command.operation === 'create') return 1;
+    if (command.operation === 'start' || command.operation === 'resume') lifecycle = 'running';
+    if (command.operation === 'pause') lifecycle = 'paused';
+    if (command.operation === 'stop') { lifecycle = 'stopped'; return []; }
+    if (command.operation === 'denoise') return command.enabled;
+    if (command.operation === 'applyAuthorization') return { state: 'authorized', remaining_ms: 100000 };
+    if (command.operation === 'status') return { lifecycle, denoise_enabled: false, denoise_loaded: false, vad_loaded: false, loadedModels: [] };
+  };
+  // With a worker, requests go to the Worker model, which keeps using the default responses above (respond).
   const client = {
-    cancel(_id, epoch) { cancels.push(epoch); },
+    cancel(_id, epoch) { cancels.push(epoch); worker?.cancel(epoch); },
     request: async (_id, epoch, command) => {
       commands.push(command.operation);
       epochs.push([command.operation, epoch]);
-      if (responses[command.operation]) return responses[command.operation](command);
-      if (command.operation === 'create') return 1;
-      if (command.operation === 'start' || command.operation === 'resume') lifecycle = 'running';
-      if (command.operation === 'pause') lifecycle = 'paused';
-      if (command.operation === 'stop') { lifecycle = 'stopped'; return []; }
-      if (command.operation === 'denoise') return command.enabled;
-      if (command.operation === 'applyAuthorization') return { state: 'authorized', remaining_ms: 100000 };
-      if (command.operation === 'status') return { lifecycle, denoise_enabled: false, denoise_loaded: false, vad_loaded: false, loadedModels: [] };
+      return worker ? worker.request(command, epoch, respond) : respond(command);
     },
   };
-  return { capture: new BrowserCapture(client, context, config), permissions, rejections, requests, commands, nodes, cancels, epochs };
+  return { capture: new BrowserCapture(client, context, config), permissions, rejections, requests, commands, nodes, cancels, epochs, sources };
 }
 
 test('an exact microphone selection is pending until the actual input is acquired', async () => {
@@ -293,7 +304,7 @@ test('pause invalidates an output whose final native delivery check is still pen
   await flush();
   permissions[0](stream());
   await starting;
-  nodes[0].port.onmessage({ data: { samples: new Float32Array(128), nativeRate: 48000, timestamp: 1, epoch: 0 } });
+  nodes[0].port.onmessage({ data: { samples: new Float32Array(128), nativeRate: 48000, timestamp: 1, epoch: 0, generation: 0 } });
   await flush();
   assert.ok(commands.includes('canDeliver'));
   await capture.pause();
@@ -342,7 +353,7 @@ test('reset drops a pending delivery and reactivates the same microphone with a 
   await flush();
   permissions[0](stream());
   await starting;
-  const frame = (epoch) => ({ data: { samples: new Float32Array(128), nativeRate: 48000, timestamp: 1, epoch } });
+  const frame = (epoch) => ({ data: { samples: new Float32Array(128), nativeRate: 48000, timestamp: 1, epoch, generation: 0 } });
   nodes[0].port.onmessage(frame(0));
   await flush();
   await capture.reset();
@@ -390,7 +401,7 @@ test('setting the current denoise value preserves an output awaiting its final d
   await flush();
   permissions[0](stream());
   await starting;
-  nodes[0].port.onmessage({ data: { samples: new Float32Array(128), nativeRate: 48000, timestamp: 1, epoch: 0 } });
+  nodes[0].port.onmessage({ data: { samples: new Float32Array(128), nativeRate: 48000, timestamp: 1, epoch: 0, generation: 0 } });
   await flush();
   await capture.setDenoiseEnabled(false);
   allow(true);
@@ -451,7 +462,7 @@ test('queue loss is reported at the 16 kHz default output rate when processing.s
     await starting;
     // While the first frame waits for the Worker, 11 frames queue up, so a queue of capacity 10 drops one 10 ms frame (480 samples at 48 kHz).
     for (let frame = 0; frame < 12; frame++) {
-      nodes[0].port.onmessage({ data: { samples: new Float32Array(480), nativeRate: 48000, timestamp: frame, epoch: 0 } });
+      nodes[0].port.onmessage({ data: { samples: new Float32Array(480), nativeRate: 48000, timestamp: frame, epoch: 0, generation: 0 } });
     }
     await flush();
     release();
@@ -751,9 +762,9 @@ test('start waits before each configured value, so a runtime change made while a
   await capture.dispose();
 });
 
-// Starts a session for the input hold scenarios.
-async function startedSession(responses = {}) {
-  const session = environment(responses);
+// Starts a session for the input hold scenarios. With a worker, that Worker model handles the requests.
+async function startedSession(responses = {}, worker) {
+  const session = environment(responses, {}, worker);
   await session.capture.applyAuthorization('permit');
   const starting = session.capture.start(() => {});
   await flush();
@@ -762,43 +773,101 @@ async function startedSession(responses = {}) {
   return session;
 }
 
-test('release while held cuts the epoch like reset and reactivates the tap', async () => {
-  const { capture, nodes, cancels, epochs } = await startedSession();
+// A Worker model that, like worker.ts, drops requests whose epoch changed (except hold and release; configuration setters are rejected with tellus_capture_cancelled, capture and stop return an empty result)
+// and, while held, counts only the length of a capture without a chunk. It records the captures the core received, split into held and live, as [timestamp, queue loss length].
+// State changes in the order requests arrive, the same as the Worker's FIFO order. With a gate, capture responses wait until that promise resolves (meanwhile frames pile up in the main-thread queue).
+function heldCoreWorker() {
+  return {
+    epoch: 0,
+    held: false,
+    gate: undefined,
+    captures: { held: [], live: [] },
+    cancel(epoch) { this.epoch = epoch; },
+    async request(command, epoch, respond) {
+      const exempt = ['invalidate', 'destroy', 'holdInput', 'releaseInput'].includes(command.operation);
+      if (epoch !== this.epoch && !exempt) {
+        if (['micGainDb', 'closeTalkThresholdDb', 'denoiseAttenuationLimitDb'].includes(command.operation)) throw new Error('tellus_capture_cancelled');
+        return command.operation === 'capture' || command.operation === 'stop' ? [] : undefined;
+      }
+      if (command.operation === 'holdInput') this.held = true;
+      if (command.operation === 'releaseInput') this.held = false;
+      if (command.operation !== 'capture') return respond(command);
+      const held = this.held;
+      this.captures[held ? 'held' : 'live'].push([command.timestamp, command.droppedSamples]);
+      await this.gate;
+      return held ? [] : respond(command) ?? [];
+    },
+  };
+}
+
+// A 128-sample (48 kHz) frame the microphone tap stamped with epoch 0 and the given capture generation.
+const tapFrame = (timestamp, generation = 0) => ({ data: { samples: new Float32Array(128), nativeRate: 48000, timestamp, epoch: 0, generation } });
+
+// Mutation to catch: if a held release cuts the epoch with cancel() like reset(), the earlier setMicGainDb becomes tellus_capture_cancelled by the Worker's stale epoch rule
+// and engine playback stops too (source.stop), so this goes RED.
+test('release while held keeps the epoch, so an earlier unawaited setter resolves and engine playback keeps running', async () => {
+  const worker = heldCoreWorker();
+  const { capture, cancels, commands, epochs, sources } = await startedSession({}, worker);
   await capture.holdInput();
-  const cancelsBeforeRelease = cancels.length;
+  const playing = capture.playback(new Float32Array(480), 48000);
+  await flush();
+  assert.equal(sources.length, 1, 'engine playback is running');
+  const gain = capture.setMicGainDb(3);
+  const releasing = capture.releaseInput();
+  await Promise.all([gain, releasing]);
+  assert.deepEqual(cancels, []);
+  assert.deepEqual(epochs.filter(([operation]) => operation === 'micGainDb' || operation === 'releaseInput'), [['micGainDb', 0], ['releaseInput', 0]]);
+  assert.equal(sources[0].stopped, false, 'playback is not cut');
+  assert.equal(commands.includes('clearRender'), false);
+  await capture.dispose();
+  await playing;
+});
+
+// Mutations to catch: if a held release only clears the queue (queue.clear), the queued held frames and the queue loss length never reach the held core;
+// if the release request is sent before those frames, they enter the released core live; and if the fractional remainder of the queue loss length is carried past the release, the loss after the release grows by 1 sample, so this goes RED.
+test('release while held sends the queued held frames and their queue loss to the still-held core before the release request', async () => {
+  const worker = heldCoreWorker();
+  const { capture, nodes, commands } = await startedSession({}, worker);
+  await capture.holdInput();
+  let open;
+  worker.gate = new Promise((resolve) => { open = resolve; });
+  nodes[0].port.onmessage(tapFrame(1));
+  await flush();
+  // While the first frame waits for the Worker, 11 frames queue up, so a queue of capacity 10 drops frame 2 (128 samples at 48 kHz = 42.67 samples at 16 kHz, integer 42).
+  for (let timestamp = 2; timestamp <= 12; timestamp++) nodes[0].port.onmessage(tapFrame(timestamp));
+  await flush();
+  assert.deepEqual(worker.captures.held, [[1, 0]], 'the rest wait in the main-thread queue');
   await capture.releaseInput();
-  assert.equal(cancels.length, cancelsBeforeRelease + 1, 'release cancels the epoch once');
-  const release = epochs.find(([operation]) => operation === 'releaseInput');
-  assert.equal(release[1], cancels.at(-1), 'release is requested under the new epoch');
-  assert.deepEqual(nodes[0].controls.at(-2), { active: false, epoch: cancels.at(-1) });
-  assert.deepEqual(nodes[0].controls.at(-1), { active: true, epoch: cancels.at(-1) });
+  assert.deepEqual(commands.filter((command) => command === 'capture' || command === 'releaseInput'), [...Array(11).fill('capture'), 'releaseInput']);
+  assert.deepEqual(worker.captures.held, [[1, 0], [3, 42], [4, 0], [5, 0], [6, 0], [7, 0], [8, 0], [9, 0], [10, 0], [11, 0], [12, 0]]);
+  open();
+  await flush();
+  // After the release, if frame 14 is dropped the same way, only that length is reported. Had the fractional remainder of the hold span (0.67 of 42.67) been carried over, it would be 43.
+  worker.gate = new Promise((resolve) => { open = resolve; });
+  nodes[0].port.onmessage(tapFrame(13, 1));
+  await flush();
+  for (let timestamp = 14; timestamp <= 24; timestamp++) nodes[0].port.onmessage(tapFrame(timestamp, 1));
+  await flush();
+  open();
+  await flush();
+  assert.deepEqual(worker.captures.live.slice(0, 2), [[13, 0], [15, 42]], 'no queue loss is carried into the released core');
+  assert.equal(worker.captures.held.length, 11);
   await capture.dispose();
 });
 
-// Mutations to catch: release does not cut the epoch, or removing both the pump's frame.epoch skip and the queue clear makes the capture commands two and goes RED.
-test('release while held drops a delivery and a queued frame from the previous epoch', async () => {
-  let allow;
-  let checks = 0;
-  const validation = new Promise((resolve) => { allow = resolve; });
-  const output = { epoch: '1', authorizationGeneration: '1', chunk: { data: { microphone: new Uint8Array([1]) }, sampleCount: 320, validSampleCount: 320 } };
-  const environmentResponses = { capture: () => [output], canDeliver: () => ++checks === 1 ? validation : true };
-  const { capture, nodes, permissions, commands } = environment(environmentResponses);
-  await capture.applyAuthorization('permit');
-  const received = [];
-  const starting = capture.start((error, chunk) => received.push({ error, chunk }));
-  await flush();
-  permissions[0](stream());
-  await starting;
+// Mutations to catch: if the tap frame's capture generation is ignored, a held frame stamped before the release that arrives after it enters the released core live;
+// if the release does not re-arm the tap with a new generation, it receives no later frames, so this goes RED.
+test('a tap frame stamped before the release that arrives after it never reaches the core, and frames after the re-arm are live', async () => {
+  const worker = heldCoreWorker();
+  const { capture, nodes } = await startedSession({}, worker);
   await capture.holdInput();
-  nodes[0].port.onmessage({ data: { samples: new Float32Array(128), nativeRate: 48000, timestamp: 1, epoch: 0 } });
-  await flush();
-  nodes[0].port.onmessage({ data: { samples: new Float32Array(128), nativeRate: 48000, timestamp: 2, epoch: 0 } });
-  await flush();
   await capture.releaseInput();
-  allow(true);
+  assert.deepEqual(nodes[0].controls.at(-1), { active: true, epoch: 0, generation: 1 });
+  nodes[0].port.onmessage(tapFrame(1, 0));
   await flush();
-  assert.deepEqual(received, []);
-  assert.equal(commands.filter((command) => command === 'capture').length, 1, 'the frame queued behind the blocked one never reaches the engine');
+  nodes[0].port.onmessage(tapFrame(2, 1));
+  await flush();
+  assert.deepEqual(worker.captures, { held: [], live: [[2, 0]] });
   await capture.dispose();
 });
 
@@ -821,22 +890,24 @@ test('release while not held is a plain ordered request that keeps queued captur
   assert.ok(commands.includes('releaseInput'));
   await capture.holdInput();
   await capture.releaseInput();
-  assert.equal(cancels.length, 1);
+  assert.equal(nodes[0].controls.length, controls + 1, 'a held release re-arms the tap');
   await capture.releaseInput();
-  assert.equal(cancels.length, 1, 'a second release is not held again');
+  assert.equal(nodes[0].controls.length, controls + 1, 'a second release is not held again');
+  assert.deepEqual(cancels, []);
   await capture.dispose();
 });
 
-// Mutation caught: if release waits for the in-flight hold before reading the desired state and requesting, it cuts later than the hold or reorders, and this goes RED.
-test('release called while the hold request is pending sees the hold at call time, cuts the epoch and is requested after it', async () => {
+// Mutations to catch: if release judges by the last confirmed state instead of the hold that has not finished yet, or waits for that hold before requesting,
+// it does not re-arm the tap or reorders, and this goes RED.
+test('release called while the hold request is pending sees the hold at call time, re-arms the tap and is requested after it', async () => {
   let accept;
-  const { capture, cancels, epochs } = await startedSession({ holdInput: () => new Promise((resolve) => { accept = resolve; }) });
+  const { capture, nodes, epochs } = await startedSession({ holdInput: () => new Promise((resolve) => { accept = resolve; }) });
   const holding = capture.holdInput();
   const releasing = capture.releaseInput();
   await flush();
-  assert.equal(cancels.length, 1, 'the desired state at call time is held');
+  assert.deepEqual(nodes[0].controls.at(-1), { active: true, epoch: 0, generation: 1 }, 'the desired state at call time is held');
   assert.deepEqual(epochs.filter(([operation]) => operation === 'holdInput' || operation === 'releaseInput'),
-    [['holdInput', 0], ['releaseInput', cancels[0]]]);
+    [['holdInput', 0], ['releaseInput', 0]]);
   accept();
   await holding;
   await releasing;
@@ -846,15 +917,14 @@ test('release called while the hold request is pending sees the hold at call tim
 // Mutation caught: if release waits for the in-flight hold before requesting, the second hold issued meanwhile reaches the worker first and this goes RED.
 test('hold, release, hold reach the worker in call order and leave the wrapper held', async () => {
   const accepts = [];
-  const { capture, cancels, commands } = await startedSession({ holdInput: () => new Promise((resolve) => { accepts.push(resolve); }) });
+  const { capture, nodes, commands } = await startedSession({ holdInput: () => new Promise((resolve) => { accepts.push(resolve); }) });
   const calls = [capture.holdInput(), capture.releaseInput(), capture.holdInput()];
   await flush();
   assert.deepEqual(commands.filter((command) => command === 'holdInput' || command === 'releaseInput'), ['holdInput', 'releaseInput', 'holdInput']);
   accepts.forEach((accept) => accept());
   await Promise.all(calls);
-  const cancelsBeforeRelease = cancels.length;
   await capture.releaseInput();
-  assert.equal(cancels.length, cancelsBeforeRelease + 1, 'the last call was a hold, so the next release is a held release');
+  assert.deepEqual(nodes[0].controls.at(-1), { active: true, epoch: 0, generation: 2 }, 'the last call was a hold, so the next release is a held release');
   await capture.dispose();
 });
 
@@ -901,12 +971,27 @@ test('release while held never makes an in-flight pause or stop stale', async ()
   }
 });
 
-test('a failed hold reverts the desired state so release does not cancel', async () => {
-  const { capture, cancels, commands } = await startedSession({ holdInput: () => { throw new Error('tellus_input_hold_unsupported'); } });
+test('a failed hold reverts the desired state so release takes no held path', async () => {
+  const { capture, nodes, commands } = await startedSession({ holdInput: () => { throw new Error('tellus_input_hold_unsupported'); } });
+  const controls = nodes[0].controls.length;
   await assert.rejects(capture.holdInput(), /tellus_input_hold_unsupported/);
   await capture.releaseInput().catch(() => {});
-  assert.deepEqual(cancels, [], 'unsupported is rejected before any cancel');
+  assert.equal(nodes[0].controls.length, controls, 'the tap is not re-armed');
   assert.ok(commands.includes('releaseInput'));
+  await capture.dispose();
+});
+
+// Mutation to catch: if a failed hold reverts to the desired state just before its call, then after two overlapping holds both fail the desired state stays held and the next release takes the held path (tap re-arm), so this goes RED.
+test('two overlapping holds that both fail leave the wrapper not held, so a later release takes no held path', async () => {
+  const rejects = [];
+  const { capture, nodes } = await startedSession({ holdInput: () => new Promise((_resolve, reject) => { rejects.push(reject); }) });
+  const controls = nodes[0].controls.length;
+  const holds = [capture.holdInput(), capture.holdInput()];
+  await flush();
+  rejects.forEach((reject) => reject(new Error('tellus_input_hold_unsupported')));
+  for (const hold of holds) await assert.rejects(hold, /tellus_input_hold_unsupported/);
+  await capture.releaseInput();
+  assert.equal(nodes[0].controls.length, controls, 'the tap is not re-armed');
   await capture.dispose();
 });
 

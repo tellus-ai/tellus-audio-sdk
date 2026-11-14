@@ -31,6 +31,10 @@ export class BrowserCapture implements AudioCapture {
   // The input hold state the wrapper wants. holdInput and releaseInput change it synchronously before sending, so a later release sees a hold that has not finished yet at call time.
   private inputHeld = false;
   private inputHoldChanges = 0;
+  // The engine's hold state after the last successful hold or release. When the newest hold or release fails, the desired state reverts to this value.
+  private confirmedInputHeld = false;
+  // The capture generation the microphone tap stamps on frames. A held release re-arms the tap with a new generation, and frames of an earlier generation are held captures and are dropped. A new tap starts at 0.
+  private captureGeneration = 0;
   // Configured denoise settings stay here until they reach native, and start applies them once. A runtime change replaces them, and native keeps the values across stop and start.
   // Only a successful start application or runtime change clears them, so failed changes never drop the configured value, even when they overlap.
   private readonly unappliedDenoiseSettings: Partial<Record<DenoiseSetting, number>>;
@@ -142,9 +146,10 @@ export class BrowserCapture implements AudioCapture {
         } satisfies AudioDeviceStatus });
       }
       this.source = this.context.createMediaStreamSource(stream);
+      this.captureGeneration = 0;
       this.tap = this.createTap(false);
       this.tap.port.onmessage = (event: MessageEvent<CaptureFrame>) => {
-        if (this.state !== 'running' || event.data.epoch !== this.epoch) return;
+        if (this.state !== 'running' || event.data.epoch !== this.epoch || event.data.generation !== this.captureGeneration) return;
         this.queue.push(event.data);
         void this.pump();
       };
@@ -244,34 +249,52 @@ export class BrowserCapture implements AudioCapture {
 
   /** Requests the hold in order. It does not cut the epoch, so in-flight capture still reaches the engine, which counts its length while held. */
   async holdInput(): Promise<void> {
-    const previous = this.inputHeld;
     const change = ++this.inputHoldChanges;
     this.inputHeld = true;
-    try { await this.request<void>({ operation: 'holdInput' }); }
-    catch (error) {
-      // Revert only when no newer hold or release exists.
-      if (change === this.inputHoldChanges) this.inputHeld = previous;
+    try {
+      await this.request<void>({ operation: 'holdInput' });
+      this.confirmedInputHeld = true;
+    } catch (error) {
+      // Revert only when no newer hold or release exists, to the state after the last successful hold or release. If overlapping holds all fail, it returns to not held.
+      if (change === this.inputHoldChanges) this.inputHeld = this.confirmedInputHeld;
       throw error;
     }
   }
 
   /**
    * Reads the desired hold state (including an in-flight hold) at call time and sends the request right away, so hold and release reach the worker in call order.
-   * While held and with a running tap (the only time captures queue up), cuts the epoch like reset() to discard the queued captures from the hold, requests the release, and reactivates the tap.
-   * The length of the discarded captures is not reported to the engine (queue.clear() also clears the accumulated droppedSamples, same as reset()).
-   * Otherwise it only sends the ordered request and cuts neither queued capture nor an in-flight start, pause or stop (cutting the epoch would make that request stale or discard live audio).
+   * It neither cuts the epoch nor stops engine playback, so earlier settings (setMicGainDb and the like) and an in-flight start, pause, stop or playback finish as they were.
+   * While held and with a running tap (the only time held captures queue on the main thread or are on their way over the port), it sets only a capture boundary.
+   * - Queued held captures are sent to the worker before the release request. The core, still held, counts their length and the queue loss length (droppedSamples) and drops them.
+   *   Resulting chunks are not delivered (held captures are never emitted live after the release).
+   * - The tap is re-armed with a new capture generation. Frames the tap stamped before it received this (the frame on its way over the port at release and the frames it made before it got the message)
+   *   are dropped even if they arrive after the release. This length is not reported to the engine, so the input_held discontinuity after the release is that much shorter. Its size is
+   *   the render quanta (128 samples each) during one port round trip, and can grow by however long the main thread was busy just before the release. Handing the queue loss length to the released core would become a full discard, so it is not counted.
+   * - A capture the pump already sent reaches the worker before the release, and the held core drops it.
+   * Otherwise (not held, not started, during the permission prompt, during pause or stop) it only sends the ordered request.
    */
   async releaseInput(): Promise<void> {
     if (this.disposed) throw new Error('tellus_capture_disposed');
     const held = this.inputHeld;
     const change = ++this.inputHoldChanges;
     this.inputHeld = false;
-    const cancelling = held && this.state === 'running' && this.tap !== undefined;
-    const epoch = cancelling ? this.cancel() : this.epoch;
-    try { await this.request({ operation: 'releaseInput' }, epoch); }
-    catch (error) { if (change === this.inputHoldChanges) this.inputHeld = held; throw error; }
-    finally {
-      if (cancelling && epoch === this.epoch && this.state === 'running') this.tap?.port.postMessage({ active: true, epoch });
+    if (held && this.state === 'running' && this.tap !== undefined) {
+      this.tap.port.postMessage({ active: true, epoch: this.epoch, generation: ++this.captureGeneration });
+      const epoch = this.epoch;
+      for (let pending = this.queue.shift(); pending; pending = this.queue.shift()) {
+        const { frame, droppedSamples } = pending;
+        void this.request<DeliveredChunk[]>({ operation: 'capture', samples: frame.samples, rate: frame.nativeRate, timestamp: frame.timestamp, droppedSamples }, frame.epoch)
+          .catch((error) => { if (epoch === this.epoch) this.fail(error); });
+      }
+      // The fractional remainder of the queue loss length also belongs to the hold span, so it is not carried past the release.
+      this.queue.clear();
+    }
+    try {
+      await this.request({ operation: 'releaseInput' });
+      this.confirmedInputHeld = false;
+    } catch (error) {
+      if (change === this.inputHoldChanges) this.inputHeld = this.confirmedInputHeld;
+      throw error;
     }
   }
 
