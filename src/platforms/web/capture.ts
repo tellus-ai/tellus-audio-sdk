@@ -28,10 +28,9 @@ export class BrowserCapture implements AudioCapture {
   private disposed = false;
   private denoiseEnabled: boolean;
   private denoiseUpdates = 0;
-  // The input hold state the wrapper wants. holdInput changes it synchronously before sending, so a release can see a hold that has not finished yet.
+  // The input hold state the wrapper wants. holdInput and releaseInput change it synchronously before sending, so a later release sees a hold that has not finished yet at call time.
   private inputHeld = false;
   private inputHoldChanges = 0;
-  private pendingHold?: Promise<void>;
   // Configured denoise settings stay here until they reach native, and start applies them once. A runtime change replaces them, and native keeps the values across stop and start.
   // Only a successful start application or runtime change clears them, so failed changes never drop the configured value, even when they overlap.
   private readonly unappliedDenoiseSettings: Partial<Record<DenoiseSetting, number>>;
@@ -248,9 +247,7 @@ export class BrowserCapture implements AudioCapture {
     const previous = this.inputHeld;
     const change = ++this.inputHoldChanges;
     this.inputHeld = true;
-    const hold = this.request<void>({ operation: 'holdInput' });
-    this.pendingHold = hold.catch(() => {});
-    try { await hold; }
+    try { await this.request<void>({ operation: 'holdInput' }); }
     catch (error) {
       // Revert only when no newer hold or release exists.
       if (change === this.inputHoldChanges) this.inputHeld = previous;
@@ -259,26 +256,22 @@ export class BrowserCapture implements AudioCapture {
   }
 
   /**
-   * While held, cuts the epoch like reset(), requests the release, and reactivates the tap. The length of the discarded queued capture reaches the engine through droppedSamples.
-   * When not held, only sends the ordered request and leaves queued capture alone (cutting the epoch would discard live audio and reset the adaptive state).
+   * Reads the desired hold state (including an in-flight hold) at call time and sends the request right away, so hold and release reach the worker in call order.
+   * While held and with a running tap (the only time captures queue up), cuts the epoch like reset() to discard the queued captures from the hold, requests the release, and reactivates the tap.
+   * The length of the discarded captures is not reported to the engine (queue.clear() also clears the accumulated droppedSamples, same as reset()).
+   * Otherwise it only sends the ordered request and cuts neither queued capture nor an in-flight start, pause or stop (cutting the epoch would make that request stale or discard live audio).
    */
   async releaseInput(): Promise<void> {
-    // The outcome of an in-flight hold (including an unsupported failure) must settle first to decide whether to cut the epoch or report unsupported first.
-    await this.pendingHold;
     if (this.disposed) throw new Error('tellus_capture_disposed');
     const held = this.inputHeld;
     const change = ++this.inputHoldChanges;
     this.inputHeld = false;
-    if (!held) {
-      try { await this.request({ operation: 'releaseInput' }); }
-      catch (error) { if (change === this.inputHoldChanges) this.inputHeld = held; throw error; }
-      return;
-    }
-    const epoch = this.cancel();
+    const cancelling = held && this.state === 'running' && this.tap !== undefined;
+    const epoch = cancelling ? this.cancel() : this.epoch;
     try { await this.request({ operation: 'releaseInput' }, epoch); }
     catch (error) { if (change === this.inputHoldChanges) this.inputHeld = held; throw error; }
     finally {
-      if (epoch === this.epoch && this.state === 'running') this.tap?.port.postMessage({ active: true, epoch });
+      if (cancelling && epoch === this.epoch && this.state === 'running') this.tap?.port.postMessage({ active: true, epoch });
     }
   }
 

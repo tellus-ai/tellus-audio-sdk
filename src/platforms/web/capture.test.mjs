@@ -827,18 +827,78 @@ test('release while not held is a plain ordered request that keeps queued captur
   await capture.dispose();
 });
 
-test('release called while the hold request is pending sees the hold and cuts the epoch', async () => {
+// Mutation caught: if release waits for the in-flight hold before reading the desired state and requesting, it cuts later than the hold or reorders, and this goes RED.
+test('release called while the hold request is pending sees the hold at call time, cuts the epoch and is requested after it', async () => {
   let accept;
-  const { capture, cancels } = await startedSession({ holdInput: () => new Promise((resolve) => { accept = resolve; }) });
+  const { capture, cancels, epochs } = await startedSession({ holdInput: () => new Promise((resolve) => { accept = resolve; }) });
   const holding = capture.holdInput();
   const releasing = capture.releaseInput();
   await flush();
-  assert.deepEqual(cancels, [], 'release waits for the hold before deciding');
+  assert.equal(cancels.length, 1, 'the desired state at call time is held');
+  assert.deepEqual(epochs.filter(([operation]) => operation === 'holdInput' || operation === 'releaseInput'),
+    [['holdInput', 0], ['releaseInput', cancels[0]]]);
   accept();
   await holding;
   await releasing;
-  assert.equal(cancels.length, 1);
   await capture.dispose();
+});
+
+// Mutation caught: if release waits for the in-flight hold before requesting, the second hold issued meanwhile reaches the worker first and this goes RED.
+test('hold, release, hold reach the worker in call order and leave the wrapper held', async () => {
+  const accepts = [];
+  const { capture, cancels, commands } = await startedSession({ holdInput: () => new Promise((resolve) => { accepts.push(resolve); }) });
+  const calls = [capture.holdInput(), capture.releaseInput(), capture.holdInput()];
+  await flush();
+  assert.deepEqual(commands.filter((command) => command === 'holdInput' || command === 'releaseInput'), ['holdInput', 'releaseInput', 'holdInput']);
+  accepts.forEach((accept) => accept());
+  await Promise.all(calls);
+  const cancelsBeforeRelease = cancels.length;
+  await capture.releaseInput();
+  assert.equal(cancels.length, cancelsBeforeRelease + 1, 'the last call was a hold, so the next release is a held release');
+  await capture.dispose();
+});
+
+// Mutation caught: if a held release cuts the epoch even when not running, start after the permission prompt sees the epoch change and closes the microphone, and this goes RED.
+test('release while held during the microphone permission prompt keeps start opening the microphone', async () => {
+  const { capture, permissions, nodes, cancels, epochs } = environment();
+  await capture.applyAuthorization('permit');
+  await capture.holdInput();
+  const starting = capture.start(() => {});
+  await flush();
+  await capture.releaseInput();
+  assert.deepEqual(cancels, [], 'no capture is queued before the tap exists');
+  const microphone = stream();
+  permissions[0](microphone);
+  await starting;
+  assert.equal(microphone.track.stopped, false);
+  assert.equal(nodes.length, 1, 'the microphone tap is created');
+  assert.deepEqual(nodes[0].controls.at(-1), { active: true, epoch: 0 });
+  assert.deepEqual(epochs.filter(([operation]) => ['holdInput', 'start', 'releaseInput'].includes(operation)),
+    [['holdInput', 0], ['start', 0], ['releaseInput', 0]]);
+  await capture.dispose();
+});
+
+// Mutation caught: if a held release cuts the epoch during pause or stop, the in-flight request carries the old epoch (the worker drops it as stale) and this goes RED.
+test('release while held never makes an in-flight pause or stop stale', async () => {
+  for (const control of ['pause', 'stop']) {
+    let finish;
+    let blocked = false;
+    const result = control === 'stop' ? [] : undefined;
+    // Only the first request is held back. The stop that dispose calls again finishes immediately.
+    const block = () => (blocked ? result : (blocked = true, new Promise((resolve) => { finish = resolve; })));
+    const { capture, cancels, epochs } = await startedSession({ [control]: block });
+    await capture.holdInput();
+    const controlling = capture[control]();
+    await flush();
+    const releasing = capture.releaseInput();
+    await flush();
+    finish(result);
+    await Promise.all([controlling, releasing]);
+    const controlEpoch = epochs.find(([operation]) => operation === control)[1];
+    assert.equal(cancels.at(-1), controlEpoch, `${control} stays on the latest epoch`);
+    assert.deepEqual(epochs.find(([operation]) => operation === 'releaseInput'), ['releaseInput', controlEpoch], control);
+    await capture.dispose();
+  }
 });
 
 test('a failed hold reverts the desired state so release does not cancel', async () => {
