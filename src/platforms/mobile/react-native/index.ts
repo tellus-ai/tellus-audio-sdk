@@ -78,6 +78,15 @@ function authorizationStatus(raw: string): EngineAuthorizationStatus {
     conversationId: status.conversation_id, connectionId: status.connection_id };
 }
 
+// Nitro prefixes the native function name onto the old-kit error (`holdInput: tellus_input_hold_unsupported`); normalise it to the documented exact string and rethrow anything else unchanged.
+async function callHoldNative(call: () => Promise<void>): Promise<void> {
+  try { await call(); }
+  catch (error) {
+    if (error instanceof Error && error.message.includes('tellus_input_hold_unsupported')) throw new Error('tellus_input_hold_unsupported');
+    throw error;
+  }
+}
+
 /** Connects one OS microphone to an authorized Rust session. The data callback receives only encoded transport payloads. */
 class NativeAudioCapture implements AudioCapture {
   private native = NitroModules.createHybridObject<TellusCapture>('TellusCapture');
@@ -254,7 +263,7 @@ class NativeAudioCapture implements AudioCapture {
     await this.ready;
     if (this.disposed) throw new Error('capture_disposed');
     if (typeof this.native.holdInput !== 'function') throw new Error('tellus_input_hold_unsupported');
-    await this.native.holdInput();
+    await callHoldNative(() => this.native.holdInput!());
   }
   // Unlike reset, this touches neither receiving nor the revision: while held the core emits no chunks and native blocks delivery
   // and reopens it, and a release on a non-held session is a no-op that delivers chunks as before and cancels no earlier start or setting change. The cancellation rule is the same as holdInput's.
@@ -263,7 +272,7 @@ class NativeAudioCapture implements AudioCapture {
     await this.ready;
     if (this.disposed) throw new Error('capture_disposed');
     if (typeof this.native.releaseInput !== 'function') throw new Error('tellus_input_hold_unsupported');
-    await this.native.releaseInput();
+    await callHoldNative(() => this.native.releaseInput!());
   }
   async dispose(): Promise<void> {
     if (this.disposed) return;

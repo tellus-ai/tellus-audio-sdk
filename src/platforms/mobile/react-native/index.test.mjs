@@ -177,6 +177,30 @@ test('mobile rejects holdInput and releaseInput with tellus_input_hold_unsupport
   await assert.rejects(capture.releaseInput(), /capture_disposed/);
 });
 
+test('holdInput and releaseInput reject with the exact tellus_input_hold_unsupported when the Nitro-prefixed old-kit error comes back (sync throw and rejected promise)', async () => {
+  const { native, create } = fixture();
+  const capture = await create();
+  native.holdInput = () => { throw new Error('holdInput: tellus_input_hold_unsupported'); };
+  native.releaseInput = async () => { throw new Error('releaseInput: tellus_input_hold_unsupported'); };
+  await assert.rejects(capture.holdInput(), error => error.message === 'tellus_input_hold_unsupported');
+  await assert.rejects(capture.releaseInput(), error => error.message === 'tellus_input_hold_unsupported');
+  native.holdInput = async () => { throw new Error('holdInput: tellus_input_hold_unsupported'); };
+  native.releaseInput = () => { throw new Error('releaseInput: tellus_input_hold_unsupported'); };
+  await assert.rejects(capture.holdInput(), error => error.message === 'tellus_input_hold_unsupported');
+  await assert.rejects(capture.releaseInput(), error => error.message === 'tellus_input_hold_unsupported');
+});
+
+test('holdInput and releaseInput pass non-old-kit errors through unchanged', async () => {
+  const { native, create } = fixture();
+  const capture = await create();
+  const disposed = new Error('holdInput: capture_disposed');
+  const boom = new Error('boom');
+  native.holdInput = () => { throw disposed; };
+  native.releaseInput = async () => { throw boom; };
+  await assert.rejects(capture.holdInput(), error => error === disposed);
+  await assert.rejects(capture.releaseInput(), error => error === boom);
+});
+
 test('mobile forwards holdInput and releaseInput to native once each, in call order, after the initial configure', async () => {
   const { native, create } = fixture();
   let configured;
