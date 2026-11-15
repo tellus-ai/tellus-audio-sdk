@@ -75,6 +75,29 @@ await capture.setDenoiseAttenuationLimitDb(9);
 
 `getStatus()`의 `closeTalkThresholdDb`·`denoiseAttenuationLimitDb`는 선택 필드이며, 지원하지 않는 엔진에서는 없습니다(`undefined`). 범위를 벗어나거나 유한하지 않은 값은 `invalid_close_talk_threshold_db`·`invalid_denoise_attenuation_limit_db`. 이 API는 엔진 v0.4.5 이상이 필요하며, 구형 kit에서는 `tellus_close_talk_threshold_unsupported`·`tellus_denoise_attenuation_limit_unsupported`로 Promise를 거부합니다. C++ 글루는 약한 참조로 엔진 심볼을 찾고, podspec의 `-Wl,-U` 플래그로 구형 라이브러리와도 링크됩니다.
 
+## close_talk 튜닝(유지 시간·유지 폭·레벨 여유·학습 레벨)
+
+```ts
+const engine = await AudioEngine.init({
+  denoiseMode: 'close_talk',
+  closeTalkHoldMs: 250,               // 열린 게이트 유지 시간, 기본 250 (0..=2000 ms)
+  closeTalkKeepGapDb: 4,              // 유지 기준 = 열림 임계값 - 폭, 기본 4 (0..=20 dB)
+  closeTalkLevelMarginDb: 2,          // 레벨 >= 학습값 - 여유면 근거, 기본 2 (0..=20 dB)
+  closeTalkLearnedLevelDbfs: -42,     // 학습 레벨 주입, -100..=0 또는 null(기본)
+});
+const capture = engine.createCapture();
+await capture.setCloseTalkHoldMs(400);
+await capture.setCloseTalkKeepGapDb(6);
+await capture.setCloseTalkLevelMarginDb(3);
+await capture.setCloseTalkLearnedLevelDbfs(null); // 학습값 지우기
+```
+
+네 setter는 다음 10 ms hop부터 적용되며 보관 중인 오디오를 버리지 않습니다. 기본값은 이전 상수와 같아 setter를 부르지 않으면 출력이 바뀌지 않습니다. 구형 kit은 configure가 새 키를 거부하므로 초기 설정도 임계값처럼 configure 뒤 setter로 적용하고, 함수가 없으면 `tellus_close_talk_hold_unsupported`·`tellus_close_talk_keep_gap_unsupported`·`tellus_close_talk_level_margin_unsupported`·`tellus_close_talk_learned_level_unsupported`로 Promise를 거부합니다. 범위를 벗어난 값은 `invalid_close_talk_hold_ms: expected a finite value within 0..=2000`, `invalid_close_talk_keep_gap_db: expected a finite value within 0..=20`, `invalid_close_talk_level_margin_db: expected a finite value within 0..=20`, `invalid_close_talk_learned_level_dbfs: expected a finite value within -100..=0 or null`입니다. C++ 글루는 `tellus_audio_session_set_close_talk_hold_ms`·`..._keep_gap_db`·`..._level_margin_db`·`..._learned_level_dbfs`·`tellus_audio_session_clear_close_talk_learned_level`(`null`)을 약한 참조로 찾으며, podspec의 `-Wl,-U` 플래그로 구형 라이브러리와도 링크됩니다(Android는 기존 약한 심볼과 같은 방식입니다).
+
+`getStatus()`는 `closeTalkHoldMs`·`closeTalkKeepGapDb`·`closeTalkLevelMarginDb`·`closeTalkLearnedLevelDbfs`(`number | null`)·`closeTalkLevelLearned`를 선택 필드로 보고하며 구형 엔진에서는 없습니다. 청크의 `closeTalkGate`는 게이트가 처리한 청크에만 `{ open, openRatio, lsnrDb, levelDbfs, learnedLevelDbfs }`로 채워지고 그 외에는 `null`입니다.
+
+학습 레벨은 denoise 켜기·끄기, close_talk↔general 전환, stop/start, pause/resume을 지나 세션 동안 유지됩니다. 지우는 방법은 `setCloseTalkLearnedLevelDbfs(null)`과 새 capture 객체뿐이므로, **입력 장치를 바꾸는 앱은 `null`로 학습 레벨을 지워야 합니다**. 새 capture 객체로 이어 가려면 앞 객체의 `getStatus().closeTalkLearnedLevelDbfs`를 새 객체의 `closeTalkLearnedLevelDbfs`로 넘깁니다(기록은 넘어가지 않고 주입값으로 시작합니다). 이 API는 새 엔진 kit이 필요합니다.
+
 ## 입력 hold
 
 앱의 업링크를 끄는 동안(예: TTS 재생) 입력을 보류합니다. 업링크를 끌 때 `holdInput()`, 다시 켤 때 `releaseInput()`을 호출하며, 지금까지 이 시점에 호출하던 `reset()`을 대체합니다.
