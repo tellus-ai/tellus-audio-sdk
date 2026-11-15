@@ -963,6 +963,10 @@ export class AudioCapture {
    * The native engine rejects other values.
    */
   setCloseTalkLearnedLevelDbfs(dbfs: number | null): void {
+    // undefined or a missing argument would reach napi as None and silently clear the learning, so only null clears.
+    if (dbfs !== null && (typeof dbfs !== 'number' || !Number.isFinite(dbfs) || dbfs < -100 || dbfs > 0)) {
+      throw new Error('invalid_close_talk_learned_level_dbfs: expected a finite value within -100..=0 or null');
+    }
     this.#requireCloseTalkLearnedLevelSupport();
     this.#native.setCloseTalkLearnedLevelDbfs(dbfs);
   }

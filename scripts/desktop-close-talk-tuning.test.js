@@ -72,3 +72,17 @@ test('desktop close-talk tuning passes native validation errors through', () => 
   const capture = new AudioCapture({});
   assert.throws(() => capture.setCloseTalkHoldMs(2001), { message: 'invalid_close_talk_hold_ms: expected a finite value within 0..=2000' });
 });
+
+test('desktop learned-level setter rejects undefined instead of letting native clear the learning', () => {
+  const calls = [];
+  const AudioCapture = wrapper(class {
+    setCloseTalkLearnedLevelDbfs(dbfs) { calls.push(dbfs); }
+  });
+  const capture = new AudioCapture({});
+  const message = 'invalid_close_talk_learned_level_dbfs: expected a finite value within -100..=0 or null';
+  assert.throws(() => capture.setCloseTalkLearnedLevelDbfs(undefined), { message });
+  assert.throws(() => capture.setCloseTalkLearnedLevelDbfs(), { message });
+  assert.throws(() => capture.setCloseTalkLearnedLevelDbfs(1), { message });
+  assert.throws(() => capture.setCloseTalkLearnedLevelDbfs('-10'), { message });
+  assert.deepEqual(calls, []);
+});

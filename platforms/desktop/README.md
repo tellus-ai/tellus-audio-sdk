@@ -138,12 +138,12 @@ const engine = await AudioEngine.init({
 });
 const capture = engine.createCapture();
 capture.setCloseTalkHoldMs(400);
-capture.setCloseTalkLearnedLevelDbfs(null); // 입력 장치를 바꾼 뒤
+capture.setCloseTalkLearnedLevelDbfs(null); // 학습 레벨을 직접 지울 때
 ```
 
 `closeTalkHoldMs`(유한한 0..2000 ms, 엔진 기본 250)는 열림 근거가 끊긴 뒤 게이트를 더 열어 두는 시간입니다. 늘리면 말끝이 덜 잘리지만 말 뒤의 소음도 더 남습니다. 닫힌 게이트는 값을 늘려도 새 근거 없이 다시 열리지 않습니다. `closeTalkKeepGapDb`(유한한 0..20 dB, 엔진 기본 4)는 열린 게이트를 유지하는 기준이 열림 임계값보다 낮은 폭이고, `closeTalkLevelMarginDb`(유한한 0..20 dB, 엔진 기본 2)는 학습한 내 말소리 레벨에서 이만큼 낮은 소리까지 열림 근거로 인정하는 폭입니다. 세 setter는 동기이고 다음 10 ms hop부터 적용되며 보관 중인 오디오와 학습 레벨은 유지합니다. SDK는 엔진 기본값을 주입하지 않습니다.
 
-학습 레벨은 capture 객체에 속합니다. pause/resume, stop/start, 음소거, hold, 마이크 재시작을 지나도 남고, general·denoise 꺼짐 중에 넣은 값은 저장해 두었다가 다음 close_talk 게이트가 이어 씁니다. `setCloseTalkLearnedLevelDbfs(dbfs)`는 학습 기록을 비우고 학습 레벨을 `dbfs`(유한한 -100..0 dBFS)로 두며, `null`이면 학습 레벨도 지웁니다. 이것과 새 capture만 학습을 지우므로 **입력 장치를 바꾸면 `setCloseTalkLearnedLevelDbfs(null)`을 부르세요.** 새 capture에서 학습을 이어 가려면 앞 capture의 `getStatus().closeTalkLearnedLevelDbfs`를 `closeTalkLearnedLevelDbfs` 설정으로 넘깁니다(기록은 넘어가지 않고 주입값으로 시작합니다).
+학습 레벨은 capture 객체에 속합니다. pause/resume, stop/start, 음소거, hold, 마이크 재시작을 지나도 남고, general·denoise 꺼짐 중에 넣은 값은 저장해 두었다가 다음 close_talk 게이트가 이어 씁니다. `setCloseTalkLearnedLevelDbfs(dbfs)`는 학습 기록을 비우고 학습 레벨을 `dbfs`(유한한 -100..0 dBFS)로 두며, `null`이면 학습 레벨도 지웁니다. 이것과 새 capture 외에는, 앞서 연 마이크와 장치 id가 다른 마이크가 열릴 때(`micDeviceId` 변경이나 OS 기본 입력 변경) 엔진이 학습을 스스로 지웁니다. 다른 마이크에서 배운 레벨은 맞지 않기 때문입니다. 새 capture에서 학습을 이어 가려면 앞 capture의 `getStatus().closeTalkLearnedLevelDbfs`를 `closeTalkLearnedLevelDbfs` 설정으로 넘깁니다(기록은 넘어가지 않고 주입값으로 시작합니다).
 
 `getStatus()`는 `closeTalkHoldMs`·`closeTalkKeepGapDb`·`closeTalkLevelMarginDb`(저장값), `closeTalkLearnedLevelDbfs`(게이트가 쓰는 학습 레벨, 게이트가 없으면 저장된 주입값, 없으면 `null`, stop 뒤에도 마지막 값), `closeTalkLevelLearned`(자체 학습 값일 때만 `true`)를 보고합니다. 출력 청크의 `closeTalkGate`는 그 청크의 마이크 오디오를 close_talk 게이트가 처리했을 때 `{ open, openRatio, lsnrDb, levelDbfs, learnedLevelDbfs }`이고 그 밖(general·denoise 꺼짐·음소거·hold·스피커 전용)에는 `null`입니다. 값은 청크 오디오를 낸 10 ms hop의 판정이라 게이트 보류(300 ms)가 반영되어 있습니다. 모든 상태 필드와 `closeTalkGate`는 선택 필드이고 지원하지 않는 엔진에서는 없습니다(`undefined`).
 
