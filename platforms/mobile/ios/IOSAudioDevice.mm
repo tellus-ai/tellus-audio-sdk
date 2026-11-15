@@ -221,7 +221,8 @@ public:
           [[AVAudioSession sharedInstance] setPreferredInput:nil error:nil];
           _ownsInputPreference = false;
         }
-        [[AVAudioSession sharedInstance] setActive:NO withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:nil];
+        // Media that capture interrupted stays paused; notifying others would let it resume on stop.
+        [[AVAudioSession sharedInstance] setActive:NO withOptions:0 error:nil];
         _ownsCapture = false;
         captureInUse = false;
       }
