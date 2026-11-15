@@ -70,7 +70,7 @@ Windows 시험용 엔진·SDK checkout과 로컬 native kit 연결, 장치·재�
 
 ### 일시정지 중 녹화 오디오 연결 유지 (`audioPauseMode`)
 
-기본값은 `'abort'`로, 일시정지 때 녹화 오디오 연결을 끊고 재개하려면 새 연결이 필요합니다. `'keepalive'`는 같은 연결을 유지합니다. 새 native kit가 필요하며, 지원 여부는 `recorder.recordingAudioPauseKeepaliveSupported`로 확인합니다.
+기본값은 `'abort'`로, 일시정지 때 녹화 오디오 연결을 끊고 재개하려면 새 연결이 필요합니다. `'keepalive'`는 같은 연결을 유지합니다. 엔진 v0.4.6 이상의 native kit가 필요하며, 지원 여부는 `recorder.recordingAudioPauseKeepaliveSupported`로 확인합니다.
 
 ```ts
 if (recorder.recordingAudioPauseKeepaliveSupported) {
@@ -88,7 +88,7 @@ if (recorder.recordingAudioPauseKeepaliveSupported) {
 - 네이티브 입력 전용입니다. 브라우저 마이크나 마이크 대체 경로는 `recording_audio_requires_native_input`으로 거부합니다.
 - 지원하지 않는 실행 파일에 `'keepalive'`를 요청하면 `start`가 invalid로 거절합니다 (`audioPauseMode must be abort or keepalive`, `audioPauseMode keepalive requires recording audio pause keepalive support`).
 
-새 실패 코드: `recording_audio_invalid_pause_mode`(`pauseMode`가 `'abort'`·`'keepalive'`가 아님), `recording_audio_generation_unavailable`(재개 때 믹서 녹화 세대를 새로 받지 못함). 기존 코드는 바뀌지 않았습니다. 엔진 릴리스 전의 구버전 native에서는 `'keepalive'`가 무시되거나 거부될 수 있습니다.
+새 실패 코드: `recording_audio_invalid_pause_mode`(`pauseMode`가 `'abort'`·`'keepalive'`가 아님), `recording_audio_generation_unavailable`(재개 때 믹서 녹화 세대를 새로 받지 못함). 기존 코드는 바뀌지 않았습니다. 엔진 v0.4.6 전의 구버전 native에서는 `'keepalive'`가 무시되거나 거부될 수 있습니다.
 
 ## 디지털 게인
 
@@ -150,7 +150,7 @@ capture.releaseInput();
 - hold 중 마이크는 녹음 경로에서도 무음이며, `enableRawAudio`의 `rawAudio.mic`도 음소거(`setMicMuted()`)와 같게 무음입니다(처리된 마이크와 같은 장치 청크 경계). 녹음 경로(화면 녹화 믹스 오디오·녹음 버퍼)는 청크 간격과 시스템 오디오(스피커 소리)를 그대로 유지합니다.
 - hold 중에는 VAD가 돌지 않으므로 `vadGateState`·`vadIsSpeech`는 hold 직전 값을 유지합니다. hold 시점에 버려진 청크는 `deliveryDroppedChunks`·`deliveryDroppedSamples`에 집계됩니다.
 - 녹음 버퍼를 붙여 둔 경우 release 뒤 첫 실시간 패킷에 작은 잔여(최대 약 −43 dBFS)가 실릴 수 있고, 믹서 청크 약 2개보다 짧은 hold는 녹음용 인코더를 다시 만들어 녹음 인코더가 재시작됩니다(엔진 `docs/desktop-api.md` 참고).
-- 이 API는 엔진 v0.4.5 다음 릴리즈 이상이 필요하며, 구형 kit에서는 `input_hold_unsupported: install a native engine with input hold support` 오류를 던집니다.
+- 이 API는 엔진 v0.4.6 이상이 필요하며, 구형 kit에서는 `input_hold_unsupported: install a native engine with input hold support` 오류를 던집니다.
 
 ## 마이크·스피커 따로 음소거
 

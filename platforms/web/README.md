@@ -91,4 +91,4 @@ await capture.releaseInput();  // 업링크 켬
 - release 뒤에는 hold 이전·도중의 소리가 출력되지 않습니다. 단 release 때 AEC가 실제로 처리 중이면(엔진 재생(`playback()`·`playbackEncoded()`)이 진행 중이라 render reference가 들어오고 있을 때) release 뒤 AEC 출력 앞 25 ms가 무음이 되고 그 뒤 hold 중 소리의 잔향이 1e-3 peak(약 −60 dBFS) 아래로 감쇠하며 남을 수 있습니다(250 ms 안에 정확히 0). AEC가 처리 중이 아니면 경계는 정확히 0입니다. 엔진 재생이 끝나면 엔진이 AEC를 새로 만들므로, 보통 흐름(TTS를 엔진 재생으로 틀고 재생이 끝난 뒤 release)에서는 이 구간이 없습니다. 앱이 TTS를 자체 플레이어로 틀면 모바일·웹 AEC는 켜지지 않습니다.
 - hold·release는 호출한 순서대로 적용되며, 이후의 reset/pause/denoise 토글로 취소되지 않습니다.
 - hold 중에도 `reset()`과 `setDenoiseEnabled()`는 기존 동작 그대로이며 hold를 풀지 않습니다. hold를 푸는 것은 `releaseInput()`뿐입니다.
-- 이 API는 엔진 v0.4.5 다음 엔진 릴리즈 이상이 필요하며, 구형 kit에서는 `tellus_input_hold_unsupported`로 거부합니다. WASM export가 없으면 호출 전에 확인합니다.
+- 이 API는 엔진 v0.4.6 이상이 필요하며, 구형 kit에서는 `tellus_input_hold_unsupported`로 거부합니다. WASM export가 없으면 호출 전에 확인합니다.
