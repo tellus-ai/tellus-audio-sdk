@@ -87,7 +87,7 @@ await capture.setCloseTalkLearnedLevelDbfs(-40);   // 값을 주입
 await capture.setCloseTalkLearnedLevelDbfs(null);  // 학습을 지움
 ```
 
-setter는 `setCloseTalkThresholdDb`와 같이 다음 10 ms hop부터 적용되고 보관 중인 오디오와 학습값을 버리지 않습니다. 시작 전에 정한 값은 첫 `start()`에서 한 번 적용되며 더 새로운 런타임 값을 덮어쓰지 않습니다. 범위를 벗어난 값은 `invalid_close_talk_hold_ms: expected a finite value within 0..=2000`(`..._keep_gap_db`·`..._level_margin_db`는 0..=20, `invalid_close_talk_learned_level_dbfs`는 `-100..=0 or null`)로 거부합니다. 이 API가 없는 구형 kit에서는 `tellus_close_talk_hold_unsupported`·`tellus_close_talk_keep_gap_unsupported`·`tellus_close_talk_level_margin_unsupported`·`tellus_close_talk_learned_level_unsupported`로 거부합니다.
+setter는 `setCloseTalkThresholdDb`와 같이 다음 10 ms hop부터 적용되고 보관 중인 오디오와 학습값을 버리지 않습니다. 시작 전에 정한 값은 첫 `start()`에서 한 번 적용되며 더 새로운 런타임 값을 덮어쓰지 않습니다. 범위를 벗어난 값은 `invalid_close_talk_hold_ms: expected a finite value within 0..=2000`(`..._keep_gap_db`·`..._level_margin_db`는 0..=20, `invalid_close_talk_learned_level_dbfs`는 `-100..=0 or null`)로 거부합니다. 이 API가 없는 구형 kit에서는 `tellus_close_talk_hold_unsupported`·`tellus_close_talk_keep_gap_unsupported`·`tellus_close_talk_level_margin_unsupported`·`tellus_close_talk_learned_level_unsupported`로 거부합니다. 이 API는 엔진 v0.4.8 이상이 필요합니다.
 
 학습 레벨은 denoise 토글, stop/start, pause/resume, reset을 지나 capture 객체 수명 동안 남습니다. 지우는 것은 `setCloseTalkLearnedLevelDbfs(null)`과 새 capture 객체뿐이므로 **입력 장치를 바꾸는 앱은 null로 호출해야 합니다.** 새 capture로 이어 가려면 앞 객체의 `getStatus().closeTalkLearnedLevelDbfs`를 새 `closeTalkLearnedLevelDbfs`로 넘기십시오(기록은 넘어가지 않고 주입값으로 시작합니다).
 
