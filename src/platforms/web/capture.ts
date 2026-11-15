@@ -6,7 +6,7 @@ import type { AudioDeviceStatus } from '../../bindings/typescript/audio-devices.
 import { validateGainDb } from '../../bindings/typescript/audio-gain.js';
 import { CaptureQueue, type CaptureFrame } from './capture-queue.js';
 import { audioDeviceError } from './devices.js';
-import { validateCloseTalkThresholdDb, validateDenoiseAttenuationLimitDb, type DeliveredChunk, type WorkerCommand, type WorkerStatus } from './protocol.js';
+import { validateCloseTalkHoldMs, validateCloseTalkKeepGapDb, validateCloseTalkLearnedLevelDbfs, validateCloseTalkLevelMarginDb, validateCloseTalkThresholdDb, validateDenoiseAttenuationLimitDb, type DeliveredChunk, type WorkerCommand, type WorkerStatus } from './protocol.js';
 import { WorkerClient } from './worker-client.js';
 
 interface NativeAuthorizationStatus {
@@ -17,9 +17,23 @@ interface NativeAuthorizationStatus {
   connection_id?: string;
 }
 
-type DenoiseSetting = 'closeTalkThresholdDb' | 'denoiseAttenuationLimitDb';
+type DenoiseSetting = 'closeTalkThresholdDb' | 'denoiseAttenuationLimitDb' | 'closeTalkHoldMs' | 'closeTalkKeepGapDb' | 'closeTalkLevelMarginDb' | 'closeTalkLearnedLevelDbfs';
+/** The order in which start sends them to native after the session is created. */
+const DENOISE_SETTINGS: DenoiseSetting[] = ['closeTalkThresholdDb', 'denoiseAttenuationLimitDb', 'closeTalkHoldMs', 'closeTalkKeepGapDb', 'closeTalkLevelMarginDb', 'closeTalkLearnedLevelDbfs'];
 
 /** Manages main-thread lifecycle and OS routing. Rust produces the processed samples. */
+/** Validates the value with the same rules as core and builds the worker command. Invalid values are rejected before reaching the worker. */
+function denoiseSettingCommand(setting: DenoiseSetting, value: number | null): WorkerCommand {
+  switch (setting) {
+    case 'closeTalkThresholdDb': return { operation: setting, db: validateCloseTalkThresholdDb(value as number) };
+    case 'denoiseAttenuationLimitDb': return { operation: setting, db: validateDenoiseAttenuationLimitDb(value as number) };
+    case 'closeTalkHoldMs': return { operation: setting, ms: validateCloseTalkHoldMs(value as number) };
+    case 'closeTalkKeepGapDb': return { operation: setting, db: validateCloseTalkKeepGapDb(value as number) };
+    case 'closeTalkLevelMarginDb': return { operation: setting, db: validateCloseTalkLevelMarginDb(value as number) };
+    case 'closeTalkLearnedLevelDbfs': return { operation: setting, dbfs: validateCloseTalkLearnedLevelDbfs(value) };
+  }
+}
+
 export class BrowserCapture implements AudioCapture {
   private readonly ready: Promise<number>;
   private sessionId = 0;
@@ -37,7 +51,7 @@ export class BrowserCapture implements AudioCapture {
   private captureGeneration = 0;
   // Configured denoise settings stay here until they reach native, and start applies them once. A runtime change replaces them, and native keeps the values across stop and start.
   // Only a successful start application or runtime change clears them, so failed changes never drop the configured value, even when they overlap.
-  private readonly unappliedDenoiseSettings: Partial<Record<DenoiseSetting, number>>;
+  private readonly unappliedDenoiseSettings: Partial<Record<DenoiseSetting, number | null>>;
   private readonly denoiseSettingChanges = new Set<Promise<void>>();
   private callback?: AudioCaptureCallback;
   private stream?: MediaStream;
@@ -60,7 +74,10 @@ export class BrowserCapture implements AudioCapture {
     this.queue = new CaptureQueue(config.processing?.sampleRate ?? 16000);
     this.deviceStatus = { source: 'microphone', code: 'pending', ...(config.micDeviceId === undefined ? {} : { requestedDeviceId: config.micDeviceId }) };
     this.denoiseEnabled = !!config.denoiseEnabled;
-    this.unappliedDenoiseSettings = { closeTalkThresholdDb: config.closeTalkThresholdDb, denoiseAttenuationLimitDb: config.denoiseAttenuationLimitDb };
+    this.unappliedDenoiseSettings = { closeTalkThresholdDb: config.closeTalkThresholdDb, denoiseAttenuationLimitDb: config.denoiseAttenuationLimitDb,
+      closeTalkHoldMs: config.closeTalkHoldMs, closeTalkKeepGapDb: config.closeTalkKeepGapDb, closeTalkLevelMarginDb: config.closeTalkLevelMarginDb,
+      // null means no injection (the default), so there is nothing to send.
+      closeTalkLearnedLevelDbfs: config.closeTalkLearnedLevelDbfs ?? undefined };
     this.ready = client.request<number>(0, 0, { operation: 'create', config }).then((id) => {
       this.sessionId = id;
       if (this.epoch) client.cancel(id, this.epoch);
@@ -121,11 +138,11 @@ export class BrowserCapture implements AudioCapture {
     void resumed.catch(() => {});
     try {
       if (requestedDeviceId !== undefined && (typeof requestedDeviceId !== 'string' || !requestedDeviceId.trim())) throw audioDeviceError(new Error('tellus_microphone_invalid_device_id'), 'microphone', typeof requestedDeviceId === 'string' ? requestedDeviceId : undefined);
-      for (const setting of ['closeTalkThresholdDb', 'denoiseAttenuationLimitDb'] as const) {
+      for (const setting of DENOISE_SETTINGS) {
         // Sends only what is still unapplied once in-flight runtime changes settle, so a configured value never lands after a newer runtime value.
         while (this.denoiseSettingChanges.size) await Promise.allSettled(this.denoiseSettingChanges);
-        const db = this.unappliedDenoiseSettings[setting];
-        if (db !== undefined) await this.setDenoiseSetting(setting, db, epoch);
+        const value = this.unappliedDenoiseSettings[setting];
+        if (value !== undefined) await this.setDenoiseSetting(setting, value, epoch);
       }
       await this.request({ operation: 'start' }, epoch);
       if (epoch !== this.epoch) return;
@@ -229,6 +246,10 @@ export class BrowserCapture implements AudioCapture {
       denoiseLoadFailed: status.denoise_load_failed, vadEnabled: !!this.config.vadEnabled,
       ...(typeof status.input_held === 'boolean' ? { inputHeld: status.input_held } : {}),
       closeTalkThresholdDb: status.close_talk_threshold_db ?? undefined, denoiseAttenuationLimitDb: status.denoise_attenuation_limit_db ?? undefined,
+      closeTalkHoldMs: status.close_talk_hold_ms ?? undefined, closeTalkKeepGapDb: status.close_talk_keep_gap_db ?? undefined,
+      closeTalkLevelMarginDb: status.close_talk_level_margin_db ?? undefined,
+      ...(status.close_talk_learned_level_dbfs === undefined ? {} : { closeTalkLearnedLevelDbfs: status.close_talk_learned_level_dbfs }),
+      ...(typeof status.close_talk_level_learned === 'boolean' ? { closeTalkLevelLearned: status.close_talk_level_learned } : {}),
       deviceStatus: [this.deviceStatus, ...(this.playbackDeviceStatus ? [this.playbackDeviceStatus] : [])],
       modelsLoaded: status.loadedModels,
     };
@@ -317,9 +338,26 @@ export class BrowserCapture implements AudioCapture {
     return this.setDenoiseSetting('denoiseAttenuationLimitDb', db);
   }
 
-  private async setDenoiseSetting(setting: DenoiseSetting, db: number, epoch = this.epoch): Promise<void> {
-    const validate = setting === 'closeTalkThresholdDb' ? validateCloseTalkThresholdDb : validateDenoiseAttenuationLimitDb;
-    const change = this.request({ operation: setting, db: validate(db) }, epoch).then(() => { this.unappliedDenoiseSettings[setting] = undefined; });
+  setCloseTalkHoldMs(ms: number): Promise<void> {
+    return this.setDenoiseSetting('closeTalkHoldMs', ms);
+  }
+
+  setCloseTalkKeepGapDb(db: number): Promise<void> {
+    return this.setDenoiseSetting('closeTalkKeepGapDb', db);
+  }
+
+  setCloseTalkLevelMarginDb(db: number): Promise<void> {
+    return this.setDenoiseSetting('closeTalkLevelMarginDb', db);
+  }
+
+  /** null clears both the injected learned level and the gate's own learned value. Apps that switch the input device call it with null. */
+  setCloseTalkLearnedLevelDbfs(dbfs: number | null): Promise<void> {
+    return this.setDenoiseSetting('closeTalkLearnedLevelDbfs', dbfs);
+  }
+
+  private async setDenoiseSetting(setting: DenoiseSetting, value: number | null, epoch = this.epoch): Promise<void> {
+    const command = denoiseSettingCommand(setting, value);
+    const change = this.request(command, epoch).then(() => { this.unappliedDenoiseSettings[setting] = undefined; });
     this.denoiseSettingChanges.add(change);
     try { await change; }
     finally { this.denoiseSettingChanges.delete(change); }

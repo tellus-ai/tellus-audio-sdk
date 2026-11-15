@@ -15,7 +15,7 @@ test('microphone runtime gain validates and forwards through the capture owner w
 });
 import { BrowserCapture } from '../../../platforms/web/runtime/platforms/web/capture.js';
 
-const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+const flush = async () => { for (let i = 0; i < 60; i++) await Promise.resolve(); };
 const stream = (deviceId, settings = {}) => {
   const track = { readyState: 'live', stopped: false, getSettings: () => ({ deviceId, ...settings }),
     stop() { this.stopped = true; }, addEventListener(_type, listener) { this.onended = listener; }, removeEventListener() { this.onended = undefined; } };
@@ -1046,4 +1046,79 @@ test('status reports inputHeld only when native reports a boolean', async () => 
     assert.equal('inputHeld' in status, expected !== undefined, 'the field is omitted, not false');
     await capture.dispose();
   }
+});
+
+const TUNING = [
+  ['closeTalkHoldMs', 'setCloseTalkHoldMs', 'ms', 300, 0, 2000, [-1, 2001, NaN, Infinity, null, '1'], /invalid_close_talk_hold_ms/, /tellus_close_talk_hold_unsupported/],
+  ['closeTalkKeepGapDb', 'setCloseTalkKeepGapDb', 'db', 6, 0, 20, [-1, 21, NaN, Infinity, null, '1'], /invalid_close_talk_keep_gap_db/, /tellus_close_talk_keep_gap_unsupported/],
+  ['closeTalkLevelMarginDb', 'setCloseTalkLevelMarginDb', 'db', 3, 0, 20, [-1, 21, NaN, Infinity, null, '1'], /invalid_close_talk_level_margin_db/, /tellus_close_talk_level_margin_unsupported/],
+  ['closeTalkLearnedLevelDbfs', 'setCloseTalkLearnedLevelDbfs', 'dbfs', -40, -100, 0, [-101, 1, NaN, Infinity, '1', undefined], /invalid_close_talk_learned_level_dbfs/, /tellus_close_talk_learned_level_unsupported/],
+];
+
+test('close-talk tuning setters validate before the worker and send values in order', async () => {
+  for (const [operation, setter, field, configured, low, high, invalid, invalidError] of TUNING) {
+    const values = [];
+    const { capture, commands } = environment({ [operation]: (command) => { values.push(command[field]); } });
+    for (const value of invalid) await assert.rejects(capture[setter](value), invalidError, `${operation} ${String(value)}`);
+    assert.equal(commands.includes(operation), false);
+    await capture[setter](low);
+    await capture[setter](high);
+    if (operation === 'closeTalkLearnedLevelDbfs') await capture[setter](null);
+    assert.deepEqual(values, operation === 'closeTalkLearnedLevelDbfs' ? [low, high, null] : [low, high]);
+    await capture.dispose();
+  }
+});
+
+test('configured close-talk tuning values are applied once, in order, between create and start, and never overwrite runtime changes', async () => {
+  const sent = [];
+  const responses = Object.fromEntries(TUNING.map(([operation, , field]) => [operation, (command) => { sent.push([operation, command[field]]); }]));
+  const configured = Object.fromEntries(TUNING.map(([operation, , , value]) => [operation, value]));
+  const { capture, permissions, commands } = environment(responses, configured);
+  const starting = capture.start(() => {});
+  await flush();
+  permissions[0](stream('mic-a'));
+  await starting;
+  assert.deepEqual(sent, TUNING.map(([operation, , , value]) => [operation, value]));
+  assert.deepEqual(commands.filter((c) => c === 'create' || c === 'start'), ['create', 'start']);
+  await capture.dispose();
+  sent.length = 0;
+  const early = environment(responses, configured);
+  await early.capture.setCloseTalkHoldMs(100);
+  await early.capture.setCloseTalkLearnedLevelDbfs(null);
+  const earlyStart = early.capture.start(() => {});
+  await flush();
+  early.permissions[0](stream('mic-a'));
+  await earlyStart;
+  assert.deepEqual(sent.filter(([operation]) => operation === 'closeTalkHoldMs' || operation === 'closeTalkLearnedLevelDbfs'), [['closeTalkHoldMs', 100], ['closeTalkLearnedLevelDbfs', null]]);
+  await early.capture.dispose();
+  sent.length = 0;
+  const nullConfig = environment(responses, { closeTalkLearnedLevelDbfs: null });
+  const nullStart = nullConfig.capture.start(() => {});
+  await flush();
+  nullConfig.permissions[0](stream('mic-a'));
+  await nullStart;
+  assert.deepEqual(sent, [], 'a null learned level means no injection');
+  await nullConfig.capture.dispose();
+});
+
+test('an unsupported configured close-talk tuning value fails start before native start', async () => {
+  for (const [operation, , , value, , , , , unsupportedError] of TUNING) {
+    const { capture, commands } = environment({ [operation]: () => { throw new Error(unsupportedError.source.replace(/\\/g, '')); } }, { [operation]: value });
+    await assert.rejects(capture.start(() => {}), unsupportedError);
+    assert.equal(commands.includes('start'), false);
+    await capture.dispose();
+  }
+});
+
+test('status maps close-talk tuning fields', async () => {
+  const { capture } = environment({ status: () => ({ lifecycle: 'stopped', denoise_enabled: false, denoise_loaded: false, vad_loaded: false,
+    close_talk_hold_ms: 250, close_talk_keep_gap_db: 4, close_talk_level_margin_db: 2, close_talk_learned_level_dbfs: -42.5, close_talk_level_learned: true }) });
+  const status = await capture.getStatus();
+  assert.deepEqual([status.closeTalkHoldMs, status.closeTalkKeepGapDb, status.closeTalkLevelMarginDb, status.closeTalkLearnedLevelDbfs, status.closeTalkLevelLearned], [250, 4, 2, -42.5, true]);
+  await capture.dispose();
+  const bare = environment({ status: () => ({ lifecycle: 'stopped', denoise_enabled: false, denoise_loaded: false, vad_loaded: false, close_talk_learned_level_dbfs: null }) });
+  const empty = await bare.capture.getStatus();
+  assert.equal(empty.closeTalkLearnedLevelDbfs, null);
+  assert.equal(empty.closeTalkLevelLearned, undefined, "absent on engines without tuning support");
+  await bare.capture.dispose();
 });

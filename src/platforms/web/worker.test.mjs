@@ -9,7 +9,7 @@ let instances = 0;
 // C ABI boundary double. Reports container bytes as model_id and records the configure JSON and loaded models.
 // Models in loadFailures fail to load; denoiseLoadFailed is the value core reports in its status.
 // closeTalkThreshold and denoiseAttenuationLimit add the wasm exports an engine with each setting has.
-function engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gains, thresholds, limits, closeTalkThreshold, denoiseAttenuationLimit, inputHold, holds }) {
+function engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gains, thresholds, limits, closeTalkThreshold, denoiseAttenuationLimit, inputHold, holds, tuning, tuningCalls }) {
   const heap = new ArrayBuffer(1 << 20);
   let next = 8;
   const module = {
@@ -19,6 +19,7 @@ function engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gai
     _free() {}, addFunction: () => 1, removeFunction() {}, UTF8ToString: () => 'native_failed',
     ...(closeTalkThreshold ? { _tellus_audio_session_set_close_talk_threshold_db() {} } : {}),
     ...(denoiseAttenuationLimit ? { _tellus_audio_session_set_denoise_attenuation_limit_db() {} } : {}),
+    ...Object.fromEntries((tuning ?? []).map((name) => [`_tellus_audio_session_${name}`, () => {}])),
     ...(inputHold ? { _tellus_audio_session_hold_input() {}, _tellus_audio_session_release_input() {} } : {}),
     ccall(name, _returnType, _argumentTypes, args) {
       const text = (pointer, length) => decoder.decode(module.HEAPU8.subarray(pointer, pointer + length));
@@ -32,6 +33,7 @@ function engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gai
       if (name === 'tellus_audio_session_configure') configured.push(JSON.parse(text(args[1], args[2])));
       if (name === 'tellus_audio_session_hold_input' || name === 'tellus_audio_session_release_input') holds.push([name, ...args]);
       if (name === 'tellus_audio_session_set_mic_gain_db') gains.push([...args]);
+      if (/^tellus_audio_session_(set_close_talk_(hold_ms|keep_gap_db|level_margin_db|learned_level_dbfs)|clear_close_talk_learned_level)$/.test(name)) tuningCalls.push([name.slice('tellus_audio_session_'.length), ...args.slice(1)]);
       if (name === 'tellus_audio_session_set_close_talk_threshold_db') thresholds.push([...args]);
       if (name === 'tellus_audio_session_set_denoise_attenuation_limit_db') limits.push([...args]);
       if (name === 'tellus_audio_session_model_key_request') reply({ public_key: 'b'.repeat(64) }, args[1], args[3]);
@@ -50,7 +52,7 @@ function engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gai
 }
 
 // Runs the worker module on a fresh worker global and initializes it with only the given encrypted models.
-async function worker(models, { loadFailures = [], denoiseLoadFailed = false, closeTalkThreshold = false, denoiseAttenuationLimit = false, inputHold = false } = {}) {
+async function worker(models, { loadFailures = [], denoiseLoadFailed = false, closeTalkThreshold = false, denoiseAttenuationLimit = false, inputHold = false, tuning = [] } = {}) {
   const responses = new Map();
   const configured = [];
   const loaded = [];
@@ -58,13 +60,14 @@ async function worker(models, { loadFailures = [], denoiseLoadFailed = false, cl
   const thresholds = [];
   const limits = [];
   const holds = [];
+  const tuningCalls = [];
   const scope = { postMessage: (response) => {
     const resolve = responses.get(response.id);
     if (typeof resolve !== 'function') throw new Error(`Unexpected worker response: ${response.id}`);
     resolve(response);
   } };
   globalThis.self = scope;
-  globalThis.tellusTestEngine = () => engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gains, thresholds, limits, closeTalkThreshold, denoiseAttenuationLimit, inputHold, holds });
+  globalThis.tellusTestEngine = () => engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gains, thresholds, limits, closeTalkThreshold, denoiseAttenuationLimit, inputHold, holds, tuning, tuningCalls });
   globalThis.fetch = async (url) => ({ ok: true, arrayBuffer: async () => encoder.encode(new URL(url).pathname.slice(1).replace('.temc', '')).buffer });
   await import(`../../../platforms/web/runtime/platforms/web/worker.js?instance=${++instances}`);
   let id = 0;
@@ -76,7 +79,7 @@ async function worker(models, { loadFailures = [], denoiseLoadFailed = false, cl
     wasmUrl: 'https://example.test/engine.wasm', ortModuleUrl: moduleUrl('export const env = { wasm: {} };'),
     ortWasmBaseUrl: 'https://example.test/ort/', encryptedModels: models.map((model) => `https://example.test/${model}.temc`) };
   assert.equal((await send(0, { operation: 'init', assets })).error, undefined);
-  return { send, configured, loaded, gains, thresholds, limits, holds, cancel: (sessionId, epoch) => scope.onmessage({ data: { cancel: sessionId, epoch } }) };
+  return { send, configured, loaded, gains, thresholds, limits, holds, tuningCalls, cancel: (sessionId, epoch) => scope.onmessage({ data: { cancel: sessionId, epoch } }) };
 }
 
 test('gain settings survive the worker native serializer and explicit auto gain overrides the old opt-in', async () => {
@@ -240,6 +243,44 @@ test('a denoise model load failure logs, still loads the VAD model and leaves no
   assert.equal(logged.length, 1);
   assert.match(logged[0][0], /tellus_denoise_load_failed/);
   assert.deepEqual((await send(sessionId, { operation: 'modelRequests' })).result, []);
+});
+
+const TUNING_EXPORTS = ['set_close_talk_hold_ms', 'set_close_talk_keep_gap_db', 'set_close_talk_level_margin_db', 'set_close_talk_learned_level_dbfs', 'clear_close_talk_learned_level'];
+
+test('close_talk 튜닝 setter는 export가 있으면 검증 후 native에 전달되고 이전 epoch 요청은 취소된다', async () => {
+  const { send, configured, tuningCalls } = await worker([], { tuning: TUNING_EXPORTS.map((name) => name) });
+  const { result: id } = await send(0, { operation: 'create', config: { closeTalkHoldMs: 300, closeTalkLearnedLevelDbfs: -40 } });
+  for (const key of ['closeTalkHoldMs', 'closeTalkKeepGapDb', 'closeTalkLevelMarginDb', 'closeTalkLearnedLevelDbfs']) assert.ok(!(key in configured[0]), `${key}는 configure JSON에 들어가지 않는다`);
+  for (const command of [
+    { operation: 'closeTalkHoldMs', ms: 300 }, { operation: 'closeTalkKeepGapDb', db: 5 }, { operation: 'closeTalkLevelMarginDb', db: 3 },
+    { operation: 'closeTalkLearnedLevelDbfs', dbfs: -40 }, { operation: 'closeTalkLearnedLevelDbfs', dbfs: null },
+  ]) assert.equal((await send(id, command)).error, undefined);
+  assert.deepEqual(tuningCalls, [['set_close_talk_hold_ms', 300], ['set_close_talk_keep_gap_db', 5], ['set_close_talk_level_margin_db', 3], ['set_close_talk_learned_level_dbfs', -40], ['clear_close_talk_learned_level']]);
+  for (const command of [{ operation: 'closeTalkHoldMs', ms: 300 }, { operation: 'closeTalkKeepGapDb', db: 5 }, { operation: 'closeTalkLevelMarginDb', db: 3 }, { operation: 'closeTalkLearnedLevelDbfs', dbfs: null }]) {
+    assert.match((await send(id, command, 1)).error, /tellus_capture_cancelled/);
+  }
+  for (const [command, pattern] of [
+    [{ operation: 'closeTalkHoldMs', ms: 2001 }, /invalid_close_talk_hold_ms: expected a finite value within 0\.\.=2000/],
+    [{ operation: 'closeTalkKeepGapDb', db: 21 }, /invalid_close_talk_keep_gap_db: expected a finite value within 0\.\.=20/],
+    [{ operation: 'closeTalkLevelMarginDb', db: -1 }, /invalid_close_talk_level_margin_db: expected a finite value within 0\.\.=20/],
+    [{ operation: 'closeTalkLearnedLevelDbfs', dbfs: 1 }, /invalid_close_talk_learned_level_dbfs: expected a finite value within -100\.\.=0 or null/],
+    [{ operation: 'closeTalkLearnedLevelDbfs', dbfs: Number.NaN }, /invalid_close_talk_learned_level_dbfs/],
+  ]) assert.match((await send(id, command)).error, pattern);
+  assert.equal(tuningCalls.length, 5);
+});
+
+test('close_talk 튜닝 export가 없는 엔진은 native 호출 없이 각 setter를 거부한다', async () => {
+  const { send, tuningCalls } = await worker([], { tuning: ['set_close_talk_hold_ms'] });
+  const { result: id } = await send(0, { operation: 'create', config: {} });
+  assert.equal((await send(id, { operation: 'closeTalkHoldMs', ms: 250 })).error, undefined);
+  assert.match((await send(id, { operation: 'closeTalkKeepGapDb', db: 4 })).error, /tellus_close_talk_keep_gap_unsupported/);
+  assert.match((await send(id, { operation: 'closeTalkLevelMarginDb', db: 2 })).error, /tellus_close_talk_level_margin_unsupported/);
+  assert.match((await send(id, { operation: 'closeTalkLearnedLevelDbfs', dbfs: -40 })).error, /tellus_close_talk_learned_level_unsupported/);
+  assert.match((await send(id, { operation: 'closeTalkLearnedLevelDbfs', dbfs: null })).error, /tellus_close_talk_learned_level_unsupported/);
+  const none = await worker([]);
+  const { result: other } = await none.send(0, { operation: 'create', config: {} });
+  assert.match((await none.send(other, { operation: 'closeTalkHoldMs', ms: 250 })).error, /tellus_close_talk_hold_unsupported/);
+  assert.deepEqual(tuningCalls, [['set_close_talk_hold_ms', 250]]);
 });
 
 test('a load error native did not record as a denoise load failure rejects the keys', async () => {
