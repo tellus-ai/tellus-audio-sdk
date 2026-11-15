@@ -126,6 +126,29 @@ capture.setDenoiseAttenuationLimitDb(9);
 
 `getStatus()`의 `closeTalkThresholdDb`·`denoiseAttenuationLimitDb`는 선택 필드이며, 지원하지 않는 엔진에서는 없습니다(`undefined`). 범위를 벗어나거나 유한하지 않은 값은 native가 던지는 `invalid_close_talk_threshold_db...`·`invalid_denoise_attenuation_limit_db...` 오류를 그대로 전달합니다. 이 API는 엔진 v0.4.5 이상이 필요하며, 구형 kit에서는 `close_talk_threshold_unsupported: install a native engine with close-talk threshold support`·`denoise_attenuation_limit_unsupported: install a native engine with denoise attenuation limit support` 오류를 던집니다. 설정을 명시하면 생성자에서, setter는 호출 시점에 던집니다.
 
+## close_talk 튜닝과 학습 레벨
+
+```ts
+const engine = await AudioEngine.init({
+  denoiseMode: 'close_talk',
+  closeTalkHoldMs: 250,            // 열림 근거가 끊긴 뒤 더 여는 시간, 기본 250
+  closeTalkKeepGapDb: 4,           // 열린 게이트 유지 기준 = 열림 임계값 - 이 값, 기본 4
+  closeTalkLevelMarginDb: 2,       // 학습 레벨 - 이 값 이상이면 열림 근거, 기본 2
+  closeTalkLearnedLevelDbfs: null, // 앞 capture에서 받은 학습 레벨, 기본 null
+});
+const capture = engine.createCapture();
+capture.setCloseTalkHoldMs(400);
+capture.setCloseTalkLearnedLevelDbfs(null); // 입력 장치를 바꾼 뒤
+```
+
+`closeTalkHoldMs`(유한한 0..2000 ms, 엔진 기본 250)는 열림 근거가 끊긴 뒤 게이트를 더 열어 두는 시간입니다. 늘리면 말끝이 덜 잘리지만 말 뒤의 소음도 더 남습니다. 닫힌 게이트는 값을 늘려도 새 근거 없이 다시 열리지 않습니다. `closeTalkKeepGapDb`(유한한 0..20 dB, 엔진 기본 4)는 열린 게이트를 유지하는 기준이 열림 임계값보다 낮은 폭이고, `closeTalkLevelMarginDb`(유한한 0..20 dB, 엔진 기본 2)는 학습한 내 말소리 레벨에서 이만큼 낮은 소리까지 열림 근거로 인정하는 폭입니다. 세 setter는 동기이고 다음 10 ms hop부터 적용되며 보관 중인 오디오와 학습 레벨은 유지합니다. SDK는 엔진 기본값을 주입하지 않습니다.
+
+학습 레벨은 capture 객체에 속합니다. pause/resume, stop/start, 음소거, hold, 마이크 재시작을 지나도 남고, general·denoise 꺼짐 중에 넣은 값은 저장해 두었다가 다음 close_talk 게이트가 이어 씁니다. `setCloseTalkLearnedLevelDbfs(dbfs)`는 학습 기록을 비우고 학습 레벨을 `dbfs`(유한한 -100..0 dBFS)로 두며, `null`이면 학습 레벨도 지웁니다. 이것과 새 capture만 학습을 지우므로 **입력 장치를 바꾸면 `setCloseTalkLearnedLevelDbfs(null)`을 부르세요.** 새 capture에서 학습을 이어 가려면 앞 capture의 `getStatus().closeTalkLearnedLevelDbfs`를 `closeTalkLearnedLevelDbfs` 설정으로 넘깁니다(기록은 넘어가지 않고 주입값으로 시작합니다).
+
+`getStatus()`는 `closeTalkHoldMs`·`closeTalkKeepGapDb`·`closeTalkLevelMarginDb`(저장값), `closeTalkLearnedLevelDbfs`(게이트가 쓰는 학습 레벨, 게이트가 없으면 저장된 주입값, 없으면 `null`, stop 뒤에도 마지막 값), `closeTalkLevelLearned`(자체 학습 값일 때만 `true`)를 보고합니다. 출력 청크의 `closeTalkGate`는 그 청크의 마이크 오디오를 close_talk 게이트가 처리했을 때 `{ open, openRatio, lsnrDb, levelDbfs, learnedLevelDbfs }`이고 그 밖(general·denoise 꺼짐·음소거·hold·스피커 전용)에는 `null`입니다. 값은 청크 오디오를 낸 10 ms hop의 판정이라 게이트 보류(300 ms)가 반영되어 있습니다. 모든 상태 필드와 `closeTalkGate`는 선택 필드이고 지원하지 않는 엔진에서는 없습니다(`undefined`).
+
+범위를 벗어나거나 유한하지 않은 값은 native가 던지는 `invalid_close_talk_hold_ms: expected a finite value within 0..=2000`, `invalid_close_talk_keep_gap_db: ...0..=20`, `invalid_close_talk_level_margin_db: ...0..=20`, `invalid_close_talk_learned_level_dbfs: expected a finite value within -100..=0 or null` 오류를 그대로 전달합니다. 구형 kit에서는 setter마다 `close_talk_hold_unsupported: install a native engine with close-talk hold support`, `close_talk_keep_gap_unsupported: install a native engine with close-talk keep gap support`, `close_talk_level_margin_unsupported: install a native engine with close-talk level margin support`, `close_talk_learned_level_unsupported: install a native engine with close-talk learned level support`를 던집니다. 설정을 명시하면 생성자에서, setter는 호출 시점에 던집니다. `closeTalkLearnedLevelDbfs: null`은 엔진 기본값이라 구형 kit에서도 던지지 않습니다.
+
 ## 입력 hold
 
 앱의 업링크를 끄는 동안(예: TTS 재생) 마이크 입력이 적응 상태를 오염시키지 않도록 입력을 보류합니다.
