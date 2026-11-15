@@ -78,11 +78,12 @@ function authorizationStatus(raw: string): EngineAuthorizationStatus {
     conversationId: status.conversation_id, connectionId: status.connection_id };
 }
 
-// Nitro prefixes the native function name onto the old-kit error (`holdInput: tellus_input_hold_unsupported`); normalise it to the documented exact string and rethrow anything else unchanged.
-async function callHoldNative(call: () => Promise<void>): Promise<void> {
+// Nitro prefixes the native function name onto the old-kit error (`holdInput: tellus_input_hold_unsupported`); normalise it to the documented exact string `unsupported`.
+// A sync throw and a rejected promise are handled alike, and anything else is rethrown unchanged.
+async function callOptionalNative(unsupported: string, call: () => Promise<void>): Promise<void> {
   try { await call(); }
   catch (error) {
-    if (error instanceof Error && error.message.includes('tellus_input_hold_unsupported')) throw new Error('tellus_input_hold_unsupported');
+    if (error instanceof Error && error.message.includes(unsupported)) throw new Error(unsupported);
     throw error;
   }
 }
@@ -263,7 +264,7 @@ class NativeAudioCapture implements AudioCapture {
     await this.ready;
     if (this.disposed) throw new Error('capture_disposed');
     if (typeof this.native.holdInput !== 'function') throw new Error('tellus_input_hold_unsupported');
-    await callHoldNative(() => this.native.holdInput!());
+    await callOptionalNative('tellus_input_hold_unsupported', () => this.native.holdInput!());
   }
   // Unlike reset, this touches neither receiving nor the revision: while held the core emits no chunks and native blocks delivery
   // and reopens it, and a release on a non-held session is a no-op that delivers chunks as before and cancels no earlier start or setting change. The cancellation rule is the same as holdInput's.
@@ -272,7 +273,7 @@ class NativeAudioCapture implements AudioCapture {
     await this.ready;
     if (this.disposed) throw new Error('capture_disposed');
     if (typeof this.native.releaseInput !== 'function') throw new Error('tellus_input_hold_unsupported');
-    await callHoldNative(() => this.native.releaseInput!());
+    await callOptionalNative('tellus_input_hold_unsupported', () => this.native.releaseInput!());
   }
   async dispose(): Promise<void> {
     if (this.disposed) return;
@@ -322,7 +323,7 @@ class NativeAudioCapture implements AudioCapture {
   }
   private async applyCloseTalkThresholdDb(db: number): Promise<void> {
     if (typeof this.native.setCloseTalkThresholdDb !== 'function') throw new Error('tellus_close_talk_threshold_unsupported');
-    await this.native.setCloseTalkThresholdDb(db);
+    await callOptionalNative('tellus_close_talk_threshold_unsupported', () => this.native.setCloseTalkThresholdDb!(db));
   }
   async setDenoiseAttenuationLimitDb(db: number): Promise<void> {
     validateDenoiseAttenuationLimitDb(db);
@@ -333,7 +334,7 @@ class NativeAudioCapture implements AudioCapture {
   }
   private async applyDenoiseAttenuationLimitDb(db: number): Promise<void> {
     if (typeof this.native.setDenoiseAttenuationLimitDb !== 'function') throw new Error('tellus_denoise_attenuation_limit_unsupported');
-    await this.native.setDenoiseAttenuationLimitDb(db);
+    await callOptionalNative('tellus_denoise_attenuation_limit_unsupported', () => this.native.setDenoiseAttenuationLimitDb!(db));
   }
   async setRecordingNotification(config: RecordingNotificationConfig): Promise<void> {
     await this.ready;
