@@ -96,7 +96,7 @@ await capture.setCloseTalkLearnedLevelDbfs(null); // 학습값 지우기
 
 `getStatus()`는 `closeTalkHoldMs`·`closeTalkKeepGapDb`·`closeTalkLevelMarginDb`·`closeTalkLearnedLevelDbfs`(`number | null`)·`closeTalkLevelLearned`를 선택 필드로 보고하며 구형 엔진에서는 없습니다. 청크의 `closeTalkGate`는 게이트가 처리한 청크에만 `{ open, openRatio, lsnrDb, levelDbfs, learnedLevelDbfs }`로 채워지고 그 외에는 `null`입니다.
 
-학습 레벨은 denoise 켜기·끄기, close_talk↔general 전환, stop/start, pause/resume을 지나 세션 동안 유지됩니다. 지우는 방법은 `setCloseTalkLearnedLevelDbfs(null)`과 새 capture 객체뿐이므로, **입력 장치를 바꾸는 앱은 `null`로 학습 레벨을 지워야 합니다**. 새 capture 객체로 이어 가려면 앞 객체의 `getStatus().closeTalkLearnedLevelDbfs`를 새 객체의 `closeTalkLearnedLevelDbfs`로 넘깁니다(기록은 넘어가지 않고 주입값으로 시작합니다). 이 API는 새 엔진 kit이 필요합니다.
+학습 레벨은 denoise 켜기·끄기, stop/start, pause/resume을 지나 세션 동안 유지됩니다. 지우는 방법은 `setCloseTalkLearnedLevelDbfs(null)`과 새 capture 객체뿐이므로, **입력 장치를 바꾸는 앱은 `null`로 학습 레벨을 지워야 합니다**. 새 capture 객체로 이어 가려면 앞 객체의 `getStatus().closeTalkLearnedLevelDbfs`를 새 객체의 `closeTalkLearnedLevelDbfs`로 넘깁니다(기록은 넘어가지 않고 주입값으로 시작합니다). 이 API는 새 엔진 kit이 필요합니다.
 
 ## 입력 hold
 
