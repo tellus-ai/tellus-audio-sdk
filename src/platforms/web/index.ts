@@ -3,7 +3,7 @@ import type { AudioDeviceStatus } from '../../bindings/typescript/audio-devices.
 import { gainConfig } from '../../bindings/typescript/audio-gain.js';
 import { BrowserCapture } from './capture.js';
 import { audioDeviceError } from './devices.js';
-import { denoiseMode, outputSampleRate, validateCloseTalkThresholdDb, validateDenoiseAttenuationLimitDb } from './protocol.js';
+import { denoiseMode, outputSampleRate, validateCloseTalkHoldMs, validateCloseTalkKeepGapDb, validateCloseTalkLearnedLevelDbfs, validateCloseTalkLevelMarginDb, validateCloseTalkThresholdDb, validateDenoiseAttenuationLimitDb } from './protocol.js';
 import { WorkerClient } from './worker-client.js';
 
 export type {
@@ -43,6 +43,10 @@ export class AudioEngine {
     try {
       denoiseMode(config);
       if (config.closeTalkThresholdDb !== undefined) validateCloseTalkThresholdDb(config.closeTalkThresholdDb);
+      if (config.closeTalkHoldMs !== undefined) validateCloseTalkHoldMs(config.closeTalkHoldMs);
+      if (config.closeTalkKeepGapDb !== undefined) validateCloseTalkKeepGapDb(config.closeTalkKeepGapDb);
+      if (config.closeTalkLevelMarginDb !== undefined) validateCloseTalkLevelMarginDb(config.closeTalkLevelMarginDb);
+      if (config.closeTalkLearnedLevelDbfs !== undefined) validateCloseTalkLearnedLevelDbfs(config.closeTalkLearnedLevelDbfs);
       if (config.denoiseAttenuationLimitDb !== undefined) validateDenoiseAttenuationLimitDb(config.denoiseAttenuationLimitDb);
       if (config.micDeviceId !== undefined && (typeof config.micDeviceId !== 'string' || !config.micDeviceId.trim())) {
         throw audioDeviceError(new Error('tellus_microphone_invalid_device_id'), 'microphone', typeof config.micDeviceId === 'string' ? config.micDeviceId : undefined);

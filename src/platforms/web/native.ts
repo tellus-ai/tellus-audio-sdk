@@ -124,6 +124,11 @@ export class NativeCapture {
         validSampleCount: native.valid_sample_count, durationMs: native.sample_count * 1000 / native.sample_rate,
         sample: native.sample, timestamp: native.timestamp, rms: native.rms,
         ...(native.gate_event == null ? {} : { gateEvent: native.gate_event }),
+        closeTalkGate: native.close_talk_gate == null ? null : {
+          open: native.close_talk_gate.open, openRatio: native.close_talk_gate.open_ratio,
+          lsnrDb: native.close_talk_gate.lsnr_db ?? null, levelDbfs: native.close_talk_gate.level_dbfs ?? null,
+          learnedLevelDbfs: native.close_talk_gate.learned_level_dbfs ?? null,
+        },
         ...(native.vad_rms == null ? {} : { vadRms: native.vad_rms }),
         ...(native.discontinuity == null ? {} : { discontinuity: {
           reason: native.discontinuity.reason, droppedChunks: native.discontinuity.dropped_chunks,
