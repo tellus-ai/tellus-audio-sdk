@@ -201,6 +201,46 @@ test('holdInput and releaseInput pass non-old-kit errors through unchanged', asy
   await assert.rejects(capture.releaseInput(), error => error === boom);
 });
 
+test('setCloseTalkThresholdDb and setDenoiseAttenuationLimitDb reject with their exact unsupported codes when the Nitro-prefixed old-kit error comes back (sync throw and rejected promise)', async () => {
+  const { native, create } = fixture();
+  const capture = await create();
+  native.setCloseTalkThresholdDb = () => { throw new Error('setCloseTalkThresholdDb: tellus_close_talk_threshold_unsupported'); };
+  native.setDenoiseAttenuationLimitDb = async () => { throw new Error('setDenoiseAttenuationLimitDb: tellus_denoise_attenuation_limit_unsupported'); };
+  await assert.rejects(capture.setCloseTalkThresholdDb(25), error => error.message === 'tellus_close_talk_threshold_unsupported');
+  await assert.rejects(capture.setDenoiseAttenuationLimitDb(6), error => error.message === 'tellus_denoise_attenuation_limit_unsupported');
+  native.setCloseTalkThresholdDb = async () => { throw new Error('setCloseTalkThresholdDb: tellus_close_talk_threshold_unsupported'); };
+  native.setDenoiseAttenuationLimitDb = () => { throw new Error('setDenoiseAttenuationLimitDb: tellus_denoise_attenuation_limit_unsupported'); };
+  await assert.rejects(capture.setCloseTalkThresholdDb(25), error => error.message === 'tellus_close_talk_threshold_unsupported');
+  await assert.rejects(capture.setDenoiseAttenuationLimitDb(6), error => error.message === 'tellus_denoise_attenuation_limit_unsupported');
+});
+
+test('a configured close-talk threshold or denoise attenuation limit that hits the Nitro-prefixed old-kit error rejects start, which waits for configuration, with the exact unsupported code (sync throw and rejected promise)', async () => {
+  const { native, create } = fixture();
+  native.setCloseTalkThresholdDb = () => { throw new Error('setCloseTalkThresholdDb: tellus_close_talk_threshold_unsupported'); };
+  native.setDenoiseAttenuationLimitDb = async () => { throw new Error('setDenoiseAttenuationLimitDb: tellus_denoise_attenuation_limit_unsupported'); };
+  await assert.rejects((await create({ closeTalkThresholdDb: 25 })).start(() => {}), error => error.message === 'tellus_close_talk_threshold_unsupported');
+  await assert.rejects((await create({ denoiseAttenuationLimitDb: 6 })).start(() => {}), error => error.message === 'tellus_denoise_attenuation_limit_unsupported');
+  native.setCloseTalkThresholdDb = async () => { throw new Error('setCloseTalkThresholdDb: tellus_close_talk_threshold_unsupported'); };
+  native.setDenoiseAttenuationLimitDb = () => { throw new Error('setDenoiseAttenuationLimitDb: tellus_denoise_attenuation_limit_unsupported'); };
+  await assert.rejects((await create({ closeTalkThresholdDb: 25 })).start(() => {}), error => error.message === 'tellus_close_talk_threshold_unsupported');
+  await assert.rejects((await create({ denoiseAttenuationLimitDb: 6 })).start(() => {}), error => error.message === 'tellus_denoise_attenuation_limit_unsupported');
+});
+
+test('setCloseTalkThresholdDb and setDenoiseAttenuationLimitDb pass non-old-kit errors through unchanged (sync throw and rejected promise)', async () => {
+  const { native, create } = fixture();
+  const capture = await create();
+  const disposed = new Error('setCloseTalkThresholdDb: capture_disposed');
+  const boom = new Error('boom');
+  native.setCloseTalkThresholdDb = () => { throw disposed; };
+  native.setDenoiseAttenuationLimitDb = async () => { throw boom; };
+  await assert.rejects(capture.setCloseTalkThresholdDb(25), error => error === disposed);
+  await assert.rejects(capture.setDenoiseAttenuationLimitDb(6), error => error === boom);
+  native.setCloseTalkThresholdDb = async () => { throw boom; };
+  native.setDenoiseAttenuationLimitDb = () => { throw disposed; };
+  await assert.rejects(capture.setCloseTalkThresholdDb(25), error => error === boom);
+  await assert.rejects(capture.setDenoiseAttenuationLimitDb(6), error => error === disposed);
+});
+
 test('mobile forwards holdInput and releaseInput to native once each, in call order, after the initial configure', async () => {
   const { native, create } = fixture();
   let configured;
