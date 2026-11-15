@@ -143,21 +143,6 @@ async function dispatch(request: WorkerRequest): Promise<unknown> {
       if (!engine.supports('session_set_close_talk_level_margin_db')) throw new Error('tellus_close_talk_level_margin_unsupported');
       return native.call('set_close_talk_level_margin_db', [validateCloseTalkLevelMarginDb(command.db)]);
     case 'closeTalkLearnedLevelDbfs': {
-      // null은 C의 clear 함수로 보낸다. NaN을 float setter에 보내면 null이 아니라 INVALID_ARGUMENT다.
-      const dbfs = validateCloseTalkLearnedLevelDbfs(command.dbfs);
-      if (!engine.supports(dbfs === null ? 'session_clear_close_talk_learned_level' : 'session_set_close_talk_learned_level_dbfs')) throw new Error('tellus_close_talk_learned_level_unsupported');
-      return dbfs === null ? native.call('clear_close_talk_learned_level') : native.call('set_close_talk_learned_level_dbfs', [dbfs]);
-    }
-    case 'closeTalkHoldMs':
-      if (!engine.supports('session_set_close_talk_hold_ms')) throw new Error('tellus_close_talk_hold_unsupported');
-      return native.call('set_close_talk_hold_ms', [validateCloseTalkHoldMs(command.ms)]);
-    case 'closeTalkKeepGapDb':
-      if (!engine.supports('session_set_close_talk_keep_gap_db')) throw new Error('tellus_close_talk_keep_gap_unsupported');
-      return native.call('set_close_talk_keep_gap_db', [validateCloseTalkKeepGapDb(command.db)]);
-    case 'closeTalkLevelMarginDb':
-      if (!engine.supports('session_set_close_talk_level_margin_db')) throw new Error('tellus_close_talk_level_margin_unsupported');
-      return native.call('set_close_talk_level_margin_db', [validateCloseTalkLevelMarginDb(command.db)]);
-    case 'closeTalkLearnedLevelDbfs': {
       // null goes to the C clear function. NaN sent to the float setter is INVALID_ARGUMENT, not null.
       const dbfs = validateCloseTalkLearnedLevelDbfs(command.dbfs);
       if (!engine.supports(dbfs === null ? 'session_clear_close_talk_learned_level' : 'session_set_close_talk_learned_level_dbfs')) throw new Error('tellus_close_talk_learned_level_unsupported');
