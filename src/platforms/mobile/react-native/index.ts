@@ -52,6 +52,25 @@ function validateCloseTalkThresholdDb(db: number): number {
   return db;
 }
 
+// Same as the core close_talk tuning rules. Error messages match desktop and web.
+function validateCloseTalkHoldMs(ms: number): number {
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0 || ms > 2000) throw new Error('invalid_close_talk_hold_ms: expected a finite value within 0..=2000');
+  return ms;
+}
+function validateCloseTalkKeepGapDb(db: number): number {
+  if (typeof db !== 'number' || !Number.isFinite(db) || db < 0 || db > 20) throw new Error('invalid_close_talk_keep_gap_db: expected a finite value within 0..=20');
+  return db;
+}
+function validateCloseTalkLevelMarginDb(db: number): number {
+  if (typeof db !== 'number' || !Number.isFinite(db) || db < 0 || db > 20) throw new Error('invalid_close_talk_level_margin_db: expected a finite value within 0..=20');
+  return db;
+}
+function validateCloseTalkLearnedLevelDbfs(dbfs: number | null): number | null {
+  if (dbfs === null) return null;
+  if (typeof dbfs !== 'number' || !Number.isFinite(dbfs) || dbfs < -100 || dbfs > 0) throw new Error('invalid_close_talk_learned_level_dbfs: expected a finite value within -100..=0 or null');
+  return dbfs;
+}
+
 // Same as the core close_talk noise attenuation limit rule: finite 0..=60 dB.
 function validateDenoiseAttenuationLimitDb(db: number): number {
   if (!Number.isFinite(db) || db < 0 || db > 60) throw new Error('invalid_denoise_attenuation_limit_db');
@@ -121,6 +140,11 @@ class NativeAudioCapture implements AudioCapture {
     }), rate).then(async () => {
       // Kept out of the configure JSON so kits without the keys still configure. AudioEngine.init validated them; an unsupported kit fails the first call that waits for ready.
       if (config.closeTalkThresholdDb !== undefined) await this.applyCloseTalkThresholdDb(config.closeTalkThresholdDb);
+      if (config.closeTalkHoldMs !== undefined) await this.applyCloseTalkHoldMs(config.closeTalkHoldMs);
+      if (config.closeTalkKeepGapDb !== undefined) await this.applyCloseTalkKeepGapDb(config.closeTalkKeepGapDb);
+      if (config.closeTalkLevelMarginDb !== undefined) await this.applyCloseTalkLevelMarginDb(config.closeTalkLevelMarginDb);
+      // null equals the default (no learned level), so the setter is not called; a null setting never fails on old kits.
+      if (config.closeTalkLearnedLevelDbfs !== undefined && config.closeTalkLearnedLevelDbfs !== null) await this.applyCloseTalkLearnedLevelDbfs(config.closeTalkLearnedLevelDbfs);
       if (config.denoiseAttenuationLimitDb !== undefined) await this.applyDenoiseAttenuationLimitDb(config.denoiseAttenuationLimitDb);
     });
     this.devicesReady = this.ready.then(async () => {
@@ -220,6 +244,9 @@ class NativeAudioCapture implements AudioCapture {
             validSampleCount: chunk.valid_sample_count, timestamp: chunk.timestamp, rms: chunk.rms,
             durationMs: chunk.sample_count * 1000 / chunk.sample_rate, gateEvent: chunk.gate_event,
             vadRms: chunk.vad_rms, sequence: this.sequence++,
+            closeTalkGate: chunk.close_talk_gate ? { open: chunk.close_talk_gate.open, openRatio: chunk.close_talk_gate.open_ratio,
+              lsnrDb: chunk.close_talk_gate.lsnr_db ?? null, levelDbfs: chunk.close_talk_gate.level_dbfs ?? null,
+              learnedLevelDbfs: chunk.close_talk_gate.learned_level_dbfs ?? null } : null,
             discontinuity: gap ? { reason: gap.reason, droppedChunks: gap.dropped_chunks, droppedSamples: gap.dropped_samples,
               fromSample: gap.from_sample, toSample: gap.to_sample } : undefined,
           });
@@ -292,6 +319,10 @@ class NativeAudioCapture implements AudioCapture {
       ? JSON.parse(await this.native.getAudioDeviceStatus()) as AudioDeviceStatus[] : undefined;
     return { state: status.lifecycle, denoiseEnabled: status.denoise_enabled, denoiseMode: status.denoise_mode,
       denoiseLoadFailed: status.denoise_load_failed, closeTalkThresholdDb: status.close_talk_threshold_db,
+      closeTalkHoldMs: status.close_talk_hold_ms, closeTalkKeepGapDb: status.close_talk_keep_gap_db,
+      closeTalkLevelMarginDb: status.close_talk_level_margin_db,
+      closeTalkLearnedLevelDbfs: status.close_talk_learned_level_dbfs === undefined ? undefined : status.close_talk_learned_level_dbfs ?? null,
+      closeTalkLevelLearned: typeof status.close_talk_level_learned === 'boolean' ? status.close_talk_level_learned : undefined,
       denoiseAttenuationLimitDb: status.denoise_attenuation_limit_db, vadEnabled: this.config.vadEnabled ?? true,
       // Absent on old kits and null before configure: leave the optional field out rather than reporting a false that was never measured.
       ...(typeof status.input_held === 'boolean' ? { inputHeld: status.input_held } : {}),
@@ -325,6 +356,62 @@ class NativeAudioCapture implements AudioCapture {
     if (typeof this.native.setCloseTalkThresholdDb !== 'function') throw new Error('tellus_close_talk_threshold_unsupported');
     await callOptionalNative('tellus_close_talk_threshold_unsupported', () => this.native.setCloseTalkThresholdDb!(db));
   }
+  async setCloseTalkHoldMs(ms: number): Promise<void> {
+    validateCloseTalkHoldMs(ms);
+    if (this.disposed) throw new Error('capture_disposed');
+    const revision = this.controlRevision;
+    await this.ready;
+    this.checkControl(revision);
+    await this.applyCloseTalkHoldMs(ms);
+  }
+
+  private async applyCloseTalkHoldMs(ms: number): Promise<void> {
+    if (typeof this.native.setCloseTalkHoldMs !== 'function') throw new Error('tellus_close_talk_hold_unsupported');
+    await callOptionalNative('tellus_close_talk_hold_unsupported', () => this.native.setCloseTalkHoldMs!(ms));
+  }
+
+  async setCloseTalkKeepGapDb(db: number): Promise<void> {
+    validateCloseTalkKeepGapDb(db);
+    if (this.disposed) throw new Error('capture_disposed');
+    const revision = this.controlRevision;
+    await this.ready;
+    this.checkControl(revision);
+    await this.applyCloseTalkKeepGapDb(db);
+  }
+
+  private async applyCloseTalkKeepGapDb(db: number): Promise<void> {
+    if (typeof this.native.setCloseTalkKeepGapDb !== 'function') throw new Error('tellus_close_talk_keep_gap_unsupported');
+    await callOptionalNative('tellus_close_talk_keep_gap_unsupported', () => this.native.setCloseTalkKeepGapDb!(db));
+  }
+
+  async setCloseTalkLevelMarginDb(db: number): Promise<void> {
+    validateCloseTalkLevelMarginDb(db);
+    if (this.disposed) throw new Error('capture_disposed');
+    const revision = this.controlRevision;
+    await this.ready;
+    this.checkControl(revision);
+    await this.applyCloseTalkLevelMarginDb(db);
+  }
+
+  private async applyCloseTalkLevelMarginDb(db: number): Promise<void> {
+    if (typeof this.native.setCloseTalkLevelMarginDb !== 'function') throw new Error('tellus_close_talk_level_margin_unsupported');
+    await callOptionalNative('tellus_close_talk_level_margin_unsupported', () => this.native.setCloseTalkLevelMarginDb!(db));
+  }
+
+  async setCloseTalkLearnedLevelDbfs(dbfs: number | null): Promise<void> {
+    validateCloseTalkLearnedLevelDbfs(dbfs);
+    if (this.disposed) throw new Error('capture_disposed');
+    const revision = this.controlRevision;
+    await this.ready;
+    this.checkControl(revision);
+    await this.applyCloseTalkLearnedLevelDbfs(dbfs);
+  }
+
+  private async applyCloseTalkLearnedLevelDbfs(dbfs: number | null): Promise<void> {
+    if (typeof this.native.setCloseTalkLearnedLevelDbfs !== 'function') throw new Error('tellus_close_talk_learned_level_unsupported');
+    await callOptionalNative('tellus_close_talk_learned_level_unsupported', () => this.native.setCloseTalkLearnedLevelDbfs!(dbfs));
+  }
+
   async setDenoiseAttenuationLimitDb(db: number): Promise<void> {
     validateDenoiseAttenuationLimitDb(db);
     const revision = this.controlRevision;
@@ -401,6 +488,10 @@ export class AudioEngine {
     if (config.micEnabled === false || config.speakerEnabled === true || config.enableRawAudio === true) throw new Error('unsupported_mobile_capture_config');
     const mode = denoiseMode(config);
     if (config.closeTalkThresholdDb !== undefined) validateCloseTalkThresholdDb(config.closeTalkThresholdDb);
+    if (config.closeTalkHoldMs !== undefined) validateCloseTalkHoldMs(config.closeTalkHoldMs);
+    if (config.closeTalkKeepGapDb !== undefined) validateCloseTalkKeepGapDb(config.closeTalkKeepGapDb);
+    if (config.closeTalkLevelMarginDb !== undefined) validateCloseTalkLevelMarginDb(config.closeTalkLevelMarginDb);
+    if (config.closeTalkLearnedLevelDbfs !== undefined) validateCloseTalkLearnedLevelDbfs(config.closeTalkLearnedLevelDbfs);
     if (config.denoiseAttenuationLimitDb !== undefined) validateDenoiseAttenuationLimitDb(config.denoiseAttenuationLimitDb);
     // Each capture loads one denoise model and an optional VAD model, so the default assets pick only those.
     const encryptedModels = assets?.encryptedModels ?? ['denoise.temc',

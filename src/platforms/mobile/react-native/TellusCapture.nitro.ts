@@ -27,6 +27,10 @@ export interface TellusCapture extends HybridObject<{ ios: 'c++'; android: 'c++'
   setDenoiseEnabled(enabled: boolean): Promise<void>;
   setMicGainDb(db: number): Promise<void>;
   setCloseTalkThresholdDb(db: number): Promise<void>;
+  setCloseTalkHoldMs(ms: number): Promise<void>;
+  setCloseTalkKeepGapDb(db: number): Promise<void>;
+  setCloseTalkLevelMarginDb(db: number): Promise<void>;
+  setCloseTalkLearnedLevelDbfs(dbfs: number | null): Promise<void>;
   setDenoiseAttenuationLimitDb(db: number): Promise<void>;
   holdInput(): Promise<void>;
   releaseInput(): Promise<void>;
