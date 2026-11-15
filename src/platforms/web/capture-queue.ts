@@ -3,6 +3,8 @@ export interface CaptureFrame {
   nativeRate: number;
   timestamp: number;
   epoch: number;
+  /** The capture generation the microphone tap last received. The playback tap is always 0. */
+  generation: number;
 }
 
 /** Reports the input queue's dropped length before the next frame, in output rate (processing.sampleRate) samples. */

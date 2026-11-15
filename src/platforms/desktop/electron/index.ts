@@ -135,7 +135,7 @@ export interface AudioData {
   mixed?: Buffer;
 }
 
-export type AudioDiscontinuityReason = 'consumer_lag' | 'native_overrun' | 'device_gap';
+export type AudioDiscontinuityReason = 'consumer_lag' | 'native_overrun' | 'device_gap' | 'input_held';
 
 export interface AudioDiscontinuity {
   reason: AudioDiscontinuityReason;
@@ -194,6 +194,8 @@ export interface CaptureStatus {
   speakerThreadAlive: boolean;
   mixerThreadAlive: boolean;
   denoiseActive: boolean;
+  /** True while uplink input is held by holdInput(). Absent on native engines without input hold support. */
+  inputHeld?: boolean;
   /** Applied close_talk gate open threshold (dB). Absent on native engines without close-talk threshold support. */
   closeTalkThresholdDb?: number;
   /** Applied close_talk noise attenuation limit (dB). Absent on native engines without denoise attenuation limit support. */
@@ -824,6 +826,12 @@ export class AudioCapture {
     }
   }
 
+  #requireInputHoldSupport(): void {
+    if (typeof this.#native.holdInput !== 'function' || typeof this.#native.releaseInput !== 'function') {
+      throw new Error('input_hold_unsupported: install a native engine with input hold support');
+    }
+  }
+
   #requireDenoiseAttenuationLimitSupport(): void {
     if (typeof this.#native.setDenoiseAttenuationLimitDb !== 'function') {
       throw new Error('denoise_attenuation_limit_unsupported: install a native engine with denoise attenuation limit support');
@@ -848,6 +856,18 @@ export class AudioCapture {
   setCloseTalkThresholdDb(db: number): void {
     this.#requireCloseTalkThresholdSupport();
     this.#native.setCloseTalkThresholdDb(db);
+  }
+
+  /** Stops all real-time chunks (microphone, system audio, mixed, raw) while the recording path continues with a silent microphone and the capture session stays alive (e.g. during TTS playback). Callable before start; the native engine keeps it idempotent. */
+  holdInput(): void {
+    this.#requireInputHoldSupport();
+    this.#native.holdInput();
+  }
+
+  /** Resumes uplink input after holdInput(). Callable before start; the native engine keeps it idempotent. */
+  releaseInput(): void {
+    this.#requireInputHoldSupport();
+    this.#native.releaseInput();
   }
 
   /** Updates the close_talk noise attenuation limit from the next 10 ms hop. The native engine rejects values outside finite 0..=60. */

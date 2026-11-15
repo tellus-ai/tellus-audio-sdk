@@ -175,6 +175,32 @@ void CaptureSession::reset(uint64_t revision, bool capturing) {
   if (capturing && revision == _controlRevision && !closed) { _captureEnabled = true; _deliveryEnabled = true; }
 }
 
+void CaptureSession::holdInput(InputHoldFn hold) {
+  check(hold(handle));
+  _inputHeld = true;
+}
+
+// While held, mimic the reset path: block capture and delivery, drop the held-time captures still queued on the worker and report their
+// length via mark_discontinuity (during hold only the input clock advances, so release's input_held discontinuity covers it too), call C release, then reopen.
+// When not held, only the C release (a no-op) is called; mark_discontinuity is a full discard there and leaves the queue and delivery alone.
+// Whether the core is held is only known on the worker, so delivery is stopped here as well. The revision is not bumped: bumping it would
+// invalidate the revision of a reset requested after this release and still queued, which could then never reopen capture. If the JS thread's
+// pause, stop or invalidate bumped the revision while this ran, capture is not reopened, as in reset.
+void CaptureSession::releaseInput(InputHoldFn release) {
+  if (!_inputHeld) {
+    check(release(handle));
+    return;
+  }
+  const auto revision = _controlRevision.load();
+  const auto capturing = isCapturing();
+  _captureEnabled = false;
+  _deliveryEnabled = false;
+  clearQueuedCapture();
+  check(release(handle));
+  _inputHeld = false;
+  if (capturing && revision == _controlRevision && !closed) { _captureEnabled = true; _deliveryEnabled = true; }
+}
+
 uint64_t CaptureSession::reservePlayback() {
   std::lock_guard lock(_playbackMutex);
   if (closed) throw std::runtime_error("capture_disposed");

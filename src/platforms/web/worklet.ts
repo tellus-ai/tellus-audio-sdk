@@ -10,6 +10,8 @@ declare function registerProcessor(name: string, processor: typeof AudioWorkletP
 class TellusAudioTap extends AudioWorkletProcessor {
   private active = false;
   private epoch = 0;
+  // The capture generation the main thread raises on a held release. A control message without a generation leaves it unchanged.
+  private generation = 0;
   private readonly render: boolean;
   private readonly timeOriginMs: number;
 
@@ -17,9 +19,10 @@ class TellusAudioTap extends AudioWorkletProcessor {
     super(options);
     this.render = options.processorOptions.render;
     this.timeOriginMs = options.processorOptions.timeOriginMs;
-    this.port.onmessage = (event: MessageEvent<{ active: boolean; epoch: number }>) => {
+    this.port.onmessage = (event: MessageEvent<{ active: boolean; epoch: number; generation?: number }>) => {
       this.active = event.data.active;
       this.epoch = event.data.epoch;
+      if (event.data.generation !== undefined) this.generation = event.data.generation;
     };
   }
 
@@ -30,7 +33,7 @@ class TellusAudioTap extends AudioWorkletProcessor {
     }
     if (this.active && input?.length) {
       const samples = input.slice();
-      this.port.postMessage({ samples, nativeRate: sampleRate, timestamp: Math.floor(this.timeOriginMs + currentTime * 1000), epoch: this.epoch }, [samples.buffer]);
+      this.port.postMessage({ samples, nativeRate: sampleRate, timestamp: Math.floor(this.timeOriginMs + currentTime * 1000), epoch: this.epoch, generation: this.generation }, [samples.buffer]);
     }
     return true;
   }

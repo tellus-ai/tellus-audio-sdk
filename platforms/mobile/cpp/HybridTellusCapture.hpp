@@ -2,6 +2,7 @@
 
 #include "CaptureSession.hpp"
 #include "DenoiseSettings.hpp"
+#include "InputHold.hpp"
 #include "HybridTellusCaptureSpec.hpp"
 
 namespace margelo::nitro::tellus {
@@ -37,6 +38,8 @@ public:
   std::shared_ptr<Promise<void>> setMicGainDb(double db) override;
   std::shared_ptr<Promise<void>> setCloseTalkThresholdDb(double db) override;
   std::shared_ptr<Promise<void>> setDenoiseAttenuationLimitDb(double db) override;
+  std::shared_ptr<Promise<void>> holdInput() override;
+  std::shared_ptr<Promise<void>> releaseInput() override;
   std::shared_ptr<Promise<void>> setRecordingNotification(const std::string& title, const std::string& contentText,
     bool pauseAction, bool resumeAction, const std::function<void(const std::string&)>& onAction) override;
   std::shared_ptr<Promise<void>> playback(const std::shared_ptr<ArrayBuffer>& samples, double rate) override;
@@ -48,6 +51,9 @@ public:
   // Tests replace a resolver to exercise the old-kit path, then restore resolveSetCloseTalkThresholdDb or resolveSetDenoiseAttenuationLimitDb.
   static void setCloseTalkThresholdResolverForTesting(DenoiseSettingFn (*resolver)());
   static void setDenoiseAttenuationLimitResolverForTesting(DenoiseSettingFn (*resolver)());
+  // Tests replace a resolver to exercise the old-kit path, then restore resolveHoldInput or resolveReleaseInput.
+  static void setHoldInputResolverForTesting(InputHoldFn (*resolver)());
+  static void setReleaseInputResolverForTesting(InputHoldFn (*resolver)());
 
 private:
   std::shared_ptr<CaptureSession> acquire();
@@ -55,6 +61,8 @@ private:
   std::shared_ptr<CaptureSession> _session;
   static DenoiseSettingFn (*_closeTalkThresholdResolver)();
   static DenoiseSettingFn (*_denoiseAttenuationLimitResolver)();
+  static InputHoldFn (*_holdInputResolver)();
+  static InputHoldFn (*_releaseInputResolver)();
 };
 
 } // namespace margelo::nitro::tellus

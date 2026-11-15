@@ -164,6 +164,153 @@ test('mobile status reports the applied denoise attenuation limit, and kits with
   assert.equal(old.denoiseAttenuationLimitDb, undefined);
 });
 
+test('mobile rejects holdInput and releaseInput with tellus_input_hold_unsupported on an old native, and capture_disposed comes first after dispose', async () => {
+  const { native, create } = fixture();
+  const capture = await create();
+  await assert.rejects(capture.holdInput(), /tellus_input_hold_unsupported/);
+  await assert.rejects(capture.releaseInput(), /tellus_input_hold_unsupported/);
+  native.holdInput = async () => {};
+  await assert.rejects(capture.releaseInput(), /tellus_input_hold_unsupported/);
+  await capture.dispose();
+  delete native.holdInput;
+  await assert.rejects(capture.holdInput(), /capture_disposed/);
+  await assert.rejects(capture.releaseInput(), /capture_disposed/);
+});
+
+test('holdInput and releaseInput reject with the exact tellus_input_hold_unsupported when the Nitro-prefixed old-kit error comes back (sync throw and rejected promise)', async () => {
+  const { native, create } = fixture();
+  const capture = await create();
+  native.holdInput = () => { throw new Error('holdInput: tellus_input_hold_unsupported'); };
+  native.releaseInput = async () => { throw new Error('releaseInput: tellus_input_hold_unsupported'); };
+  await assert.rejects(capture.holdInput(), error => error.message === 'tellus_input_hold_unsupported');
+  await assert.rejects(capture.releaseInput(), error => error.message === 'tellus_input_hold_unsupported');
+  native.holdInput = async () => { throw new Error('holdInput: tellus_input_hold_unsupported'); };
+  native.releaseInput = () => { throw new Error('releaseInput: tellus_input_hold_unsupported'); };
+  await assert.rejects(capture.holdInput(), error => error.message === 'tellus_input_hold_unsupported');
+  await assert.rejects(capture.releaseInput(), error => error.message === 'tellus_input_hold_unsupported');
+});
+
+test('holdInput and releaseInput pass non-old-kit errors through unchanged', async () => {
+  const { native, create } = fixture();
+  const capture = await create();
+  const disposed = new Error('holdInput: capture_disposed');
+  const boom = new Error('boom');
+  native.holdInput = () => { throw disposed; };
+  native.releaseInput = async () => { throw boom; };
+  await assert.rejects(capture.holdInput(), error => error === disposed);
+  await assert.rejects(capture.releaseInput(), error => error === boom);
+});
+
+test('mobile forwards holdInput and releaseInput to native once each, in call order, after the initial configure', async () => {
+  const { native, create } = fixture();
+  let configured;
+  const calls = [];
+  native.configure = () => new Promise(resolve => { configured = resolve; });
+  native.holdInput = async () => { calls.push('hold'); };
+  native.releaseInput = async () => { calls.push('release'); };
+  const capture = await create();
+  const pending = [capture.holdInput(), capture.releaseInput()];
+  for (let index = 0; index < 20; index++) await Promise.resolve();
+  assert.deepEqual(calls, []);
+  configured();
+  await Promise.all(pending);
+  assert.deepEqual(calls, ['hold', 'release']);
+});
+
+test('mobile holdInput and releaseInput waiting for the initial configure are not cancelled by a later start, pause, resume, reset or stop and apply in call order', async () => {
+  for (const interrupt of ['start', 'pause', 'resume', 'reset', 'stop']) {
+    const { native, create } = fixture();
+    let configured;
+    const calls = [];
+    native.configure = () => new Promise(resolve => { configured = resolve; });
+    native.holdInput = async () => { calls.push('hold'); };
+    native.releaseInput = async () => { calls.push('release'); };
+    const capture = await create();
+    const pending = [capture.holdInput(), capture.releaseInput(), capture.holdInput()];
+    const control = interrupt === 'start' ? capture.start(() => {}) : capture[interrupt]();
+    configured();
+    await Promise.all([...pending, control]);
+    assert.deepEqual(calls, ['hold', 'release', 'hold'], interrupt);
+  }
+});
+
+test('mobile holdInput and releaseInput waiting for the initial configure reject with capture_disposed when disposed meanwhile and never reach native', async () => {
+  const { native, create } = fixture();
+  let configured;
+  const calls = [];
+  native.configure = () => new Promise(resolve => { configured = resolve; });
+  native.holdInput = async () => { calls.push('hold'); };
+  native.releaseInput = async () => { calls.push('release'); };
+  const capture = await create();
+  const pending = [capture.holdInput(), capture.releaseInput()];
+  const disposing = capture.dispose();
+  configured();
+  for (const control of pending) await assert.rejects(control, /capture_disposed/);
+  await disposing;
+  assert.deepEqual(calls, []);
+});
+
+test('mobile releaseInput completing does not revive a later pause or invalidate', async () => {
+  for (const interrupt of ['pause', 'invalidateAuthorization']) {
+    const { native, create, emit } = fixture();
+    const capture = await create();
+    let received = 0, complete;
+    native.holdInput = async () => {};
+    await capture.start(() => { ++received; });
+    await capture.holdInput();
+    native.releaseInput = () => new Promise(resolve => { complete = resolve; });
+    const releasing = capture.releaseInput();
+    await new Promise(setImmediate);
+    await capture[interrupt]();
+    complete();
+    await releasing;
+    native.authorized = true;
+    emit();
+    assert.equal(received, 0, interrupt);
+  }
+});
+
+test('mobile keeps delivering chunks while a release on a non-held session waits for native', async () => {
+  const { native, create, emit } = fixture();
+  const capture = await create();
+  let received = 0, complete;
+  await capture.start(() => { ++received; });
+  native.releaseInput = () => new Promise(resolve => { complete = resolve; });
+  const releasing = capture.releaseInput();
+  await new Promise(setImmediate);
+  emit();
+  complete();
+  await releasing;
+  emit();
+  assert.equal(received, 2);
+});
+
+test('mobile releaseInput does not cancel an earlier-requested setting change that is still waiting for the initial configure', async () => {
+  const { native, create } = fixture();
+  let configured;
+  const gains = [];
+  native.configure = () => new Promise(resolve => { configured = resolve; });
+  native.releaseInput = async () => {};
+  native.setMicGainDb = async db => { gains.push(db); };
+  const capture = await create();
+  const pending = [capture.releaseInput(), capture.setMicGainDb(3)];
+  configured();
+  await Promise.all(pending);
+  assert.deepEqual(gains, [3]);
+});
+
+test('mobile status reports inputHeld only when the native status JSON has a boolean input_held, otherwise leaves it absent', async () => {
+  const { native, create } = fixture();
+  const capture = await create();
+  // Old kits omit the key and a not-yet-configured session reports null: neither may default to false.
+  for (const [json, expected] of [[{ input_held: true }, true], [{ input_held: false }, false], [{ input_held: null }, undefined], [{}, undefined]]) {
+    native.getStatus = async () => JSON.stringify({ lifecycle: 'running', denoise_enabled: true, ...json });
+    const status = await capture.getStatus();
+    assert.equal(status.inputHeld, expected, JSON.stringify(json));
+    assert.equal('inputHeld' in status, expected !== undefined, JSON.stringify(json));
+  }
+});
+
 // Nitro uses only a JS boundary double; the real public wrapper runs.
 function fixture(assets = ['denoise.temc', 'vad.temc']) {
   const status = () => JSON.stringify({ state: 'authorized', remaining_ms: 1000 });

@@ -78,6 +78,15 @@ function authorizationStatus(raw: string): EngineAuthorizationStatus {
     conversationId: status.conversation_id, connectionId: status.connection_id };
 }
 
+// Nitro prefixes the native function name onto the old-kit error (`holdInput: tellus_input_hold_unsupported`); normalise it to the documented exact string and rethrow anything else unchanged.
+async function callHoldNative(call: () => Promise<void>): Promise<void> {
+  try { await call(); }
+  catch (error) {
+    if (error instanceof Error && error.message.includes('tellus_input_hold_unsupported')) throw new Error('tellus_input_hold_unsupported');
+    throw error;
+  }
+}
+
 /** Connects one OS microphone to an authorized Rust session. The data callback receives only encoded transport payloads. */
 class NativeAudioCapture implements AudioCapture {
   private native = NitroModules.createHybridObject<TellusCapture>('TellusCapture');
@@ -246,6 +255,25 @@ class NativeAudioCapture implements AudioCapture {
     await this.native.reset();
     if (revision === this.controlRevision) this.receiving = receiving;
   }
+  // Hold and release are state changes that outlive pause/resume and stop/start, so a start, pause, resume, reset or stop issued while the
+  // initial configure is pending does not cancel them: they enter the native worker queue in call order (same rule as web and desktop).
+  // Only dispose rejects them, with capture_disposed.
+  async holdInput(): Promise<void> {
+    if (this.disposed) throw new Error('capture_disposed');
+    await this.ready;
+    if (this.disposed) throw new Error('capture_disposed');
+    if (typeof this.native.holdInput !== 'function') throw new Error('tellus_input_hold_unsupported');
+    await callHoldNative(() => this.native.holdInput!());
+  }
+  // Unlike reset, this touches neither receiving nor the revision: while held the core emits no chunks and native blocks delivery
+  // and reopens it, and a release on a non-held session is a no-op that delivers chunks as before and cancels no earlier start or setting change. The cancellation rule is the same as holdInput's.
+  async releaseInput(): Promise<void> {
+    if (this.disposed) throw new Error('capture_disposed');
+    await this.ready;
+    if (this.disposed) throw new Error('capture_disposed');
+    if (typeof this.native.releaseInput !== 'function') throw new Error('tellus_input_hold_unsupported');
+    await callHoldNative(() => this.native.releaseInput!());
+  }
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
@@ -264,6 +292,8 @@ class NativeAudioCapture implements AudioCapture {
     return { state: status.lifecycle, denoiseEnabled: status.denoise_enabled, denoiseMode: status.denoise_mode,
       denoiseLoadFailed: status.denoise_load_failed, closeTalkThresholdDb: status.close_talk_threshold_db,
       denoiseAttenuationLimitDb: status.denoise_attenuation_limit_db, vadEnabled: this.config.vadEnabled ?? true,
+      // Absent on old kits and null before configure: leave the optional field out rather than reporting a false that was never measured.
+      ...(typeof status.input_held === 'boolean' ? { inputHeld: status.input_held } : {}),
       modelsLoaded: [...this.loaded], deviceStatus };
   }
   async setDenoiseEnabled(enabled: boolean): Promise<void> {

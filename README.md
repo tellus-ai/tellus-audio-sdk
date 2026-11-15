@@ -28,6 +28,8 @@ Desktop의 회의 앱 마이크 동기화 API(`setMeetingSync`·`getMeetingSyncS
 
 close_talk 설정 `closeTalkThresholdDb`(게이트 임계값, 기본 30)와 `denoiseAttenuationLimitDb`(소음 저감 상한, 기본 12), 런타임 setter `setCloseTalkThresholdDb`·`setDenoiseAttenuationLimitDb`는 세 플랫폼 모두 유한한 0..60 dB만 받습니다. 이 API는 엔진 v0.4.5 이상이 필요하며(SDK 0.3.5부터 고정), 그 전 kit에서는 `unsupported`를 냅니다. 상세는 각 플랫폼 README를 참고하세요.
 
+입력 hold API `holdInput()`·`releaseInput()`(상태 `getStatus().inputHeld`)는 앱이 업링크를 끄는 동안(예: TTS 재생) 입력을 보류하는 세 플랫폼 공통 API입니다. 이 API는 엔진 v0.4.5 다음 엔진 릴리즈 이상이 필요하며, 그 전 kit에서는 `unsupported` 오류를 냅니다. 상세는 각 플랫폼 README를 참고하세요.
+
 ```sh
 npm ci --ignore-scripts
 npm run build
