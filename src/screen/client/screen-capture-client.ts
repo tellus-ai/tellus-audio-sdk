@@ -74,7 +74,7 @@ function isOutcome(value: unknown): value is Outcome {
 }
 
 // hello 줄에서 플랫폼 능력을 읽는다. 형식·프로토콜 버전·시계가 맞지 않으면 이유를 돌려준다.
-function readHello(text: string, checkClock: ConnectOptions['checkClock']): { capabilities: CaptureCapabilities; audioRecording: boolean } | string {
+function readHello(text: string, checkClock: ConnectOptions['checkClock']): { capabilities: CaptureCapabilities; audioRecording: boolean; audioRecordingPauseKeepalive: boolean } | string {
   let message: unknown;
   try {
     message = JSON.parse(text);
@@ -95,7 +95,7 @@ function readHello(text: string, checkClock: ConnectOptions['checkClock']): { ca
       : checkClock(remote);
     if (mismatch) return mismatch;
   }
-  return { capabilities: hello.capabilities as unknown as CaptureCapabilities, audioRecording: hello.audioRecording === true };
+  return { capabilities: hello.capabilities as unknown as CaptureCapabilities, audioRecording: hello.audioRecording === true, audioRecordingPauseKeepalive: hello.audioRecordingPauseKeepalive === true };
 }
 
 // Rust u64는 JSON number이므로 안전한 정수 범위를 넘으면 시간을 잘못 해석하지 않고 거부한다.
@@ -108,6 +108,7 @@ function validAudioMetadata(audio: RecordingOutput['audio']): boolean {
 export class ScreenCaptureClient {
   readonly capabilities: CaptureCapabilities;
   readonly recordingAudioSupported: boolean;
+  readonly recordingAudioPauseKeepaliveSupported: boolean;
   readonly #transport: ProtocolTransport;
   readonly #timeoutMs: number;
   readonly #consentTimeoutMs: number;
@@ -118,10 +119,11 @@ export class ScreenCaptureClient {
   #nextId = 0;
   #shutdown: Promise<Outcome> | null = null;
 
-  private constructor(transport: ProtocolTransport, capabilities: CaptureCapabilities, options: ConnectOptions, audioRecording: boolean) {
+  private constructor(transport: ProtocolTransport, capabilities: CaptureCapabilities, options: ConnectOptions, audioRecording: boolean, audioRecordingPauseKeepalive: boolean) {
     this.#transport = transport;
     this.capabilities = capabilities;
     this.recordingAudioSupported = audioRecording && ['macos', 'windows'].includes(capabilities.platform);
+    this.recordingAudioPauseKeepaliveSupported = this.recordingAudioSupported && audioRecordingPauseKeepalive;
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.#consentTimeoutMs = options.consentTimeoutMs ?? DEFAULT_CONSENT_TIMEOUT_MS;
   }
@@ -151,7 +153,7 @@ export class ScreenCaptureClient {
           if (typeof hello === 'string') return fail(hello);
           settled = true;
           clearTimeout(timer);
-          client = new ScreenCaptureClient(transport, hello.capabilities, options, hello.audioRecording);
+          client = new ScreenCaptureClient(transport, hello.capabilities, options, hello.audioRecording, hello.audioRecordingPauseKeepalive);
           resolve({ ok: true, value: client });
         },
         closed: detail => (client ? client.#closed(detail) : fail(detail)),

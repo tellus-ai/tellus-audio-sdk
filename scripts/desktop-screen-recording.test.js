@@ -17,7 +17,8 @@ childProcess.spawn = (file, args, options) => {
 const { ScreenCaptureProcess } = require('../platforms/desktop/runtime/screen/desktop/electron/screen-capture-process.js');
 
 async function fixture(t, old = false) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), old ? 'screen-old-' : 'screen-audio-'));
+  // old=true는 구버전 hello, old='no-keepalive'는 녹화 오디오만 알리고 pause keepalive는 알리지 않는 hello다.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), old === 'no-keepalive' ? 'screen-nokeep-' : old ? 'screen-old-' : 'screen-audio-'));
   const executable = path.join(root, 'host');
   const script = path.join(root, 'host.js');
   fixtureScripts.set(executable, script);
@@ -29,7 +30,7 @@ const audio = {codec:'aac_lc',sampleRate:48000,channels:1,samples:960,gaps:0,pad
 const output = {file:root+'/result.mp4',mediaDurationUs:20000,firstFrame:null,pauses:[],stats:{},interruption:null,audio};
 let snapshot, previousTerminal, lateAfterStart;
 let nextSession = 0;
-send({hello:{protocolVersion:1,...(root.includes('screen-old-')?{}:{audioRecording:true}),monotonicNow:process.hrtime.bigint().toString(),capabilities:{platform:'macos',consent:'system_permission',selection:'programmatic',sourceKinds:['display']}}});
+send({hello:{protocolVersion:1,...(root.includes('screen-old-')?{}:{audioRecording:true,...(root.includes('screen-nokeep-')?{}:{audioRecordingPauseKeepalive:true})}),monotonicNow:process.hrtime.bigint().toString(),capabilities:{platform:'macos',consent:'system_permission',selection:'programmatic',sourceKinds:['display']}}});
 require('node:readline').createInterface({input:process.stdin}).on('line', line => {
   fs.appendFileSync(root+'/commands.jsonl',line+'\\n');
   const {id,command:c}=JSON.parse(line);
@@ -59,8 +60,8 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
   return { recorder: launched.value, child: fixtureChildren.get(executable), commands: () => fs.readFileSync(path.join(root, 'commands.jsonl'), 'utf8').trim().split('\n').map(JSON.parse) };
 }
 function source() {
-  const created = [], stopped = [];
-  return { created, stopped, createRecordingAudioSource() { const token = `token-${created.length}`;created.push(token);return {port:12345,token}; }, stopRecordingAudioSource(token) { stopped.push(token); } };
+  const created = [], stopped = [], options = [];
+  return { created, stopped, options, createRecordingAudioSource(o) { options.push(o); const token = `token-${created.length}`;created.push(token);return {port:12345,token}; }, stopRecordingAudioSource(token) { stopped.push(token); } };
 }
 function config(audioCapture, captureId='a', label='ok') {
   return {captureId,source:{type:'display_at',point:{x:0,y:0}},output:{type:'file',label},captureCursor:true,includeAudio:true,audioCapture};
@@ -223,4 +224,29 @@ test('terminal interruption before the start response still detaches its source'
   assert.deepEqual(capture.stopped,['token-0']);
   assert.equal((await f.recorder.start(config(capture,'next'))).ok,true);
   assert.deepEqual(capture.stopped,['token-0']);
+});
+
+test('screen process exposes pause keepalive support from the hello', async t => {
+  assert.equal((await fixture(t)).recorder.recordingAudioPauseKeepaliveSupported, true);
+  const noKeepalive = (await fixture(t, 'no-keepalive')).recorder;
+  assert.equal(noKeepalive.recordingAudioSupported, true);
+  assert.equal(noKeepalive.recordingAudioPauseKeepaliveSupported, false);
+  assert.equal((await fixture(t, true)).recorder.recordingAudioPauseKeepaliveSupported, false);
+});
+
+test('start validates audioPauseMode and forwards it to the audio source without sending it to the host', async t => {
+  const nk = await fixture(t, 'no-keepalive'), capture = source();
+  const unsupported = await nk.recorder.start({ ...config(capture), audioPauseMode: 'keepalive' });
+  assert.equal(unsupported.ok, false);
+  assert.equal(unsupported.error.detail, 'audioPauseMode keepalive requires recording audio pause keepalive support');
+  const f = await fixture(t), other = source();
+  const unknown = await f.recorder.start({ ...config(other), audioPauseMode: 'freeze' });
+  assert.equal(unknown.error.detail, 'audioPauseMode must be abort or keepalive');
+  assert.equal(other.created.length, 0);
+  assert.equal((await f.recorder.start(config(other, 'a'))).ok, true);
+  assert.deepEqual(other.options, [{ pauseMode: 'abort' }]);
+  await f.recorder.stop();
+  assert.equal((await f.recorder.start({ ...config(other, 'b'), audioPauseMode: 'keepalive' })).ok, true);
+  assert.deepEqual(other.options, [{ pauseMode: 'abort' }, { pauseMode: 'keepalive' }]);
+  assert.equal('audioPauseMode' in f.commands().filter(x => x.command.type === 'start')[1].command.config, false);
 });

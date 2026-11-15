@@ -99,3 +99,14 @@ test('desktop audio recording rejects old native method sets before attaching',(
   assert.throws(()=>capture.createRecordingAudioSource(),/recording_audio_unsupported/);
   assert.equal(attached,0);
 });
+
+test('createRecordingAudioSource forwards pauseMode to the native capture',()=>{
+  const seen=[];
+  const {AudioCapture}=loadWrapper(class{
+    createRecordingAudioSource(options){seen.push(options);return {port:12345,token:'t'};}
+    stopRecordingAudioSource(){}
+  });
+  const capture=new AudioCapture();
+  capture.createRecordingAudioSource({pauseMode:'keepalive'});
+  assert.deepEqual(seen,[{pauseMode:'keepalive'}]);
+});

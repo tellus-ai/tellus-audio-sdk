@@ -953,9 +953,9 @@ export class AudioCapture {
   }
 
   /** 실행 중인 native capture의 DSP 믹스를 화면 녹화에 연결한다. 공유 capture는 계속 caller 소유다. */
-  createRecordingAudioSource(): import('../../../screen/desktop/electron/screen-capture-process.js').RecordingAudioSource {
+  createRecordingAudioSource(options?: import('../../../screen/desktop/electron/screen-capture-process.js').RecordingAudioSourceOptions): import('../../../screen/desktop/electron/screen-capture-process.js').RecordingAudioSource {
     this.#requireRecordingAudioSupport();
-    return this.#native.createRecordingAudioSource();
+    return this.#native.createRecordingAudioSource(options);
   }
 
   /** 이 token의 녹화 sink만 종료한다. capture.stop()을 호출하지 않는다. */

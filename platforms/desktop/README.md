@@ -68,6 +68,28 @@ await recorder.shutdown();
 
 Windows 시험용 엔진·SDK checkout과 로컬 native kit 연결, 장치·재시작·복합 부하·실제 player 검증은 [Windows mixed MP4 인수인계](https://github.com/tellus-ai/Tellus-audio-engine/blob/feat/mp4-mixed-audio-handoff/docs/windows-mp4-mixed-audio-handoff.md)를 따릅니다. 이 소스 PR은 기존 release manifest를 갱신하지 않으므로, 새 SDK 소스만 설치하고 기존0.4.3 native archive로 새 기능을 검증했다고 판정하지 않습니다.
 
+### 일시정지 중 녹화 오디오 연결 유지 (`audioPauseMode`)
+
+기본값은 `'abort'`로, 일시정지 때 녹화 오디오 연결을 끊고 재개하려면 새 연결이 필요합니다. `'keepalive'`는 같은 연결을 유지합니다. 새 native kit가 필요하며, 지원 여부는 `recorder.recordingAudioPauseKeepaliveSupported`로 확인합니다.
+
+```ts
+if (recorder.recordingAudioPauseKeepaliveSupported) {
+  await recorder.start({ /* ... */ includeAudio: true, audioCapture, audioPauseMode: 'keepalive' });
+}
+```
+
+`AudioCapture`를 직접 연결할 때는 `capture.createRecordingAudioSource({ pauseMode: 'keepalive' })`를 씁니다. 방식은 소스를 만들 때 정하며 세션 중에는 바꿀 수 없습니다. `audioPauseMode`는 화면 실행 파일로 전달하지 않습니다.
+
+- 닫힌 게이트 중 일시정지를 허용합니다. 엔진은 일시정지 중과 재개 뒤 첫 PCM 전에만 500ms마다 Keepalive를 보냅니다. 녹화 중에는 보내지 않으므로 오디오가 2초 넘게 멈추면 화면 실행 파일이 `recording audio link idle timeout`으로 실패시킵니다.
+- 열린 게이트 중 일시정지한 구간은 무음으로 기록합니다.
+- `RecordingOutput.pauses`는 정상 결과이며 오류가 아닙니다.
+- 재개 뒤 `resumeWhenReady()`가 끝나면 게이트를 엽니다.
+- 일시정지 중이나 재개 직후 첫 PCM 전에 stop해도 정상 종료합니다.
+- 네이티브 입력 전용입니다. 브라우저 마이크나 마이크 대체 경로는 `recording_audio_requires_native_input`으로 거부합니다.
+- 지원하지 않는 실행 파일에 `'keepalive'`를 요청하면 `start`가 invalid로 거절합니다 (`audioPauseMode must be abort or keepalive`, `audioPauseMode keepalive requires recording audio pause keepalive support`).
+
+새 실패 코드: `recording_audio_invalid_pause_mode`(`pauseMode`가 `'abort'`·`'keepalive'`가 아님), `recording_audio_generation_unavailable`(재개 때 믹서 녹화 세대를 새로 받지 못함). 기존 코드는 바뀌지 않았습니다. 엔진 릴리스 전의 구버전 native에서는 `'keepalive'`가 무시되거나 거부될 수 있습니다.
+
 ## 디지털 게인
 
 ```ts
