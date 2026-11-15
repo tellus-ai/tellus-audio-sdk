@@ -70,6 +70,14 @@ export interface AudioCaptureConfig {
   closeTalkThresholdDb?: number;
   /** close_talk noise attenuation limit in dB (positive magnitude), finite 0..=60, engine default 12. The engine mixes the input back at 10^(-db/20). Changeable at runtime with setDenoiseAttenuationLimitDb; general mode stays unlimited. */
   denoiseAttenuationLimitDb?: number;
+  /** close_talk hold time in ms after open evidence ends, finite 0..=2000, engine default 250. Changeable at runtime with setCloseTalkHoldMs. */
+  closeTalkHoldMs?: number;
+  /** close_talk keep gap in dB: an open gate stays open while lsnr holds closeTalkThresholdDb minus this. Finite 0..=20, engine default 4. Changeable at runtime with setCloseTalkKeepGapDb. */
+  closeTalkKeepGapDb?: number;
+  /** close_talk level margin in dB: a 200 ms level within this of the learned level is open evidence. Finite 0..=20, engine default 2. Changeable at runtime with setCloseTalkLevelMarginDb. */
+  closeTalkLevelMarginDb?: number;
+  /** Learned close_talk speech level (dBFS) to start from, e.g. a previous capture's getStatus().closeTalkLearnedLevelDbfs. Finite -100..=0, or null (default) for none. */
+  closeTalkLearnedLevelDbfs?: number | null;
   /** Enables the native VAD gate. Native default is false. */
   vadEnabled?: boolean;
   /** Processing/mixer settings. */
@@ -174,6 +182,22 @@ export interface AudioChunk {
   sequence?: number;
   /** Missing sample range immediately before this delivered chunk. */
   discontinuity?: AudioDiscontinuity;
+  /** Decisions of the microphone close_talk gate hops behind this chunk's microphone audio; null when the gate did not process it. Absent on native engines without close-talk tuning support. */
+  closeTalkGate?: CloseTalkGateDiagnostics | null;
+}
+
+/** Summary of the close_talk gate's 10 ms hops behind a chunk's microphone audio, aligned with that audio (the 300 ms gate hold is accounted for). */
+export interface CloseTalkGateDiagnostics {
+  /** Whether the last hop was open. */
+  open: boolean;
+  /** Fraction of the chunk's hops that were open, 0..1. */
+  openRatio: number;
+  /** 200 ms average lsnr (dB) at the last hop; null until the window fills. */
+  lsnrDb: number | null;
+  /** 200 ms level (dBFS) at the last hop; null until the window fills. */
+  levelDbfs: number | null;
+  /** Learned level (dBFS) the gate used for the last hop; null when none. */
+  learnedLevelDbfs: number | null;
 }
 
 export interface RecordingBufferBatch {
@@ -200,6 +224,16 @@ export interface CaptureStatus {
   closeTalkThresholdDb?: number;
   /** Applied close_talk noise attenuation limit (dB). Absent on native engines without denoise attenuation limit support. */
   denoiseAttenuationLimitDb?: number;
+  /** Stored close_talk hold time (ms). Absent on native engines without close-talk hold support. */
+  closeTalkHoldMs?: number;
+  /** Stored close_talk keep gap (dB). Absent on native engines without close-talk keep gap support. */
+  closeTalkKeepGapDb?: number;
+  /** Stored close_talk level margin (dB). Absent on native engines without close-talk level margin support. */
+  closeTalkLevelMarginDb?: number;
+  /** Learned level (dBFS, self-learned or injected) the gate uses, the stored injected value while no gate runs, or null. Kept after stop. Absent on native engines without close-talk learned level support. */
+  closeTalkLearnedLevelDbfs?: number | null;
+  /** True only when closeTalkLearnedLevelDbfs comes from self-learning. Absent on native engines without close-talk learned level support. */
+  closeTalkLevelLearned?: boolean;
   aecActive: boolean;
   vadEnabled: boolean;
   vadReady: boolean;
@@ -772,6 +806,11 @@ export class AudioCapture {
     if (config?.micGainDb !== undefined || config?.speakerGainDb !== undefined || config?.autoGainControl !== undefined) this.#requireGainSupport();
     if (config?.closeTalkThresholdDb !== undefined) this.#requireCloseTalkThresholdSupport();
     if (config?.denoiseAttenuationLimitDb !== undefined) this.#requireDenoiseAttenuationLimitSupport();
+    if (config?.closeTalkHoldMs !== undefined) this.#requireCloseTalkHoldSupport();
+    if (config?.closeTalkKeepGapDb !== undefined) this.#requireCloseTalkKeepGapSupport();
+    if (config?.closeTalkLevelMarginDb !== undefined) this.#requireCloseTalkLevelMarginSupport();
+    // null is the engine default (no learned level), so only a value requires the setter.
+    if (config?.closeTalkLearnedLevelDbfs != null) this.#requireCloseTalkLearnedLevelSupport();
     if (config?.deliveryBufferDurationMs !== undefined &&
         typeof this.#native.getStatus().deliveryQueueCapacityBytes !== 'number') {
       throw new Error('delivery_buffer_unsupported: install a native engine with configurable delivery retention');
@@ -838,6 +877,30 @@ export class AudioCapture {
     }
   }
 
+  #requireCloseTalkHoldSupport(): void {
+    if (typeof this.#native.setCloseTalkHoldMs !== 'function') {
+      throw new Error('close_talk_hold_unsupported: install a native engine with close-talk hold support');
+    }
+  }
+
+  #requireCloseTalkKeepGapSupport(): void {
+    if (typeof this.#native.setCloseTalkKeepGapDb !== 'function') {
+      throw new Error('close_talk_keep_gap_unsupported: install a native engine with close-talk keep gap support');
+    }
+  }
+
+  #requireCloseTalkLevelMarginSupport(): void {
+    if (typeof this.#native.setCloseTalkLevelMarginDb !== 'function') {
+      throw new Error('close_talk_level_margin_unsupported: install a native engine with close-talk level margin support');
+    }
+  }
+
+  #requireCloseTalkLearnedLevelSupport(): void {
+    if (typeof this.#native.setCloseTalkLearnedLevelDbfs !== 'function') {
+      throw new Error('close_talk_learned_level_unsupported: install a native engine with close-talk learned level support');
+    }
+  }
+
   /** Updates digital microphone gain without changing OS input volume or original raw PCM. */
   setMicGainDb(db: number): void {
     validateGainDb(db);
@@ -874,6 +937,34 @@ export class AudioCapture {
   setDenoiseAttenuationLimitDb(db: number): void {
     this.#requireDenoiseAttenuationLimitSupport();
     this.#native.setDenoiseAttenuationLimitDb(db);
+  }
+
+  /** Updates the close_talk hold time from the next 10 ms hop, keeping held audio and learning. The native engine rejects values outside finite 0..=2000. */
+  setCloseTalkHoldMs(ms: number): void {
+    this.#requireCloseTalkHoldSupport();
+    this.#native.setCloseTalkHoldMs(ms);
+  }
+
+  /** Updates the close_talk keep gap from the next 10 ms hop, keeping held audio and learning. The native engine rejects values outside finite 0..=20. */
+  setCloseTalkKeepGapDb(db: number): void {
+    this.#requireCloseTalkKeepGapSupport();
+    this.#native.setCloseTalkKeepGapDb(db);
+  }
+
+  /** Updates the close_talk level margin from the next 10 ms hop, keeping held audio and learning. The native engine rejects values outside finite 0..=20. */
+  setCloseTalkLevelMarginDb(db: number): void {
+    this.#requireCloseTalkLevelMarginSupport();
+    this.#native.setCloseTalkLevelMarginDb(db);
+  }
+
+  /**
+   * Clears the close_talk learning history and sets the learned level to dbfs (finite -100..=0), or clears it with null.
+   * Learning survives pause/resume, stop/start and microphone restarts within this capture, so pass null after switching the input device.
+   * The native engine rejects other values.
+   */
+  setCloseTalkLearnedLevelDbfs(dbfs: number | null): void {
+    this.#requireCloseTalkLearnedLevelSupport();
+    this.#native.setCloseTalkLearnedLevelDbfs(dbfs);
   }
 
   /** Mutes or unmutes the microphone from the next chunk. The device stays open and sound during mute is discarded. */
