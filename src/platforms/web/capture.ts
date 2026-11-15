@@ -6,7 +6,7 @@ import type { AudioDeviceStatus } from '../../bindings/typescript/audio-devices.
 import { validateGainDb } from '../../bindings/typescript/audio-gain.js';
 import { CaptureQueue, type CaptureFrame } from './capture-queue.js';
 import { audioDeviceError } from './devices.js';
-import { validateCloseTalkHoldMs, validateCloseTalkKeepGapDb, validateCloseTalkLearnedLevelDbfs, validateCloseTalkLevelMarginDb, validateCloseTalkThresholdDb, validateDenoiseAttenuationLimitDb, type DeliveredChunk, type WorkerCommand, type WorkerStatus } from './protocol.js';
+import { validateCloseTalkHoldMs, validateCloseTalkKeepGapDb, validateCloseTalkLearnedLevelDbfs, validateCloseTalkLevelMarginDb, validateCloseTalkThresholdDb, validateDenoiseAttenuationLimitDb, validateGeneralDenoiseAttenuationLimitDb, type DeliveredChunk, type WorkerCommand, type WorkerStatus } from './protocol.js';
 import { WorkerClient } from './worker-client.js';
 
 interface NativeAuthorizationStatus {
@@ -17,9 +17,9 @@ interface NativeAuthorizationStatus {
   connection_id?: string;
 }
 
-type DenoiseSetting = 'closeTalkThresholdDb' | 'denoiseAttenuationLimitDb' | 'closeTalkHoldMs' | 'closeTalkKeepGapDb' | 'closeTalkLevelMarginDb' | 'closeTalkLearnedLevelDbfs';
+type DenoiseSetting = 'closeTalkThresholdDb' | 'denoiseAttenuationLimitDb' | 'closeTalkHoldMs' | 'closeTalkKeepGapDb' | 'closeTalkLevelMarginDb' | 'closeTalkLearnedLevelDbfs' | 'generalDenoiseAttenuationLimitDb';
 /** The order in which start sends them to native after the session is created. */
-const DENOISE_SETTINGS: DenoiseSetting[] = ['closeTalkThresholdDb', 'denoiseAttenuationLimitDb', 'closeTalkHoldMs', 'closeTalkKeepGapDb', 'closeTalkLevelMarginDb', 'closeTalkLearnedLevelDbfs'];
+const DENOISE_SETTINGS: DenoiseSetting[] = ['closeTalkThresholdDb', 'denoiseAttenuationLimitDb', 'closeTalkHoldMs', 'closeTalkKeepGapDb', 'closeTalkLevelMarginDb', 'closeTalkLearnedLevelDbfs', 'generalDenoiseAttenuationLimitDb'];
 
 /** Manages main-thread lifecycle and OS routing. Rust produces the processed samples. */
 /** Validates the value with the same rules as core and builds the worker command. Invalid values are rejected before reaching the worker. */
@@ -31,6 +31,7 @@ function denoiseSettingCommand(setting: DenoiseSetting, value: number | null): W
     case 'closeTalkKeepGapDb': return { operation: setting, db: validateCloseTalkKeepGapDb(value as number) };
     case 'closeTalkLevelMarginDb': return { operation: setting, db: validateCloseTalkLevelMarginDb(value as number) };
     case 'closeTalkLearnedLevelDbfs': return { operation: setting, dbfs: validateCloseTalkLearnedLevelDbfs(value) };
+    case 'generalDenoiseAttenuationLimitDb': return { operation: setting, db: validateGeneralDenoiseAttenuationLimitDb(value) };
   }
 }
 
@@ -77,7 +78,9 @@ export class BrowserCapture implements AudioCapture {
     this.unappliedDenoiseSettings = { closeTalkThresholdDb: config.closeTalkThresholdDb, denoiseAttenuationLimitDb: config.denoiseAttenuationLimitDb,
       closeTalkHoldMs: config.closeTalkHoldMs, closeTalkKeepGapDb: config.closeTalkKeepGapDb, closeTalkLevelMarginDb: config.closeTalkLevelMarginDb,
       // null means no injection (the default), so there is nothing to send.
-      closeTalkLearnedLevelDbfs: config.closeTalkLearnedLevelDbfs ?? undefined };
+      closeTalkLearnedLevelDbfs: config.closeTalkLearnedLevelDbfs ?? undefined,
+      // null means unlimited (the default), so there is nothing to send.
+      generalDenoiseAttenuationLimitDb: config.generalDenoiseAttenuationLimitDb ?? undefined };
     this.ready = client.request<number>(0, 0, { operation: 'create', config }).then((id) => {
       this.sessionId = id;
       if (this.epoch) client.cancel(id, this.epoch);
@@ -248,6 +251,7 @@ export class BrowserCapture implements AudioCapture {
       closeTalkThresholdDb: status.close_talk_threshold_db ?? undefined, denoiseAttenuationLimitDb: status.denoise_attenuation_limit_db ?? undefined,
       closeTalkHoldMs: status.close_talk_hold_ms ?? undefined, closeTalkKeepGapDb: status.close_talk_keep_gap_db ?? undefined,
       closeTalkLevelMarginDb: status.close_talk_level_margin_db ?? undefined,
+      ...(status.general_denoise_attenuation_limit_db === undefined ? {} : { generalDenoiseAttenuationLimitDb: status.general_denoise_attenuation_limit_db }),
       ...(status.close_talk_learned_level_dbfs === undefined ? {} : { closeTalkLearnedLevelDbfs: status.close_talk_learned_level_dbfs }),
       ...(typeof status.close_talk_level_learned === 'boolean' ? { closeTalkLevelLearned: status.close_talk_level_learned } : {}),
       deviceStatus: [this.deviceStatus, ...(this.playbackDeviceStatus ? [this.playbackDeviceStatus] : [])],
@@ -351,6 +355,10 @@ export class BrowserCapture implements AudioCapture {
   }
 
   /** null clears both the injected learned level and the gate's own learned value. Apps that switch the input device call it with null. */
+  setGeneralDenoiseAttenuationLimitDb(db: number | null): Promise<void> {
+    return this.setDenoiseSetting('generalDenoiseAttenuationLimitDb', db);
+  }
+
   setCloseTalkLearnedLevelDbfs(dbfs: number | null): Promise<void> {
     return this.setDenoiseSetting('closeTalkLearnedLevelDbfs', dbfs);
   }

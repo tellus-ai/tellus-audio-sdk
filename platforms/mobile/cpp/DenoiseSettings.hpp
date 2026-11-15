@@ -22,5 +22,8 @@ DenoiseSettingFn resolveSetCloseTalkKeepGapDb();
 DenoiseSettingFn resolveSetCloseTalkLevelMarginDb();
 DenoiseSettingFn resolveSetCloseTalkLearnedLevelDbfs();
 DenoiseClearFn resolveClearCloseTalkLearnedLevel();
+// General-mode attenuation limit set and clear. nullptr when the linked engine kit predates them.
+DenoiseSettingFn resolveSetGeneralDenoiseAttenuationLimitDb();
+DenoiseClearFn resolveClearGeneralDenoiseAttenuationLimit();
 
 } // namespace margelo::nitro::tellus

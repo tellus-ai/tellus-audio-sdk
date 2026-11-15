@@ -12,6 +12,8 @@ DenoiseSettingFn (*HybridTellusCapture::_closeTalkKeepGapResolver)() = resolveSe
 DenoiseSettingFn (*HybridTellusCapture::_closeTalkLevelMarginResolver)() = resolveSetCloseTalkLevelMarginDb;
 DenoiseSettingFn (*HybridTellusCapture::_closeTalkLearnedLevelResolver)() = resolveSetCloseTalkLearnedLevelDbfs;
 DenoiseClearFn (*HybridTellusCapture::_clearCloseTalkLearnedLevelResolver)() = resolveClearCloseTalkLearnedLevel;
+DenoiseSettingFn (*HybridTellusCapture::_generalDenoiseAttenuationLimitResolver)() = resolveSetGeneralDenoiseAttenuationLimitDb;
+DenoiseClearFn (*HybridTellusCapture::_clearGeneralDenoiseAttenuationLimitResolver)() = resolveClearGeneralDenoiseAttenuationLimit;
 InputHoldFn (*HybridTellusCapture::_holdInputResolver)() = resolveHoldInput;
 InputHoldFn (*HybridTellusCapture::_releaseInputResolver)() = resolveReleaseInput;
 
@@ -298,6 +300,32 @@ std::shared_ptr<Promise<void>> HybridTellusCapture::setDenoiseAttenuationLimitDb
 
 void HybridTellusCapture::setDenoiseAttenuationLimitResolverForTesting(DenoiseSettingFn (*resolver)()) {
   _denoiseAttenuationLimitResolver = resolver;
+}
+
+std::shared_ptr<Promise<void>> HybridTellusCapture::setGeneralDenoiseAttenuationLimitDb(const std::optional<std::variant<nitro::NullType, double>>& db) {
+  // The generated spec passes JS null as NullType and an omitted value as an empty optional; both clear the limit.
+  const auto* number = db ? std::get_if<double>(&*db) : nullptr;
+  if (number && (!std::isfinite(*number) || *number < 0 || *number > 60)) throw std::invalid_argument("invalid_general_denoise_attenuation_limit_db");
+  auto session = acquire();
+  // null clears the limit. The C ABI setter rejects NaN, so null goes through the clear function.
+  if (!number) {
+    const auto clear = _clearGeneralDenoiseAttenuationLimitResolver();
+    if (!clear) throw std::runtime_error("tellus_general_denoise_attenuation_limit_unsupported");
+    return session->submit([state = session.get(), clear] { state->check(clear(state->handle)); });
+  }
+  const auto setLimit = _generalDenoiseAttenuationLimitResolver();
+  if (!setLimit) throw std::runtime_error("tellus_general_denoise_attenuation_limit_unsupported");
+  return session->submit([state = session.get(), setLimit, value = *number] {
+    state->check(setLimit(state->handle, static_cast<float>(value)));
+  });
+}
+
+void HybridTellusCapture::setGeneralDenoiseAttenuationLimitResolverForTesting(DenoiseSettingFn (*resolver)()) {
+  _generalDenoiseAttenuationLimitResolver = resolver;
+}
+
+void HybridTellusCapture::setClearGeneralDenoiseAttenuationLimitResolverForTesting(DenoiseClearFn (*resolver)()) {
+  _clearGeneralDenoiseAttenuationLimitResolver = resolver;
 }
 
 std::shared_ptr<Promise<void>> HybridTellusCapture::holdInput() {

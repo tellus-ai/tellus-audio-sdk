@@ -33,7 +33,7 @@ function engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gai
       if (name === 'tellus_audio_session_configure') configured.push(JSON.parse(text(args[1], args[2])));
       if (name === 'tellus_audio_session_hold_input' || name === 'tellus_audio_session_release_input') holds.push([name, ...args]);
       if (name === 'tellus_audio_session_set_mic_gain_db') gains.push([...args]);
-      if (/^tellus_audio_session_(set_close_talk_(hold_ms|keep_gap_db|level_margin_db|learned_level_dbfs)|clear_close_talk_learned_level)$/.test(name)) tuningCalls.push([name.slice('tellus_audio_session_'.length), ...args.slice(1)]);
+      if (/^tellus_audio_session_(set_close_talk_(hold_ms|keep_gap_db|level_margin_db|learned_level_dbfs)|clear_close_talk_learned_level|set_general_denoise_attenuation_limit_db|clear_general_denoise_attenuation_limit)$/.test(name)) tuningCalls.push([name.slice('tellus_audio_session_'.length), ...args.slice(1)]);
       if (name === 'tellus_audio_session_set_close_talk_threshold_db') thresholds.push([...args]);
       if (name === 'tellus_audio_session_set_denoise_attenuation_limit_db') limits.push([...args]);
       if (name === 'tellus_audio_session_model_key_request') reply({ public_key: 'b'.repeat(64) }, args[1], args[3]);
@@ -267,6 +267,20 @@ test('close_talk 튜닝 setter는 export가 있으면 검증 후 native에 전�
     [{ operation: 'closeTalkLearnedLevelDbfs', dbfs: Number.NaN }, /invalid_close_talk_learned_level_dbfs/],
   ]) assert.match((await send(id, command)).error, pattern);
   assert.equal(tuningCalls.length, 5);
+});
+
+test('general 모드 감쇠 한도 setter는 값은 set, null은 clear로 보내고 검증·취소·미지원을 처리한다', async () => {
+  const { send, tuningCalls } = await worker([], { tuning: ['set_general_denoise_attenuation_limit_db', 'clear_general_denoise_attenuation_limit'] });
+  const { result: id } = await send(0, { operation: 'create', config: {} });
+  for (const db of [6, 0, 60, null]) assert.equal((await send(id, { operation: 'generalDenoiseAttenuationLimitDb', db })).error, undefined);
+  assert.deepEqual(tuningCalls, [['set_general_denoise_attenuation_limit_db', 6], ['set_general_denoise_attenuation_limit_db', 0], ['set_general_denoise_attenuation_limit_db', 60], ['clear_general_denoise_attenuation_limit']]);
+  assert.match((await send(id, { operation: 'generalDenoiseAttenuationLimitDb', db: null }, 1)).error, /tellus_capture_cancelled/);
+  for (const db of [-1, 61, Number.NaN, '6', undefined]) assert.match((await send(id, { operation: 'generalDenoiseAttenuationLimitDb', db })).error, /invalid_general_denoise_attenuation_limit_db: expected a finite value within 0\.\.=60 or null/);
+  assert.equal(tuningCalls.length, 4);
+  const old = await worker([]);
+  const { result: other } = await old.send(0, { operation: 'create', config: {} });
+  for (const db of [6, null]) assert.match((await old.send(other, { operation: 'generalDenoiseAttenuationLimitDb', db })).error, /tellus_general_denoise_attenuation_limit_unsupported/);
+  assert.deepEqual(old.tuningCalls, []);
 });
 
 test('close_talk 튜닝 export가 없는 엔진은 native 호출 없이 각 setter를 거부한다', async () => {

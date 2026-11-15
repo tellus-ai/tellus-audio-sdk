@@ -23,6 +23,8 @@ const settings = [
     error: 'close_talk_level_margin_unsupported: install a native engine with close-talk level margin support' },
   { key: 'closeTalkLearnedLevelDbfs', setter: 'setCloseTalkLearnedLevelDbfs', value: -18,
     error: 'close_talk_learned_level_unsupported: install a native engine with close-talk learned level support' },
+  { key: 'generalDenoiseAttenuationLimitDb', setter: 'setGeneralDenoiseAttenuationLimitDb', value: 9,
+    error: 'general_denoise_attenuation_limit_unsupported: install a native engine with general-mode attenuation limit support' },
 ];
 
 test('desktop close-talk tuning rejects each setting on a native engine without its own setter', () => {
@@ -84,5 +86,31 @@ test('desktop learned-level setter rejects undefined instead of letting native c
   assert.throws(() => capture.setCloseTalkLearnedLevelDbfs(), { message });
   assert.throws(() => capture.setCloseTalkLearnedLevelDbfs(1), { message });
   assert.throws(() => capture.setCloseTalkLearnedLevelDbfs('-10'), { message });
+  assert.deepEqual(calls, []);
+});
+
+test('desktop general denoise attenuation limit null config needs no setter, values reach native, and status passes through', () => {
+  const Bare = wrapper(class { constructor() {} });
+  assert.doesNotThrow(() => new Bare({ generalDenoiseAttenuationLimitDb: null }));
+  const calls = [];
+  const Capture = wrapper(class {
+    constructor(config) { calls.push(['config', config.generalDenoiseAttenuationLimitDb]); }
+    setGeneralDenoiseAttenuationLimitDb(db) { calls.push(['set', db]); }
+    getStatus() { return { generalDenoiseAttenuationLimitDb: 9 }; }
+  });
+  const capture = new Capture({ generalDenoiseAttenuationLimitDb: 9 });
+  assert.equal(capture.getStatus().generalDenoiseAttenuationLimitDb, 9);
+  capture.setGeneralDenoiseAttenuationLimitDb(0);
+  capture.setGeneralDenoiseAttenuationLimitDb(60);
+  capture.setGeneralDenoiseAttenuationLimitDb(null);
+  assert.deepEqual(calls, [['config', 9], ['set', 0], ['set', 60], ['set', null]]);
+});
+
+test('desktop general denoise attenuation limit setter rejects undefined and out-of-range values instead of letting native clear it', () => {
+  const calls = [];
+  const capture = new (wrapper(class { setGeneralDenoiseAttenuationLimitDb(db) { calls.push(db); } }))();
+  const message = 'invalid_general_denoise_attenuation_limit_db: expected a finite value within 0..=60 or null';
+  for (const value of [undefined, -1, 61, NaN, Infinity, '6']) assert.throws(() => capture.setGeneralDenoiseAttenuationLimitDb(value), { message });
+  assert.throws(() => capture.setGeneralDenoiseAttenuationLimitDb(), { message });
   assert.deepEqual(calls, []);
 });

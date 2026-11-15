@@ -8,6 +8,8 @@ extern "C" int32_t tellus_audio_session_set_close_talk_keep_gap_db(TellusAudioSe
 extern "C" int32_t tellus_audio_session_set_close_talk_level_margin_db(TellusAudioSession* session, float db) __attribute__((weak));
 extern "C" int32_t tellus_audio_session_set_close_talk_learned_level_dbfs(TellusAudioSession* session, float dbfs) __attribute__((weak));
 extern "C" int32_t tellus_audio_session_clear_close_talk_learned_level(TellusAudioSession* session) __attribute__((weak));
+extern "C" int32_t tellus_audio_session_set_general_denoise_attenuation_limit_db(TellusAudioSession* session, float db) __attribute__((weak));
+extern "C" int32_t tellus_audio_session_clear_general_denoise_attenuation_limit(TellusAudioSession* session) __attribute__((weak));
 
 namespace margelo::nitro::tellus {
 
@@ -37,6 +39,13 @@ DenoiseSettingFn resolveSetCloseTalkLearnedLevelDbfs() {
 
 DenoiseClearFn resolveClearCloseTalkLearnedLevel() {
   return &tellus_audio_session_clear_close_talk_learned_level;
+}
+DenoiseSettingFn resolveSetGeneralDenoiseAttenuationLimitDb() {
+  return &tellus_audio_session_set_general_denoise_attenuation_limit_db;
+}
+
+DenoiseClearFn resolveClearGeneralDenoiseAttenuationLimit() {
+  return &tellus_audio_session_clear_general_denoise_attenuation_limit;
 }
 
 } // namespace margelo::nitro::tellus

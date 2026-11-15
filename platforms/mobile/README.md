@@ -75,6 +75,8 @@ await capture.setDenoiseAttenuationLimitDb(9);
 
 `getStatus()`의 `closeTalkThresholdDb`·`denoiseAttenuationLimitDb`는 선택 필드이며, 지원하지 않는 엔진에서는 없습니다(`undefined`). 범위를 벗어나거나 유한하지 않은 값은 `invalid_close_talk_threshold_db`·`invalid_denoise_attenuation_limit_db`. 이 API는 엔진 v0.4.5 이상이 필요하며, 구형 kit에서는 `tellus_close_talk_threshold_unsupported`·`tellus_denoise_attenuation_limit_unsupported`로 Promise를 거부합니다. C++ 글루는 약한 참조로 엔진 심볼을 찾고, podspec의 `-Wl,-U` 플래그로 구형 라이브러리와도 링크됩니다.
 
+general 모드는 `generalDenoiseAttenuationLimitDb`를 지정하지 않으면 소음 저감 상한이 없는 무제한입니다. 유한한 0..60 dB를 주면 general 모드에서 입력을 10^(-db/20) 비율로 되섞어 저감을 제한하고(close_talk에는 영향 없음), `await capture.setGeneralDenoiseAttenuationLimitDb(9)`로 런타임에 바꾸며 `null`은 무제한으로 되돌립니다. `getStatus().generalDenoiseAttenuationLimitDb`는 선택 필드입니다. 범위를 벗어난 값은 `invalid_general_denoise_attenuation_limit_db`, 구버전 kit은 `tellus_general_denoise_attenuation_limit_unsupported`입니다. 엔진 v0.4.8 이상이 필요합니다.
+
 ## close_talk 튜닝(유지 시간·유지 폭·레벨 여유·학습 레벨)
 
 ```ts

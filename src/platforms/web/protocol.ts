@@ -16,6 +16,8 @@ export interface NativeStatus {
   close_talk_threshold_db?: number | null;
   /** Absent on engines without denoise attenuation limit support. null only before configure, and worker sessions are configured when they are created. */
   denoise_attenuation_limit_db?: number | null;
+  /** Absent on engines without general-mode attenuation limit support. null means unlimited. */
+  general_denoise_attenuation_limit_db?: number | null;
   /** Absent on engines without close-talk tuning support. null only before configure. */
   close_talk_hold_ms?: number | null;
   close_talk_keep_gap_db?: number | null;
@@ -49,6 +51,7 @@ export type WorkerCommand =
   | { operation: 'closeTalkLevelMarginDb'; db: number }
   | { operation: 'closeTalkLearnedLevelDbfs'; dbfs: number | null }
   | { operation: 'denoiseAttenuationLimitDb'; db: number }
+  | { operation: 'generalDenoiseAttenuationLimitDb'; db: number | null }
   | { operation: 'holdInput' | 'releaseInput' }
   | { operation: 'start' | 'pause' | 'resume' | 'stop' | 'reset' | 'destroy' | 'invalidate' | 'status' | 'authorizationStatus' | 'modelRequests' | 'clearRender' };
 
@@ -115,6 +118,13 @@ export function validateCloseTalkLearnedLevelDbfs(dbfs: number | null): number |
   if (dbfs === null) return null;
   if (typeof dbfs !== 'number' || !Number.isFinite(dbfs) || dbfs < -100 || dbfs > 0) throw new Error('invalid_close_talk_learned_level_dbfs: expected a finite value within -100..=0 or null');
   return dbfs;
+}
+
+/** Validates the general-mode attenuation limit (finite 0..=60 dB, or null for unlimited) and returns it. Only null clears. */
+export function validateGeneralDenoiseAttenuationLimitDb(db: number | null): number | null {
+  if (db === null) return null;
+  if (typeof db !== 'number' || !Number.isFinite(db) || db < 0 || db > 60) throw new Error('invalid_general_denoise_attenuation_limit_db: expected a finite value within 0..=60 or null');
+  return db;
 }
 
 /** Validates the close_talk noise attenuation limit with the same rule as core (finite 0..=60 dB) and returns it. Otherwise throws tellus_denoise_attenuation_limit_db_invalid. */

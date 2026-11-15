@@ -295,6 +295,7 @@ test('범위를 벗어난 close_talk 튜닝 설정은 init을 거부한다', asy
     ['closeTalkKeepGapDb', [-1, 21, Infinity], /invalid_close_talk_keep_gap_db/],
     ['closeTalkLevelMarginDb', [-1, 21, Number.NaN], /invalid_close_talk_level_margin_db/],
     ['closeTalkLearnedLevelDbfs', [-101, 1, Number.NaN], /invalid_close_talk_learned_level_dbfs/],
+    ['generalDenoiseAttenuationLimitDb', [-1, 61, Number.NaN, '6'], /invalid_general_denoise_attenuation_limit_db/],
   ]) for (const value of values) await assert.rejects(AudioEngine.init({ [key]: value }, assets), pattern);
 });
 

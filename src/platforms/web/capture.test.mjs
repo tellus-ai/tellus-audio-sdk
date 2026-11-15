@@ -1053,7 +1053,9 @@ const TUNING = [
   ['closeTalkKeepGapDb', 'setCloseTalkKeepGapDb', 'db', 6, 0, 20, [-1, 21, NaN, Infinity, null, '1'], /invalid_close_talk_keep_gap_db/, /tellus_close_talk_keep_gap_unsupported/],
   ['closeTalkLevelMarginDb', 'setCloseTalkLevelMarginDb', 'db', 3, 0, 20, [-1, 21, NaN, Infinity, null, '1'], /invalid_close_talk_level_margin_db/, /tellus_close_talk_level_margin_unsupported/],
   ['closeTalkLearnedLevelDbfs', 'setCloseTalkLearnedLevelDbfs', 'dbfs', -40, -100, 0, [-101, 1, NaN, Infinity, '1', undefined], /invalid_close_talk_learned_level_dbfs/, /tellus_close_talk_learned_level_unsupported/],
+  ['generalDenoiseAttenuationLimitDb', 'setGeneralDenoiseAttenuationLimitDb', 'db', 6, 0, 60, [-1, 61, NaN, Infinity, '1', undefined], /invalid_general_denoise_attenuation_limit_db/, /tellus_general_denoise_attenuation_limit_unsupported/],
 ];
+const NULLABLE_TUNING = ['closeTalkLearnedLevelDbfs', 'generalDenoiseAttenuationLimitDb'];
 
 test('close-talk tuning setters validate before the worker and send values in order', async () => {
   for (const [operation, setter, field, configured, low, high, invalid, invalidError] of TUNING) {
@@ -1063,8 +1065,8 @@ test('close-talk tuning setters validate before the worker and send values in or
     assert.equal(commands.includes(operation), false);
     await capture[setter](low);
     await capture[setter](high);
-    if (operation === 'closeTalkLearnedLevelDbfs') await capture[setter](null);
-    assert.deepEqual(values, operation === 'closeTalkLearnedLevelDbfs' ? [low, high, null] : [low, high]);
+    if (NULLABLE_TUNING.includes(operation)) await capture[setter](null);
+    assert.deepEqual(values, NULLABLE_TUNING.includes(operation) ? [low, high, null] : [low, high]);
     await capture.dispose();
   }
 });
@@ -1085,14 +1087,15 @@ test('configured close-talk tuning values are applied once, in order, between cr
   const early = environment(responses, configured);
   await early.capture.setCloseTalkHoldMs(100);
   await early.capture.setCloseTalkLearnedLevelDbfs(null);
+  await early.capture.setGeneralDenoiseAttenuationLimitDb(null);
   const earlyStart = early.capture.start(() => {});
   await flush();
   early.permissions[0](stream('mic-a'));
   await earlyStart;
-  assert.deepEqual(sent.filter(([operation]) => operation === 'closeTalkHoldMs' || operation === 'closeTalkLearnedLevelDbfs'), [['closeTalkHoldMs', 100], ['closeTalkLearnedLevelDbfs', null]]);
+  assert.deepEqual(sent.filter(([operation]) => operation === 'closeTalkHoldMs' || operation === 'closeTalkLearnedLevelDbfs' || operation === 'generalDenoiseAttenuationLimitDb'), [['closeTalkHoldMs', 100], ['closeTalkLearnedLevelDbfs', null], ['generalDenoiseAttenuationLimitDb', null]]);
   await early.capture.dispose();
   sent.length = 0;
-  const nullConfig = environment(responses, { closeTalkLearnedLevelDbfs: null });
+  const nullConfig = environment(responses, { closeTalkLearnedLevelDbfs: null, generalDenoiseAttenuationLimitDb: null });
   const nullStart = nullConfig.capture.start(() => {});
   await flush();
   nullConfig.permissions[0](stream('mic-a'));
@@ -1106,6 +1109,16 @@ test('an unsupported configured close-talk tuning value fails start before nativ
     const { capture, commands } = environment({ [operation]: () => { throw new Error(unsupportedError.source.replace(/\\/g, '')); } }, { [operation]: value });
     await assert.rejects(capture.start(() => {}), unsupportedError);
     assert.equal(commands.includes('start'), false);
+    await capture.dispose();
+  }
+});
+
+test('status maps the general denoise attenuation limit, keeping null and leaving it absent on old engines', async () => {
+  for (const [json, expected] of [[{ general_denoise_attenuation_limit_db: 9 }, 9], [{ general_denoise_attenuation_limit_db: null }, null], [{}, undefined]]) {
+    const { capture } = environment({ status: () => ({ lifecycle: 'stopped', denoise_enabled: false, denoise_loaded: false, vad_loaded: false, ...json }) });
+    const status = await capture.getStatus();
+    assert.equal(status.generalDenoiseAttenuationLimitDb, expected);
+    assert.equal('generalDenoiseAttenuationLimitDb' in status, expected !== undefined);
     await capture.dispose();
   }
 });

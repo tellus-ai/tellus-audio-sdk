@@ -361,6 +361,8 @@ const tuning = [
     invalid: [NaN, Infinity, -1, 21, null, '2'], message: 'invalid_close_talk_level_margin_db: expected a finite value within 0..=20' },
   { setter: 'setCloseTalkLearnedLevelDbfs', key: 'closeTalkLearnedLevelDbfs', unsupported: 'tellus_close_talk_learned_level_unsupported', valid: -40,
     invalid: [NaN, Infinity, -101, 1, undefined, '-40'], message: 'invalid_close_talk_learned_level_dbfs: expected a finite value within -100..=0 or null' },
+  { setter: 'setGeneralDenoiseAttenuationLimitDb', key: 'generalDenoiseAttenuationLimitDb', unsupported: 'tellus_general_denoise_attenuation_limit_unsupported', valid: 6,
+    invalid: [NaN, Infinity, -1, 61, undefined, '6'], message: 'invalid_general_denoise_attenuation_limit_db: expected a finite value within 0..=60 or null' },
 ];
 
 for (const { setter, key, unsupported, valid, invalid, message } of tuning) {
@@ -423,6 +425,30 @@ test('setCloseTalkLearnedLevelDbfs(null) reaches native as null, old kits reject
   delete native.setCloseTalkLearnedLevelDbfs;
   await (await create({ closeTalkLearnedLevelDbfs: null })).start(() => {});
   await assert.rejects(capture.setCloseTalkLearnedLevelDbfs(null), /tellus_close_talk_learned_level_unsupported/);
+});
+
+test('setGeneralDenoiseAttenuationLimitDb(null) reaches native as null, old kits reject, and an initial null never calls the setter', async () => {
+  const { native, create } = fixture();
+  const applied = [];
+  native.setGeneralDenoiseAttenuationLimitDb = async value => { applied.push(value); };
+  const capture = await create({ generalDenoiseAttenuationLimitDb: null });
+  await capture.setGeneralDenoiseAttenuationLimitDb(null);
+  await capture.setGeneralDenoiseAttenuationLimitDb(0);
+  await capture.setGeneralDenoiseAttenuationLimitDb(60);
+  assert.deepEqual(applied, [null, 0, 60]);
+  delete native.setGeneralDenoiseAttenuationLimitDb;
+  await (await create({ generalDenoiseAttenuationLimitDb: null })).start(() => {});
+  await assert.rejects(capture.setGeneralDenoiseAttenuationLimitDb(null), /tellus_general_denoise_attenuation_limit_unsupported/);
+});
+
+test('status reports the general denoise attenuation limit, null when unlimited, and undefined on old status JSON', async () => {
+  const { native, create } = fixture();
+  native.getStatus = async () => JSON.stringify({ lifecycle: 'idle', denoise_enabled: true, general_denoise_attenuation_limit_db: 9 });
+  assert.equal((await (await create()).getStatus()).generalDenoiseAttenuationLimitDb, 9);
+  native.getStatus = async () => JSON.stringify({ lifecycle: 'idle', denoise_enabled: true, general_denoise_attenuation_limit_db: null });
+  assert.equal((await (await create()).getStatus()).generalDenoiseAttenuationLimitDb, null);
+  native.getStatus = async () => JSON.stringify({ lifecycle: 'idle', denoise_enabled: true });
+  assert.equal((await (await create()).getStatus()).generalDenoiseAttenuationLimitDb, undefined);
 });
 
 test('status reports the close_talk tuning values and learned level, and old status JSON leaves them undefined', async () => {

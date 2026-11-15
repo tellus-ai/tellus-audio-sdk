@@ -1,7 +1,7 @@
 import type { AudioCaptureConfig, BrowserEngineAssets } from '../../bindings/typescript/capture-types.js';
 import { validateGainDb } from '../../bindings/typescript/audio-gain.js';
 import { NativeEngine, type EngineModule, type NativeCapture } from './native.js';
-import { isVadModel, type DeliveredChunk, type NativeStatus, validateCloseTalkHoldMs, validateCloseTalkKeepGapDb, validateCloseTalkLearnedLevelDbfs, validateCloseTalkLevelMarginDb, validateCloseTalkThresholdDb, validateDenoiseAttenuationLimitDb, type WorkerCommand, type WorkerRequest, type WorkerResponse, WorkerStatus } from './protocol.js';
+import { isVadModel, type DeliveredChunk, type NativeStatus, validateCloseTalkHoldMs, validateCloseTalkKeepGapDb, validateCloseTalkLearnedLevelDbfs, validateCloseTalkLevelMarginDb, validateCloseTalkThresholdDb, validateDenoiseAttenuationLimitDb, validateGeneralDenoiseAttenuationLimitDb, type WorkerCommand, type WorkerRequest, type WorkerResponse, WorkerStatus } from './protocol.js';
 
 interface EncryptedModel {
   model_id: string;
@@ -94,7 +94,7 @@ async function dispatch(request: WorkerRequest): Promise<unknown> {
   // Hold and release are idempotent state changes, so they apply in call order even after the epoch changes. Cancelling would leave the engine held after reset() or drop the hold.
   const epochExempt = command.operation === 'invalidate' || command.operation === 'destroy' || command.operation === 'holdInput' || command.operation === 'releaseInput';
   if (request.epoch !== session.epoch && !epochExempt) {
-    if (command.operation === 'micGainDb' || command.operation === 'closeTalkThresholdDb' || command.operation === 'denoiseAttenuationLimitDb' || command.operation.startsWith('closeTalk')) throw new Error('tellus_capture_cancelled');
+    if (command.operation === 'micGainDb' || command.operation === 'closeTalkThresholdDb' || command.operation === 'denoiseAttenuationLimitDb' || command.operation === 'generalDenoiseAttenuationLimitDb' || command.operation.startsWith('closeTalk')) throw new Error('tellus_capture_cancelled');
     return command.operation === 'capture' || command.operation === 'stop' ? [] : undefined;
   }
   const native = session.native;
@@ -147,6 +147,12 @@ async function dispatch(request: WorkerRequest): Promise<unknown> {
       const dbfs = validateCloseTalkLearnedLevelDbfs(command.dbfs);
       if (!engine.supports(dbfs === null ? 'session_clear_close_talk_learned_level' : 'session_set_close_talk_learned_level_dbfs')) throw new Error('tellus_close_talk_learned_level_unsupported');
       return dbfs === null ? native.call('clear_close_talk_learned_level') : native.call('set_close_talk_learned_level_dbfs', [dbfs]);
+    }
+    case 'generalDenoiseAttenuationLimitDb': {
+      // null goes to the C clear function. NaN sent to the float setter is INVALID_ARGUMENT, not null.
+      const db = validateGeneralDenoiseAttenuationLimitDb(command.db);
+      if (!engine.supports(db === null ? 'session_clear_general_denoise_attenuation_limit' : 'session_set_general_denoise_attenuation_limit_db')) throw new Error('tellus_general_denoise_attenuation_limit_unsupported');
+      return db === null ? native.call('clear_general_denoise_attenuation_limit') : native.call('set_general_denoise_attenuation_limit_db', [db]);
     }
     case 'denoiseAttenuationLimitDb':
       if (!engine.supports('session_set_denoise_attenuation_limit_db')) throw new Error('tellus_denoise_attenuation_limit_unsupported');

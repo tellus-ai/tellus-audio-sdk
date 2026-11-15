@@ -23,6 +23,8 @@ export interface AudioCaptureConfig {
   closeTalkThresholdDb?: number;
   /** close_talk noise attenuation limit in dB (positive magnitude), finite 0..=60, engine default 12. The engine mixes the input back at 10^(-db/20). Changeable at runtime with setDenoiseAttenuationLimitDb; general mode stays unlimited. */
   denoiseAttenuationLimitDb?: number;
+  /** General-mode noise attenuation limit in dB (positive magnitude), finite 0..=60, or null (default) for unlimited. The engine mixes the noisy input back at 10^(-db/20) in 'general' denoise mode. Does not affect close_talk. Changeable at runtime with setGeneralDenoiseAttenuationLimitDb. Requires engine v0.4.8+. */
+  generalDenoiseAttenuationLimitDb?: number | null;
   /** close_talk hold time in ms, finite 0..=2000, engine default 250. The gate stays open round(ms / 10) more 10 ms hops after the open evidence ends (0: only hops with evidence). Changeable at runtime with setCloseTalkHoldMs. */
   closeTalkHoldMs?: number;
   /** close_talk keep gap in dB, finite 0..=20, engine default 4. An open gate stays open while the mean lsnr is at least closeTalkThresholdDb minus this gap. Changeable at runtime with setCloseTalkKeepGapDb. */
@@ -110,6 +112,8 @@ export interface CaptureStatus {
   closeTalkThresholdDb?: number;
   /** Applied close_talk noise attenuation limit (dB). Absent on engines without denoise attenuation limit support. */
   denoiseAttenuationLimitDb?: number;
+  /** Applied general-mode attenuation limit (dB), null when unlimited. Absent on engines without general-mode attenuation limit support. */
+  generalDenoiseAttenuationLimitDb?: number | null;
   /** Stored close_talk hold time (ms), reported in every denoiseMode. Absent on engines without close-talk tuning support. */
   closeTalkHoldMs?: number;
   /** Stored close_talk keep gap (dB), reported in every denoiseMode. Absent on engines without close-talk tuning support. */
@@ -149,6 +153,8 @@ export interface AudioCapture extends AuthorizableAudioCapture {
   setCloseTalkThresholdDb(db: number): Promise<void>;
   /** Updates the close_talk noise attenuation limit from the next 10 ms hop. Rejects with a platform unsupported error on engines without the API. */
   setDenoiseAttenuationLimitDb(db: number): Promise<void>;
+  /** Updates the general-mode noise attenuation limit (dB, finite 0..=60) from the next 10 ms hop; null restores unlimited. Does not affect close_talk. Rejects with a platform unsupported error on engines without the API. */
+  setGeneralDenoiseAttenuationLimitDb(db: number | null): Promise<void>;
   /** Updates the close_talk hold time (ms, finite 0..=2000) from the next 10 ms hop, keeping held audio and learning. Rejects with a platform unsupported error on engines without the API. */
   setCloseTalkHoldMs(ms: number): Promise<void>;
   /** Updates the close_talk keep gap (dB, finite 0..=20) from the next 10 ms hop, keeping held audio and learning. Rejects with a platform unsupported error on engines without the API. */

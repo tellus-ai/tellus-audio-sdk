@@ -70,6 +70,8 @@ export interface AudioCaptureConfig {
   closeTalkThresholdDb?: number;
   /** close_talk noise attenuation limit in dB (positive magnitude), finite 0..=60, engine default 12. The engine mixes the input back at 10^(-db/20). Changeable at runtime with setDenoiseAttenuationLimitDb; general mode stays unlimited. */
   denoiseAttenuationLimitDb?: number;
+  /** General-mode noise attenuation limit in dB (positive magnitude), finite 0..=60, or null (default) for unlimited. In 'general' denoise mode the engine mixes the noisy input back at 10^(-db/20). Does not affect close_talk. Changeable at runtime with setGeneralDenoiseAttenuationLimitDb. Requires engine v0.4.8+. */
+  generalDenoiseAttenuationLimitDb?: number | null;
   /** close_talk hold time in ms after open evidence ends, finite 0..=2000, engine default 250. Changeable at runtime with setCloseTalkHoldMs. */
   closeTalkHoldMs?: number;
   /** close_talk keep gap in dB: an open gate stays open while lsnr holds closeTalkThresholdDb minus this. Finite 0..=20, engine default 4. Changeable at runtime with setCloseTalkKeepGapDb. */
@@ -224,6 +226,8 @@ export interface CaptureStatus {
   closeTalkThresholdDb?: number;
   /** Applied close_talk noise attenuation limit (dB). Absent on native engines without denoise attenuation limit support. */
   denoiseAttenuationLimitDb?: number;
+  /** Applied general-mode attenuation limit (dB), null when unlimited. Absent on native engines without general-mode attenuation limit support. */
+  generalDenoiseAttenuationLimitDb?: number | null;
   /** Stored close_talk hold time (ms). Absent on native engines without close-talk hold support. */
   closeTalkHoldMs?: number;
   /** Stored close_talk keep gap (dB). Absent on native engines without close-talk keep gap support. */
@@ -806,6 +810,8 @@ export class AudioCapture {
     if (config?.micGainDb !== undefined || config?.speakerGainDb !== undefined || config?.autoGainControl !== undefined) this.#requireGainSupport();
     if (config?.closeTalkThresholdDb !== undefined) this.#requireCloseTalkThresholdSupport();
     if (config?.denoiseAttenuationLimitDb !== undefined) this.#requireDenoiseAttenuationLimitSupport();
+    // null is the engine default (unlimited), so only a value requires the setter.
+    if (config?.generalDenoiseAttenuationLimitDb != null) this.#requireGeneralDenoiseAttenuationLimitSupport();
     if (config?.closeTalkHoldMs !== undefined) this.#requireCloseTalkHoldSupport();
     if (config?.closeTalkKeepGapDb !== undefined) this.#requireCloseTalkKeepGapSupport();
     if (config?.closeTalkLevelMarginDb !== undefined) this.#requireCloseTalkLevelMarginSupport();
@@ -877,6 +883,12 @@ export class AudioCapture {
     }
   }
 
+  #requireGeneralDenoiseAttenuationLimitSupport(): void {
+    if (typeof this.#native.setGeneralDenoiseAttenuationLimitDb !== 'function') {
+      throw new Error('general_denoise_attenuation_limit_unsupported: install a native engine with general-mode attenuation limit support');
+    }
+  }
+
   #requireCloseTalkHoldSupport(): void {
     if (typeof this.#native.setCloseTalkHoldMs !== 'function') {
       throw new Error('close_talk_hold_unsupported: install a native engine with close-talk hold support');
@@ -937,6 +949,19 @@ export class AudioCapture {
   setDenoiseAttenuationLimitDb(db: number): void {
     this.#requireDenoiseAttenuationLimitSupport();
     this.#native.setDenoiseAttenuationLimitDb(db);
+  }
+
+  /**
+   * Updates the general-mode noise attenuation limit from the next 10 ms hop. Finite 0..=60 mixes the noisy input back at 10^(-db/20); null restores unlimited.
+   * Does not affect close_talk. The native engine rejects other values.
+   */
+  setGeneralDenoiseAttenuationLimitDb(db: number | null): void {
+    // undefined or a missing argument would reach napi as None and silently clear the limit, so only null clears.
+    if (db !== null && (typeof db !== 'number' || !Number.isFinite(db) || db < 0 || db > 60)) {
+      throw new Error('invalid_general_denoise_attenuation_limit_db: expected a finite value within 0..=60 or null');
+    }
+    this.#requireGeneralDenoiseAttenuationLimitSupport();
+    this.#native.setGeneralDenoiseAttenuationLimitDb(db);
   }
 
   /** Updates the close_talk hold time from the next 10 ms hop, keeping held audio and learning. The native engine rejects values outside finite 0..=2000. */

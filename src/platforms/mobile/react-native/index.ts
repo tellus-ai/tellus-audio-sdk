@@ -77,6 +77,13 @@ function validateDenoiseAttenuationLimitDb(db: number): number {
   return db;
 }
 
+// General-mode attenuation limit: finite 0..=60 dB, or null for unlimited. Only null clears.
+function validateGeneralDenoiseAttenuationLimitDb(db: number | null): number | null {
+  if (db === null) return null;
+  if (typeof db !== 'number' || !Number.isFinite(db) || db < 0 || db > 60) throw new Error('invalid_general_denoise_attenuation_limit_db: expected a finite value within 0..=60 or null');
+  return db;
+}
+
 // Rates libopus encodes. core TransportEncoderConfig decides; this fails early at init.
 const OPUS_SAMPLE_RATES = [8_000, 12_000, 16_000, 24_000, 48_000];
 
@@ -146,6 +153,8 @@ class NativeAudioCapture implements AudioCapture {
       // null equals the default (no learned level), so the setter is not called; a null setting never fails on old kits.
       if (config.closeTalkLearnedLevelDbfs !== undefined && config.closeTalkLearnedLevelDbfs !== null) await this.applyCloseTalkLearnedLevelDbfs(config.closeTalkLearnedLevelDbfs);
       if (config.denoiseAttenuationLimitDb !== undefined) await this.applyDenoiseAttenuationLimitDb(config.denoiseAttenuationLimitDb);
+      // null equals the default (unlimited), so the setter is not called; a null setting never fails on old kits.
+      if (config.generalDenoiseAttenuationLimitDb !== undefined && config.generalDenoiseAttenuationLimitDb !== null) await this.applyGeneralDenoiseAttenuationLimitDb(config.generalDenoiseAttenuationLimitDb);
     });
     this.devicesReady = this.ready.then(async () => {
       if (typeof this.native.configureAudioDevices !== 'function') {
@@ -323,7 +332,9 @@ class NativeAudioCapture implements AudioCapture {
       closeTalkLevelMarginDb: status.close_talk_level_margin_db,
       closeTalkLearnedLevelDbfs: status.close_talk_learned_level_dbfs === undefined ? undefined : status.close_talk_learned_level_dbfs ?? null,
       closeTalkLevelLearned: typeof status.close_talk_level_learned === 'boolean' ? status.close_talk_level_learned : undefined,
-      denoiseAttenuationLimitDb: status.denoise_attenuation_limit_db, vadEnabled: this.config.vadEnabled ?? true,
+      denoiseAttenuationLimitDb: status.denoise_attenuation_limit_db,
+      generalDenoiseAttenuationLimitDb: status.general_denoise_attenuation_limit_db === undefined ? undefined : status.general_denoise_attenuation_limit_db ?? null,
+      vadEnabled: this.config.vadEnabled ?? true,
       // Absent on old kits and null before configure: leave the optional field out rather than reporting a false that was never measured.
       ...(typeof status.input_held === 'boolean' ? { inputHeld: status.input_held } : {}),
       modelsLoaded: [...this.loaded], deviceStatus };
@@ -423,6 +434,18 @@ class NativeAudioCapture implements AudioCapture {
     if (typeof this.native.setDenoiseAttenuationLimitDb !== 'function') throw new Error('tellus_denoise_attenuation_limit_unsupported');
     await callOptionalNative('tellus_denoise_attenuation_limit_unsupported', () => this.native.setDenoiseAttenuationLimitDb!(db));
   }
+  async setGeneralDenoiseAttenuationLimitDb(db: number | null): Promise<void> {
+    validateGeneralDenoiseAttenuationLimitDb(db);
+    if (this.disposed) throw new Error('capture_disposed');
+    const revision = this.controlRevision;
+    await this.ready;
+    this.checkControl(revision);
+    await this.applyGeneralDenoiseAttenuationLimitDb(db);
+  }
+  private async applyGeneralDenoiseAttenuationLimitDb(db: number | null): Promise<void> {
+    if (typeof this.native.setGeneralDenoiseAttenuationLimitDb !== 'function') throw new Error('tellus_general_denoise_attenuation_limit_unsupported');
+    await callOptionalNative('tellus_general_denoise_attenuation_limit_unsupported', () => this.native.setGeneralDenoiseAttenuationLimitDb!(db));
+  }
   async setRecordingNotification(config: RecordingNotificationConfig): Promise<void> {
     await this.ready;
     if (!config.title || config.title.length > 256 || config.contentText.length > 1024) throw new Error('invalid_recording_notification');
@@ -493,6 +516,7 @@ export class AudioEngine {
     if (config.closeTalkLevelMarginDb !== undefined) validateCloseTalkLevelMarginDb(config.closeTalkLevelMarginDb);
     if (config.closeTalkLearnedLevelDbfs !== undefined) validateCloseTalkLearnedLevelDbfs(config.closeTalkLearnedLevelDbfs);
     if (config.denoiseAttenuationLimitDb !== undefined) validateDenoiseAttenuationLimitDb(config.denoiseAttenuationLimitDb);
+    if (config.generalDenoiseAttenuationLimitDb !== undefined) validateGeneralDenoiseAttenuationLimitDb(config.generalDenoiseAttenuationLimitDb);
     // Each capture loads one denoise model and an optional VAD model, so the default assets pick only those.
     const encryptedModels = assets?.encryptedModels ?? ['denoise.temc',
       ...((config.vadEnabled ?? true) ? ['vad.temc'] : [])];
