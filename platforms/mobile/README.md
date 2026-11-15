@@ -41,6 +41,8 @@ Android는 입력·출력 장치 ID를 조회하고 `micDeviceId`와 `playbackDe
 
 iOS 입력은 현재 AVAudioSession이 노출한 `availableInputs`의 UID입니다. 조회만으로 권한이나 session category를 바꾸지 않아 준비 전 목록이 비어 있을 수 있습니다. 출력은 `iosOutputRoute: 'speaker' | 'system'`으로 내장 스피커 override 또는 override 해제를 요청합니다. `system`은 기존 OS 라우팅을 따르며 수화기 강제를 의미하지 않습니다. 출력 override가 입력도 바꾸면 명시 입력과 실제 route를 비교하여 실패를 전달합니다. iOS의 임의 `playbackDeviceId`와 모바일 시스템 오디오 선택은 `unsupported`입니다.
 
+iOS 캡처는 멈출 때 AVAudioSession을 비활성화하지만 다른 앱에 재생 재개를 알리지 않습니다. 캡처를 시작하며 멈춘 다른 앱의 재생은 사용자가 다시 재생할 때까지 멈춰 있습니다.
+
 선택값은 OS 연결 계층에서만 사용하고 Rust 처리 설정에 전달하지 않습니다. SDK 변경 후 앱의 iOS·Android 네이티브 모듈을 다시 빌드해야 합니다. 장치 제거, 잘못된 ID, pause/resume과 재생 중 route 변경은 실제 장치에서 확인하세요.
 
 ## 마이크 게인
