@@ -28,6 +28,10 @@ Desktop의 회의 앱 마이크 동기화 API(`setMeetingSync`·`getMeetingSyncS
 
 close_talk 설정 `closeTalkThresholdDb`(게이트 임계값, 기본 30)와 `denoiseAttenuationLimitDb`(소음 저감 상한, 기본 12), 런타임 setter `setCloseTalkThresholdDb`·`setDenoiseAttenuationLimitDb`는 세 플랫폼 모두 유한한 0..60 dB만 받습니다. 이 API는 엔진 v0.4.5 이상이 필요하며(SDK 0.3.5부터 고정), 그 전 kit에서는 `unsupported`를 냅니다. 상세는 각 플랫폼 README를 참고하세요.
 
+general 모드는 기본적으로 소음 저감 상한이 없습니다(무제한). `generalDenoiseAttenuationLimitDb`(유한한 0..60 dB 또는 `null`, 기본 `null`)와 런타임 setter `setGeneralDenoiseAttenuationLimitDb`를 지정하면 general 모드에서 입력을 10^(-db/20) 비율로 되섞어 소음 저감을 제한하며, `null`은 무제한으로 되돌립니다. close_talk에는 영향이 없고(`denoiseAttenuationLimitDb`를 그대로 사용), `getStatus()`의 `generalDenoiseAttenuationLimitDb`는 선택 필드입니다. 엔진 v0.4.8 이상이 필요하며, 그 전 kit에서는 설정 값이 `null`이 아닐 때와 setter 호출이 미지원 오류로 실패합니다.
+
+close_talk 게이트 세부 설정 `closeTalkHoldMs`(유지 시간, 기본 250, 0..2000 ms), `closeTalkKeepGapDb`(유지 기준 폭, 기본 4, 0..20 dB), `closeTalkLevelMarginDb`(크기 보조 여유, 기본 2, 0..20 dB)와 같은 이름의 setter도 세 플랫폼 공통입니다. 학습한 내 말소리 크기는 `getStatus()`의 `closeTalkLearnedLevelDbfs`·`closeTalkLevelLearned`로 읽고, `setCloseTalkLearnedLevelDbfs(값 | null)`(−100..0 dBFS)로 넣거나 지웁니다. 학습값은 이제 소음제거 켜고 끄기, 데스크톱의 모드 전환, pause/resume, stop/start, 마이크 재시작에도 남습니다. 모바일·웹에서 입력 장치를 바꿀 때는 `null`로 지우세요(데스크톱은 다른 마이크가 열리면 스스로 지웁니다). 출력 청크의 `closeTalkGate`(`open`·`openRatio`·`lsnrDb`·`levelDbfs`·`learnedLevelDbfs`)로 게이트 판정을 청크마다 확인할 수 있습니다. 이 API는 엔진 v0.4.8 이상이 필요하며, 그 전 kit에서는 `unsupported`를 냅니다. 상세는 각 플랫폼 README를 참고하세요.
+
 입력 hold API `holdInput()`·`releaseInput()`(상태 `getStatus().inputHeld`)는 앱이 업링크를 끄는 동안(예: TTS 재생) 입력을 보류하는 세 플랫폼 공통 API입니다. 이 API는 엔진 v0.4.6 이상이 필요하며(SDK 0.3.6부터 고정), 그 전 kit에서는 `unsupported` 오류를 냅니다. 상세는 각 플랫폼 README를 참고하세요.
 
 ```sh

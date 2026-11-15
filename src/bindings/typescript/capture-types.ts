@@ -23,6 +23,16 @@ export interface AudioCaptureConfig {
   closeTalkThresholdDb?: number;
   /** close_talk noise attenuation limit in dB (positive magnitude), finite 0..=60, engine default 12. The engine mixes the input back at 10^(-db/20). Changeable at runtime with setDenoiseAttenuationLimitDb; general mode stays unlimited. */
   denoiseAttenuationLimitDb?: number;
+  /** General-mode noise attenuation limit in dB (positive magnitude), finite 0..=60, or null (default) for unlimited. The engine mixes the noisy input back at 10^(-db/20) in 'general' denoise mode. Does not affect close_talk. Changeable at runtime with setGeneralDenoiseAttenuationLimitDb. Requires engine v0.4.8+. */
+  generalDenoiseAttenuationLimitDb?: number | null;
+  /** close_talk hold time in ms, finite 0..=2000, engine default 250. The gate stays open round(ms / 10) more 10 ms hops after the open evidence ends (0: only hops with evidence). Changeable at runtime with setCloseTalkHoldMs. */
+  closeTalkHoldMs?: number;
+  /** close_talk keep gap in dB, finite 0..=20, engine default 4. An open gate stays open while the mean lsnr is at least closeTalkThresholdDb minus this gap. Changeable at runtime with setCloseTalkKeepGapDb. */
+  closeTalkKeepGapDb?: number;
+  /** close_talk level margin in dB, finite 0..=20, engine default 2. A 200 ms level at or above the learned level minus this margin is open evidence regardless of lsnr. Changeable at runtime with setCloseTalkLevelMarginDb. */
+  closeTalkLevelMarginDb?: number;
+  /** Learned close_talk speech level in dBFS applied when the gate is created, finite -100..=0, or null (default: none). Pass a value read from getStatus().closeTalkLearnedLevelDbfs to carry it into a new capture. */
+  closeTalkLearnedLevelDbfs?: number | null;
   vadEnabled?: boolean;
   echoCancellationEnabled?: boolean;
   /** Per-session digital microphone gain, -60..12 dB; default 0. Never changes OS input volume. */
@@ -50,6 +60,20 @@ export interface VADConfig {
   vadPreSpeechBufferMs?: number;
 }
 
+/** Decision of the close_talk gate hops that produced a chunk's audio. Aligned with the chunk audio (the gate's 300 ms hold is accounted for). */
+export interface CloseTalkGateDiagnostics {
+  /** Whether the chunk's last 10 ms hop was open. */
+  open: boolean;
+  /** Fraction of the chunk's hops that were open (0..1). */
+  openRatio: number;
+  /** 200 ms mean lsnr (dB) of the last hop; null while the decision window is not full or the measurement is missing. */
+  lsnrDb: number | null;
+  /** 200 ms level (dBFS) of the last hop; null while the decision window is not full or the measurement is missing. */
+  levelDbfs: number | null;
+  /** Learned level (dBFS) the gate used when it emitted that hop; null if none. */
+  learnedLevelDbfs: number | null;
+}
+
 export interface AudioChunk {
   data: { microphone?: Uint8Array };
   trackSource: 'microphone';
@@ -72,6 +96,8 @@ export interface AudioChunk {
     fromSample: number;
     toSample: number;
   };
+  /** close_talk gate decision for this chunk's microphone audio; null when the gate did not process it (general mode, denoise off, stale bypass). Absent on engines without close-talk diagnostics support. */
+  closeTalkGate?: CloseTalkGateDiagnostics | null;
 }
 
 export interface CaptureStatus {
@@ -86,6 +112,18 @@ export interface CaptureStatus {
   closeTalkThresholdDb?: number;
   /** Applied close_talk noise attenuation limit (dB). Absent on engines without denoise attenuation limit support. */
   denoiseAttenuationLimitDb?: number;
+  /** Applied general-mode attenuation limit (dB), null when unlimited. Absent on engines without general-mode attenuation limit support. */
+  generalDenoiseAttenuationLimitDb?: number | null;
+  /** Stored close_talk hold time (ms), reported in every denoiseMode. Absent on engines without close-talk tuning support. */
+  closeTalkHoldMs?: number;
+  /** Stored close_talk keep gap (dB), reported in every denoiseMode. Absent on engines without close-talk tuning support. */
+  closeTalkKeepGapDb?: number;
+  /** Stored close_talk level margin (dB), reported in every denoiseMode. Absent on engines without close-talk tuning support. */
+  closeTalkLevelMarginDb?: number;
+  /** Learned level (dBFS) the close_talk gate currently uses, from its own learning or injection; null if none. Keeps the last value while not running. Absent on engines without close-talk tuning support. */
+  closeTalkLearnedLevelDbfs?: number | null;
+  /** True only when closeTalkLearnedLevelDbfs comes from the gate's own learning (at least 30 levels), not from injection. Absent on engines without close-talk tuning support. */
+  closeTalkLevelLearned?: boolean;
   /** Whether input is held (see holdInput). Absent on engines without input hold support. */
   inputHeld?: boolean;
   vadEnabled: boolean;
@@ -115,6 +153,19 @@ export interface AudioCapture extends AuthorizableAudioCapture {
   setCloseTalkThresholdDb(db: number): Promise<void>;
   /** Updates the close_talk noise attenuation limit from the next 10 ms hop. Rejects with a platform unsupported error on engines without the API. */
   setDenoiseAttenuationLimitDb(db: number): Promise<void>;
+  /** Updates the general-mode noise attenuation limit (dB, finite 0..=60) from the next 10 ms hop; null restores unlimited. Does not affect close_talk. Rejects with a platform unsupported error on engines without the API. */
+  setGeneralDenoiseAttenuationLimitDb(db: number | null): Promise<void>;
+  /** Updates the close_talk hold time (ms, finite 0..=2000) from the next 10 ms hop, keeping held audio and learning. Rejects with a platform unsupported error on engines without the API. */
+  setCloseTalkHoldMs(ms: number): Promise<void>;
+  /** Updates the close_talk keep gap (dB, finite 0..=20) from the next 10 ms hop, keeping held audio and learning. Rejects with a platform unsupported error on engines without the API. */
+  setCloseTalkKeepGapDb(db: number): Promise<void>;
+  /** Updates the close_talk level margin (dB, finite 0..=20) from the next 10 ms hop, keeping held audio and learning. Rejects with a platform unsupported error on engines without the API. */
+  setCloseTalkLevelMarginDb(db: number): Promise<void>;
+  /**
+   * Clears the close_talk learning history and sets the learned level to dbfs (finite -100..=0); the gate's own learning replaces it after 30 new levels. null clears the learned level too.
+   * Learning survives denoise on/off, mode switches, pause/resume, stop/start, and mic restarts, so apps that switch input device reset it with null. Rejects with a platform unsupported error on engines without the API.
+   */
+  setCloseTalkLearnedLevelDbfs(dbfs: number | null): Promise<void>;
   /** Captured system audio gain. Rejects on web/mobile where system capture is unsupported. */
   setSpeakerGainDb(db: number): Promise<void>;
   /** Discards processing history and undelivered output while keeping authorization and capture. */

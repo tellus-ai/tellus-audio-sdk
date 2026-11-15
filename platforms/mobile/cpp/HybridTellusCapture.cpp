@@ -7,6 +7,13 @@ namespace margelo::nitro::tellus {
 
 DenoiseSettingFn (*HybridTellusCapture::_closeTalkThresholdResolver)() = resolveSetCloseTalkThresholdDb;
 DenoiseSettingFn (*HybridTellusCapture::_denoiseAttenuationLimitResolver)() = resolveSetDenoiseAttenuationLimitDb;
+DenoiseSettingFn (*HybridTellusCapture::_closeTalkHoldResolver)() = resolveSetCloseTalkHoldMs;
+DenoiseSettingFn (*HybridTellusCapture::_closeTalkKeepGapResolver)() = resolveSetCloseTalkKeepGapDb;
+DenoiseSettingFn (*HybridTellusCapture::_closeTalkLevelMarginResolver)() = resolveSetCloseTalkLevelMarginDb;
+DenoiseSettingFn (*HybridTellusCapture::_closeTalkLearnedLevelResolver)() = resolveSetCloseTalkLearnedLevelDbfs;
+DenoiseClearFn (*HybridTellusCapture::_clearCloseTalkLearnedLevelResolver)() = resolveClearCloseTalkLearnedLevel;
+DenoiseSettingFn (*HybridTellusCapture::_generalDenoiseAttenuationLimitResolver)() = resolveSetGeneralDenoiseAttenuationLimitDb;
+DenoiseClearFn (*HybridTellusCapture::_clearGeneralDenoiseAttenuationLimitResolver)() = resolveClearGeneralDenoiseAttenuationLimit;
 InputHoldFn (*HybridTellusCapture::_holdInputResolver)() = resolveHoldInput;
 InputHoldFn (*HybridTellusCapture::_releaseInputResolver)() = resolveReleaseInput;
 
@@ -213,6 +220,74 @@ void HybridTellusCapture::setCloseTalkThresholdResolverForTesting(DenoiseSetting
   _closeTalkThresholdResolver = resolver;
 }
 
+std::shared_ptr<Promise<void>> HybridTellusCapture::setCloseTalkHoldMs(double value) {
+  if (!std::isfinite(value) || value < 0 || value > 2000) throw std::invalid_argument("invalid_close_talk_hold_ms");
+  auto session = acquire();
+  const auto setValue = _closeTalkHoldResolver();
+  if (!setValue) throw std::runtime_error("tellus_close_talk_hold_unsupported");
+  return session->submit([state = session.get(), setValue, value] {
+    state->check(setValue(state->handle, static_cast<float>(value)));
+  });
+}
+
+void HybridTellusCapture::setCloseTalkHoldResolverForTesting(DenoiseSettingFn (*resolver)()) {
+  _closeTalkHoldResolver = resolver;
+}
+
+std::shared_ptr<Promise<void>> HybridTellusCapture::setCloseTalkKeepGapDb(double value) {
+  if (!std::isfinite(value) || value < 0 || value > 20) throw std::invalid_argument("invalid_close_talk_keep_gap_db");
+  auto session = acquire();
+  const auto setValue = _closeTalkKeepGapResolver();
+  if (!setValue) throw std::runtime_error("tellus_close_talk_keep_gap_unsupported");
+  return session->submit([state = session.get(), setValue, value] {
+    state->check(setValue(state->handle, static_cast<float>(value)));
+  });
+}
+
+void HybridTellusCapture::setCloseTalkKeepGapResolverForTesting(DenoiseSettingFn (*resolver)()) {
+  _closeTalkKeepGapResolver = resolver;
+}
+
+std::shared_ptr<Promise<void>> HybridTellusCapture::setCloseTalkLevelMarginDb(double value) {
+  if (!std::isfinite(value) || value < 0 || value > 20) throw std::invalid_argument("invalid_close_talk_level_margin_db");
+  auto session = acquire();
+  const auto setValue = _closeTalkLevelMarginResolver();
+  if (!setValue) throw std::runtime_error("tellus_close_talk_level_margin_unsupported");
+  return session->submit([state = session.get(), setValue, value] {
+    state->check(setValue(state->handle, static_cast<float>(value)));
+  });
+}
+
+void HybridTellusCapture::setCloseTalkLevelMarginResolverForTesting(DenoiseSettingFn (*resolver)()) {
+  _closeTalkLevelMarginResolver = resolver;
+}
+
+std::shared_ptr<Promise<void>> HybridTellusCapture::setCloseTalkLearnedLevelDbfs(const std::optional<std::variant<nitro::NullType, double>>& dbfs) {
+  // The generated spec passes JS null as NullType and an omitted value as an empty optional; both clear the learned level.
+  const auto* number = dbfs ? std::get_if<double>(&*dbfs) : nullptr;
+  if (number && (!std::isfinite(*number) || *number < -100 || *number > 0)) throw std::invalid_argument("invalid_close_talk_learned_level_dbfs");
+  auto session = acquire();
+  // null clears the learned level. The C ABI learned level setter rejects NaN, so null goes through the clear function.
+  if (!number) {
+    const auto clear = _clearCloseTalkLearnedLevelResolver();
+    if (!clear) throw std::runtime_error("tellus_close_talk_learned_level_unsupported");
+    return session->submit([state = session.get(), clear] { state->check(clear(state->handle)); });
+  }
+  const auto setLevel = _closeTalkLearnedLevelResolver();
+  if (!setLevel) throw std::runtime_error("tellus_close_talk_learned_level_unsupported");
+  return session->submit([state = session.get(), setLevel, value = *number] {
+    state->check(setLevel(state->handle, static_cast<float>(value)));
+  });
+}
+
+void HybridTellusCapture::setCloseTalkLearnedLevelResolverForTesting(DenoiseSettingFn (*resolver)()) {
+  _closeTalkLearnedLevelResolver = resolver;
+}
+
+void HybridTellusCapture::setClearCloseTalkLearnedLevelResolverForTesting(DenoiseClearFn (*resolver)()) {
+  _clearCloseTalkLearnedLevelResolver = resolver;
+}
+
 std::shared_ptr<Promise<void>> HybridTellusCapture::setDenoiseAttenuationLimitDb(double db) {
   if (!std::isfinite(db) || db < 0 || db > 60) throw std::invalid_argument("invalid_denoise_attenuation_limit_db");
   auto session = acquire();
@@ -225,6 +300,32 @@ std::shared_ptr<Promise<void>> HybridTellusCapture::setDenoiseAttenuationLimitDb
 
 void HybridTellusCapture::setDenoiseAttenuationLimitResolverForTesting(DenoiseSettingFn (*resolver)()) {
   _denoiseAttenuationLimitResolver = resolver;
+}
+
+std::shared_ptr<Promise<void>> HybridTellusCapture::setGeneralDenoiseAttenuationLimitDb(const std::optional<std::variant<nitro::NullType, double>>& db) {
+  // The generated spec passes JS null as NullType and an omitted value as an empty optional; both clear the limit.
+  const auto* number = db ? std::get_if<double>(&*db) : nullptr;
+  if (number && (!std::isfinite(*number) || *number < 0 || *number > 60)) throw std::invalid_argument("invalid_general_denoise_attenuation_limit_db");
+  auto session = acquire();
+  // null clears the limit. The C ABI setter rejects NaN, so null goes through the clear function.
+  if (!number) {
+    const auto clear = _clearGeneralDenoiseAttenuationLimitResolver();
+    if (!clear) throw std::runtime_error("tellus_general_denoise_attenuation_limit_unsupported");
+    return session->submit([state = session.get(), clear] { state->check(clear(state->handle)); });
+  }
+  const auto setLimit = _generalDenoiseAttenuationLimitResolver();
+  if (!setLimit) throw std::runtime_error("tellus_general_denoise_attenuation_limit_unsupported");
+  return session->submit([state = session.get(), setLimit, value = *number] {
+    state->check(setLimit(state->handle, static_cast<float>(value)));
+  });
+}
+
+void HybridTellusCapture::setGeneralDenoiseAttenuationLimitResolverForTesting(DenoiseSettingFn (*resolver)()) {
+  _generalDenoiseAttenuationLimitResolver = resolver;
+}
+
+void HybridTellusCapture::setClearGeneralDenoiseAttenuationLimitResolverForTesting(DenoiseClearFn (*resolver)()) {
+  _clearGeneralDenoiseAttenuationLimitResolver = resolver;
 }
 
 std::shared_ptr<Promise<void>> HybridTellusCapture::holdInput() {

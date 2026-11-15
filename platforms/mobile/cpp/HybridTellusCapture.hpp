@@ -37,7 +37,13 @@ public:
   std::shared_ptr<Promise<void>> setDenoiseEnabled(bool enabled) override;
   std::shared_ptr<Promise<void>> setMicGainDb(double db) override;
   std::shared_ptr<Promise<void>> setCloseTalkThresholdDb(double db) override;
+  std::shared_ptr<Promise<void>> setCloseTalkHoldMs(double ms) override;
+  std::shared_ptr<Promise<void>> setCloseTalkKeepGapDb(double db) override;
+  std::shared_ptr<Promise<void>> setCloseTalkLevelMarginDb(double db) override;
+  // A null dbfs clears the learned level (the C ABI clear function). Apps that switch input device pass null.
+  std::shared_ptr<Promise<void>> setCloseTalkLearnedLevelDbfs(const std::optional<std::variant<nitro::NullType, double>>& dbfs) override;
   std::shared_ptr<Promise<void>> setDenoiseAttenuationLimitDb(double db) override;
+  std::shared_ptr<Promise<void>> setGeneralDenoiseAttenuationLimitDb(const std::optional<std::variant<nitro::NullType, double>>& db) override;
   std::shared_ptr<Promise<void>> holdInput() override;
   std::shared_ptr<Promise<void>> releaseInput() override;
   std::shared_ptr<Promise<void>> setRecordingNotification(const std::string& title, const std::string& contentText,
@@ -51,6 +57,13 @@ public:
   // Tests replace a resolver to exercise the old-kit path, then restore resolveSetCloseTalkThresholdDb or resolveSetDenoiseAttenuationLimitDb.
   static void setCloseTalkThresholdResolverForTesting(DenoiseSettingFn (*resolver)());
   static void setDenoiseAttenuationLimitResolverForTesting(DenoiseSettingFn (*resolver)());
+  static void setCloseTalkHoldResolverForTesting(DenoiseSettingFn (*resolver)());
+  static void setCloseTalkKeepGapResolverForTesting(DenoiseSettingFn (*resolver)());
+  static void setCloseTalkLevelMarginResolverForTesting(DenoiseSettingFn (*resolver)());
+  static void setCloseTalkLearnedLevelResolverForTesting(DenoiseSettingFn (*resolver)());
+  static void setClearCloseTalkLearnedLevelResolverForTesting(DenoiseClearFn (*resolver)());
+  static void setGeneralDenoiseAttenuationLimitResolverForTesting(DenoiseSettingFn (*resolver)());
+  static void setClearGeneralDenoiseAttenuationLimitResolverForTesting(DenoiseClearFn (*resolver)());
   // Tests replace a resolver to exercise the old-kit path, then restore resolveHoldInput or resolveReleaseInput.
   static void setHoldInputResolverForTesting(InputHoldFn (*resolver)());
   static void setReleaseInputResolverForTesting(InputHoldFn (*resolver)());
@@ -61,6 +74,13 @@ private:
   std::shared_ptr<CaptureSession> _session;
   static DenoiseSettingFn (*_closeTalkThresholdResolver)();
   static DenoiseSettingFn (*_denoiseAttenuationLimitResolver)();
+  static DenoiseSettingFn (*_closeTalkHoldResolver)();
+  static DenoiseSettingFn (*_closeTalkKeepGapResolver)();
+  static DenoiseSettingFn (*_closeTalkLevelMarginResolver)();
+  static DenoiseSettingFn (*_closeTalkLearnedLevelResolver)();
+  static DenoiseClearFn (*_clearCloseTalkLearnedLevelResolver)();
+  static DenoiseSettingFn (*_generalDenoiseAttenuationLimitResolver)();
+  static DenoiseClearFn (*_clearGeneralDenoiseAttenuationLimitResolver)();
   static InputHoldFn (*_holdInputResolver)();
   static InputHoldFn (*_releaseInputResolver)();
 };

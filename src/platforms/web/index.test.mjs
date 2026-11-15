@@ -287,3 +287,44 @@ test('init completes before a gesture even when AudioContext resume cannot compl
   await engine.dispose();
   assert.equal(closed, true);
 });
+
+test('범위를 벗어난 close_talk 튜닝 설정은 init을 거부한다', async () => {
+  environment();
+  for (const [key, values, pattern] of [
+    ['closeTalkHoldMs', [-1, 2001, Number.NaN], /invalid_close_talk_hold_ms/],
+    ['closeTalkKeepGapDb', [-1, 21, Infinity], /invalid_close_talk_keep_gap_db/],
+    ['closeTalkLevelMarginDb', [-1, 21, Number.NaN], /invalid_close_talk_level_margin_db/],
+    ['closeTalkLearnedLevelDbfs', [-101, 1, Number.NaN], /invalid_close_talk_learned_level_dbfs/],
+    ['generalDenoiseAttenuationLimitDb', [-1, 61, Number.NaN, '6'], /invalid_general_denoise_attenuation_limit_db/],
+  ]) for (const value of values) await assert.rejects(AudioEngine.init({ [key]: value }, assets), pattern);
+});
+
+test('청크 metadata의 close_talk_gate는 closeTalkGate로 옮기고 없으면 null이다', async () => {
+  const heap = new ArrayBuffer(8192);
+  let next = 8;
+  let callback;
+  const encoder = new TextEncoder();
+  const module = {
+    HEAPU8: new Uint8Array(heap), HEAPU32: new Uint32Array(heap), HEAPF32: new Float32Array(heap),
+    _malloc(size) { const pointer = next; next += Math.ceil(Math.max(size, 1) / 8) * 8; return pointer; },
+    _free() {}, addFunction: (fn) => { callback = fn; return 1; },
+    ccall(name, _returnType, _argumentTypes, args) {
+      if (name === 'tellus_audio_session_create') this.HEAPU32[args[0] / 4] = 1;
+      if (name === 'tellus_audio_session_push_capture') {
+        for (const gate of [{ open: true, open_ratio: 0.5, lsnr_db: 31.5, level_dbfs: -30, learned_level_dbfs: -35 }, { open: false, open_ratio: 0, lsnr_db: null, level_dbfs: null }, undefined]) {
+          const bytes = encoder.encode(JSON.stringify({ codec: 'opus', sample_rate: 16000, sample_count: 320, valid_sample_count: 320, sample: 0, timestamp: 0, rms: 0, ...(gate ? { close_talk_gate: gate } : {}) }));
+          this.HEAPU8.set(bytes, 4096);
+          callback(0, 2048, 4, 4096, bytes.length, 1n, 1n);
+        }
+      }
+      return 0;
+    },
+  };
+  const capture = await new NativeEngine(module).create({});
+  const chunks = (await capture.push(new Float32Array(4), 16000, 0)).map((item) => item.chunk.closeTalkGate);
+  assert.deepEqual(chunks, [
+    { open: true, openRatio: 0.5, lsnrDb: 31.5, levelDbfs: -30, learnedLevelDbfs: -35 },
+    { open: false, openRatio: 0, lsnrDb: null, levelDbfs: null, learnedLevelDbfs: null },
+    null,
+  ]);
+});

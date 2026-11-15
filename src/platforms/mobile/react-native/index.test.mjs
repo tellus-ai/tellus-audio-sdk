@@ -351,6 +351,142 @@ test('mobile status reports inputHeld only when the native status JSON has a boo
   }
 });
 
+// The four close_talk tuning values: public setter, native method, old-kit errors, validation messages.
+const tuning = [
+  { setter: 'setCloseTalkHoldMs', key: 'closeTalkHoldMs', unsupported: 'tellus_close_talk_hold_unsupported', valid: 300,
+    invalid: [NaN, Infinity, -1, 2001, null, '250'], message: 'invalid_close_talk_hold_ms: expected a finite value within 0..=2000' },
+  { setter: 'setCloseTalkKeepGapDb', key: 'closeTalkKeepGapDb', unsupported: 'tellus_close_talk_keep_gap_unsupported', valid: 6,
+    invalid: [NaN, Infinity, -1, 21, null, '4'], message: 'invalid_close_talk_keep_gap_db: expected a finite value within 0..=20' },
+  { setter: 'setCloseTalkLevelMarginDb', key: 'closeTalkLevelMarginDb', unsupported: 'tellus_close_talk_level_margin_unsupported', valid: 3,
+    invalid: [NaN, Infinity, -1, 21, null, '2'], message: 'invalid_close_talk_level_margin_db: expected a finite value within 0..=20' },
+  { setter: 'setCloseTalkLearnedLevelDbfs', key: 'closeTalkLearnedLevelDbfs', unsupported: 'tellus_close_talk_learned_level_unsupported', valid: -40,
+    invalid: [NaN, Infinity, -101, 1, undefined, '-40'], message: 'invalid_close_talk_learned_level_dbfs: expected a finite value within -100..=0 or null' },
+  { setter: 'setGeneralDenoiseAttenuationLimitDb', key: 'generalDenoiseAttenuationLimitDb', unsupported: 'tellus_general_denoise_attenuation_limit_unsupported', valid: 6,
+    invalid: [NaN, Infinity, -1, 61, undefined, '6'], message: 'invalid_general_denoise_attenuation_limit_db: expected a finite value within 0..=60 or null' },
+];
+
+for (const { setter, key, unsupported, valid, invalid, message } of tuning) {
+  test(`${setter} validates, waits for ready, reaches native, and rejects old kits, invalid values, and dispose`, async () => {
+    const { native, create } = fixture();
+    const capture = await create();
+    await assert.rejects(capture[setter](valid), new RegExp(unsupported));
+    let configured;
+    const applied = [];
+    native.configure = () => new Promise(resolve => { configured = resolve; });
+    native[setter] = async value => { applied.push(value); };
+    const pending = await create();
+    const change = pending[setter](valid);
+    for (let index = 0; index < 20; index++) await Promise.resolve();
+    assert.deepEqual(applied, []);
+    configured();
+    await change;
+    assert.deepEqual(applied, [valid]);
+    for (const value of invalid) await assert.rejects(pending[setter](value), error => error.message === message, String(value));
+    assert.deepEqual(applied, [valid]);
+    native[setter] = () => { throw new Error(`${setter}: ${unsupported}`); };
+    await assert.rejects(pending[setter](valid), error => error.message === unsupported);
+    native[setter] = async () => { throw new Error(`${setter}: ${unsupported}`); };
+    await assert.rejects(pending[setter](valid), error => error.message === unsupported);
+    const boom = new Error('boom');
+    native[setter] = async () => { throw boom; };
+    await assert.rejects(pending[setter](valid), error => error === boom);
+    await pending.dispose();
+    await assert.rejects(pending[setter](valid), /capture_disposed/);
+  });
+
+  test(`${key} initial config is applied through the setter after configure (not in the configure JSON) and start rejects on old kits`, async () => {
+    const { native, create } = fixture();
+    const events = [];
+    native.configure = async json => { events.push(['configure', JSON.parse(json)]); };
+    native[setter] = async value => { events.push([setter, value]); };
+    const capture = await create({ [key]: valid });
+    await capture.start(() => {});
+    assert.deepEqual(events.map(([name]) => name), ['configure', setter]);
+    assert.equal(key in events[0][1], false);
+    assert.equal(events[1][1], valid);
+    delete native[setter];
+    await assert.rejects((await create({ [key]: valid })).start(() => {}), new RegExp(unsupported));
+    let configurations = 0;
+    native.configure = async () => { configurations++; };
+    for (const value of invalid.filter(value => value !== undefined)) await assert.rejects(create({ [key]: value }), error => error.message === message, String(value));
+    assert.equal(configurations, 0);
+  });
+}
+
+test('setCloseTalkLearnedLevelDbfs(null) reaches native as null, old kits reject, and an initial null never calls the setter', async () => {
+  const { native, create } = fixture();
+  const applied = [];
+  native.setCloseTalkLearnedLevelDbfs = async value => { applied.push(value); };
+  const capture = await create({ closeTalkLearnedLevelDbfs: null });
+  await capture.setCloseTalkLearnedLevelDbfs(null);
+  await capture.setCloseTalkLearnedLevelDbfs(-100);
+  await capture.setCloseTalkLearnedLevelDbfs(0);
+  assert.deepEqual(applied, [null, -100, 0]);
+  delete native.setCloseTalkLearnedLevelDbfs;
+  await (await create({ closeTalkLearnedLevelDbfs: null })).start(() => {});
+  await assert.rejects(capture.setCloseTalkLearnedLevelDbfs(null), /tellus_close_talk_learned_level_unsupported/);
+});
+
+test('setGeneralDenoiseAttenuationLimitDb(null) reaches native as null, old kits reject, and an initial null never calls the setter', async () => {
+  const { native, create } = fixture();
+  const applied = [];
+  native.setGeneralDenoiseAttenuationLimitDb = async value => { applied.push(value); };
+  const capture = await create({ generalDenoiseAttenuationLimitDb: null });
+  await capture.setGeneralDenoiseAttenuationLimitDb(null);
+  await capture.setGeneralDenoiseAttenuationLimitDb(0);
+  await capture.setGeneralDenoiseAttenuationLimitDb(60);
+  assert.deepEqual(applied, [null, 0, 60]);
+  delete native.setGeneralDenoiseAttenuationLimitDb;
+  await (await create({ generalDenoiseAttenuationLimitDb: null })).start(() => {});
+  await assert.rejects(capture.setGeneralDenoiseAttenuationLimitDb(null), /tellus_general_denoise_attenuation_limit_unsupported/);
+});
+
+test('status reports the general denoise attenuation limit, null when unlimited, and undefined on old status JSON', async () => {
+  const { native, create } = fixture();
+  native.getStatus = async () => JSON.stringify({ lifecycle: 'idle', denoise_enabled: true, general_denoise_attenuation_limit_db: 9 });
+  assert.equal((await (await create()).getStatus()).generalDenoiseAttenuationLimitDb, 9);
+  native.getStatus = async () => JSON.stringify({ lifecycle: 'idle', denoise_enabled: true, general_denoise_attenuation_limit_db: null });
+  assert.equal((await (await create()).getStatus()).generalDenoiseAttenuationLimitDb, null);
+  native.getStatus = async () => JSON.stringify({ lifecycle: 'idle', denoise_enabled: true });
+  assert.equal((await (await create()).getStatus()).generalDenoiseAttenuationLimitDb, undefined);
+});
+
+test('status reports the close_talk tuning values and learned level, and old status JSON leaves them undefined', async () => {
+  const { native, create } = fixture();
+  native.getStatus = async () => JSON.stringify({ lifecycle: 'idle', denoise_enabled: true, close_talk_hold_ms: 300,
+    close_talk_keep_gap_db: 5, close_talk_level_margin_db: 3, close_talk_learned_level_dbfs: -42.5, close_talk_level_learned: true });
+  const status = await (await create()).getStatus();
+  assert.equal(status.closeTalkHoldMs, 300);
+  assert.equal(status.closeTalkKeepGapDb, 5);
+  assert.equal(status.closeTalkLevelMarginDb, 3);
+  assert.equal(status.closeTalkLearnedLevelDbfs, -42.5);
+  assert.equal(status.closeTalkLevelLearned, true);
+  native.getStatus = async () => JSON.stringify({ lifecycle: 'idle', denoise_enabled: true, close_talk_learned_level_dbfs: null, close_talk_level_learned: false });
+  const empty = await (await create()).getStatus();
+  assert.equal(empty.closeTalkLearnedLevelDbfs, null);
+  assert.equal(empty.closeTalkLevelLearned, false);
+  native.getStatus = async () => JSON.stringify({ lifecycle: 'idle', denoise_enabled: true });
+  const old = await (await create()).getStatus();
+  assert.equal(old.closeTalkHoldMs, undefined);
+  assert.equal(old.closeTalkLearnedLevelDbfs, undefined);
+  assert.equal(old.closeTalkLevelLearned, undefined);
+});
+
+test('chunks map close_talk_gate to closeTalkGate and are null when absent', async () => {
+  const { native, create } = fixture();
+  const capture = await create();
+  const chunks = [];
+  await capture.start((error, chunk) => { if (chunk) chunks.push(chunk); });
+  const send = extra => native.callback(new Uint8Array([1]).buffer, JSON.stringify({ codec: 'opus', sample_rate: 16000,
+    sample: 0, sample_count: 320, valid_sample_count: 320, timestamp: 0, rms: 0, ...extra }), native.epoch, 1n);
+  send({ close_talk_gate: { open: true, open_ratio: 0.5, lsnr_db: 31.5, level_dbfs: -30, learned_level_dbfs: -35 } });
+  send({ close_talk_gate: { open: false, open_ratio: 0, lsnr_db: null, level_dbfs: null, learned_level_dbfs: null } });
+  send({});
+  assert.deepEqual(JSON.parse(JSON.stringify(chunks[0].closeTalkGate)), { open: true, openRatio: 0.5, lsnrDb: 31.5, levelDbfs: -30, learnedLevelDbfs: -35 });
+  assert.deepEqual(JSON.parse(JSON.stringify(chunks[1].closeTalkGate)), { open: false, openRatio: 0, lsnrDb: null, levelDbfs: null, learnedLevelDbfs: null });
+  assert.equal(chunks[2].closeTalkGate, null);
+});
+
 // Nitro uses only a JS boundary double; the real public wrapper runs.
 function fixture(assets = ['denoise.temc', 'vad.temc']) {
   const status = () => JSON.stringify({ state: 'authorized', remaining_ms: 1000 });

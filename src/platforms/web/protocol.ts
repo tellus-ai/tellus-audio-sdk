@@ -16,6 +16,14 @@ export interface NativeStatus {
   close_talk_threshold_db?: number | null;
   /** Absent on engines without denoise attenuation limit support. null only before configure, and worker sessions are configured when they are created. */
   denoise_attenuation_limit_db?: number | null;
+  /** Absent on engines without general-mode attenuation limit support. null means unlimited. */
+  general_denoise_attenuation_limit_db?: number | null;
+  /** Absent on engines without close-talk tuning support. null only before configure. */
+  close_talk_hold_ms?: number | null;
+  close_talk_keep_gap_db?: number | null;
+  close_talk_level_margin_db?: number | null;
+  close_talk_learned_level_dbfs?: number | null;
+  close_talk_level_learned?: boolean | null;
   /** Absent on engines without input hold support. null before configure. */
   input_held?: boolean | null;
   vad_loaded: boolean;
@@ -38,7 +46,12 @@ export type WorkerCommand =
   | { operation: 'denoise'; enabled: boolean }
   | { operation: 'micGainDb'; db: number }
   | { operation: 'closeTalkThresholdDb'; db: number }
+  | { operation: 'closeTalkHoldMs'; ms: number }
+  | { operation: 'closeTalkKeepGapDb'; db: number }
+  | { operation: 'closeTalkLevelMarginDb'; db: number }
+  | { operation: 'closeTalkLearnedLevelDbfs'; dbfs: number | null }
   | { operation: 'denoiseAttenuationLimitDb'; db: number }
+  | { operation: 'generalDenoiseAttenuationLimitDb'; db: number | null }
   | { operation: 'holdInput' | 'releaseInput' }
   | { operation: 'start' | 'pause' | 'resume' | 'stop' | 'reset' | 'destroy' | 'invalidate' | 'status' | 'authorizationStatus' | 'modelRequests' | 'clearRender' };
 
@@ -79,6 +92,38 @@ export function outputSampleRate(config: AudioCaptureConfig): number {
 /** Validates the close_talk gate open threshold with the same rule as core (finite 0..=60 dB) and returns it. Otherwise throws tellus_close_talk_threshold_db_invalid. */
 export function validateCloseTalkThresholdDb(db: number): number {
   if (!Number.isFinite(db) || db < 0 || db > 60) throw new Error('tellus_close_talk_threshold_db_invalid');
+  return db;
+}
+
+/** Validates the close_talk gate hold time with the same rule as core (finite 0..=2000 ms) and returns it. */
+export function validateCloseTalkHoldMs(ms: number): number {
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0 || ms > 2000) throw new Error('invalid_close_talk_hold_ms: expected a finite value within 0..=2000');
+  return ms;
+}
+
+/** Validates the close_talk keep gap with the same rule as core (finite 0..=20 dB) and returns it. */
+export function validateCloseTalkKeepGapDb(db: number): number {
+  if (typeof db !== 'number' || !Number.isFinite(db) || db < 0 || db > 20) throw new Error('invalid_close_talk_keep_gap_db: expected a finite value within 0..=20');
+  return db;
+}
+
+/** Validates the close_talk level margin with the same rule as core (finite 0..=20 dB) and returns it. */
+export function validateCloseTalkLevelMarginDb(db: number): number {
+  if (typeof db !== 'number' || !Number.isFinite(db) || db < 0 || db > 20) throw new Error('invalid_close_talk_level_margin_db: expected a finite value within 0..=20');
+  return db;
+}
+
+/** Validates the close_talk learned level injection with the same rule as core (finite -100..=0 dBFS, or null) and returns it. */
+export function validateCloseTalkLearnedLevelDbfs(dbfs: number | null): number | null {
+  if (dbfs === null) return null;
+  if (typeof dbfs !== 'number' || !Number.isFinite(dbfs) || dbfs < -100 || dbfs > 0) throw new Error('invalid_close_talk_learned_level_dbfs: expected a finite value within -100..=0 or null');
+  return dbfs;
+}
+
+/** Validates the general-mode attenuation limit (finite 0..=60 dB, or null for unlimited) and returns it. Only null clears. */
+export function validateGeneralDenoiseAttenuationLimitDb(db: number | null): number | null {
+  if (db === null) return null;
+  if (typeof db !== 'number' || !Number.isFinite(db) || db < 0 || db > 60) throw new Error('invalid_general_denoise_attenuation_limit_db: expected a finite value within 0..=60 or null');
   return db;
 }
 
