@@ -125,3 +125,25 @@ await capture.releaseInput();  // 업링크 켬
 - release 뒤에는 hold 이전·도중의 소리가 출력되지 않습니다. 단 release 때 AEC가 실제로 처리 중이면(엔진 재생(`playback()`·`playbackEncoded()`)이 진행 중이라 render reference가 들어오고 있을 때) release 뒤 AEC 출력 앞 25 ms가 무음이 되고 그 뒤 hold 중 소리의 잔향이 1e-3 peak(약 −60 dBFS) 아래로 감쇠하며 남을 수 있습니다(250 ms 안에 정확히 0). AEC가 처리 중이 아니면 경계는 정확히 0입니다. 엔진 재생이 끝나면 엔진이 AEC를 새로 만들므로, 보통 흐름(TTS를 엔진 재생으로 틀고 재생이 끝난 뒤 release)에서는 이 구간이 없습니다. 앱이 TTS를 자체 플레이어로 틀면 모바일·웹 AEC는 켜지지 않습니다.
 - hold 중에도 `reset()`과 `setDenoiseEnabled()`는 기존 동작 그대로이며 hold를 풀지 않습니다. hold를 푸는 것은 `releaseInput()`뿐입니다.
 - 이 API는 엔진 v0.4.6 이상이 필요하며, 구형 kit에서는 `tellus_input_hold_unsupported`로 Promise를 거부합니다. iOS 링크 플래그(`-Wl,-U`)는 podspec이 자동으로 추가하고, C++ 글루는 약한 참조로 엔진 심볼을 찾습니다.
+
+## 장치 입력 결함과 실패 원인
+
+엔진은 장치 입력 결함으로 캡처를 멈추지 않습니다. iOS float 입력은 큰 목소리에서 1.0을 넘을 수 있는데, [-1, 1] 밖 유한값은 ±1로 자르고 NaN·±inf는 0으로 바꿉니다. 샘플 수가 그대로라 샘플 시계와 청크 경계는 바뀌지 않습니다. 같은 스트림에서 직전보다 이른 timestamp도 받으며 청크 `timestamp`는 뒤로 가지 않습니다(장치 레이트가 바뀌면 새 구간은 그 시각과 이전 구간 끝 중 늦은 쪽에서 시작합니다). 지원하지 않는 장치 레이트(8000~192000 Hz의 50의 배수가 아님)는 계속 실패하며 `internal_error`가 아니라 `invalid_argument`입니다.
+
+```ts
+await capture.start((error, chunk) => {
+  if (error) {
+    // error.message는 기존 오류 코드(예: 'internal_error', 'invalid_argument')이고 엔진 설명은 engineMessage입니다.
+    console.warn(error.message, (error as AudioCaptureEngineError).engineMessage);
+    return;
+  }
+  if (chunk?.inputClippedSamples) console.debug('clipped input samples', chunk.inputClippedSamples);
+});
+const status = await capture.getStatus();
+status.inputClippedSamples;       // 누적: ±1로 자른 샘플 수
+status.inputNonFiniteSamples;     // 누적: 0으로 바꾼 NaN·±inf 샘플 수
+status.inputTimestampRegressions; // 누적: 역행 timestamp 호출 수
+status.lastErrorMessage;          // 마지막으로 실패한 엔진 호출의 설명, 없으면 null
+```
+
+누적 수는 reset·pause/resume·stop/start·hold로 지우지 않습니다. 청크 필드는 앞 청크 뒤 이 청크까지의 수(없으면 0)이고 처리 지연만큼 소리와 어긋나며, hold 중 센 수는 release 뒤 첫 청크에 붙습니다. `internal_error` 뒤 capture는 다른 작업을 `internal_error`로 거부하지만 `getStatus()`는 읽히고, 성공한 `reset()` 또는 `stop()` → `start()`가 잠금을 풀어 같은 capture 객체로 다시 캡처합니다. 실패가 멈춘 OS 캡처는 `reset()`이 다시 열지 않으므로 다시 캡처하려면 `stop()` → `start()`를 부릅니다. C++ 글루는 `tellus_audio_session_copy_last_error`를 약한 참조로 찾으며 podspec의 `-Wl,-U` 플래그로 구형 라이브러리와도 링크됩니다(Android는 기존 약한 심볼과 같은 방식입니다). 이 동작은 엔진 v0.4.9 이상이 필요하고, 그 전 kit에서는 `engineMessage`가 없고 `lastErrorMessage`는 `null`, 누적 수 필드는 없습니다.

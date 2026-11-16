@@ -121,3 +121,9 @@ await capture.releaseInput();  // 업링크 켬
 - hold·release는 호출한 순서대로 적용되며, 이후의 reset/pause/denoise 토글로 취소되지 않습니다.
 - hold 중에도 `reset()`과 `setDenoiseEnabled()`는 기존 동작 그대로이며 hold를 풀지 않습니다. hold를 푸는 것은 `releaseInput()`뿐입니다.
 - 이 API는 엔진 v0.4.6 이상이 필요하며, 구형 kit에서는 `tellus_input_hold_unsupported`로 거부합니다. WASM export가 없으면 호출 전에 확인합니다.
+
+## 장치 입력 결함과 실패 원인
+
+엔진은 장치 입력 결함으로 캡처를 멈추지 않습니다. [-1, 1] 밖 유한값은 ±1로 자르고 NaN·±inf는 0으로 바꾸며 샘플 수·샘플 시계는 그대로입니다. 같은 스트림에서 직전보다 이른 timestamp도 받으며 청크 `timestamp`는 뒤로 가지 않습니다. 지원하지 않는 장치 레이트는 계속 실패하며 `invalid_argument`입니다.
+
+정규화 수는 `getStatus()`의 누적 `inputClippedSamples`·`inputNonFiniteSamples`·`inputTimestampRegressions`(reset·pause/resume·stop/start·hold로 지우지 않음)와 같은 이름의 청크 필드(앞 청크 뒤 이 청크까지의 수, 없으면 0)로 봅니다. 엔진 실패 오류의 `message`는 기존 오류 코드로 시작하고 엔진 설명을 `코드: 설명`으로 붙입니다(예: `invalid_argument: native sample rate 44101 Hz is unsupported: ...`). 코드를 비교할 때는 `startsWith`를 씁니다. `getStatus().lastErrorMessage`는 마지막으로 실패한 엔진 호출의 설명이고 없으면 `null`입니다. 이 동작은 엔진 v0.4.9 이상이 필요하고, 그 전 엔진에서는 오류가 코드만이고 `lastErrorMessage`는 `null`, 누적 수 필드는 없습니다.
