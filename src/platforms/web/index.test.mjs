@@ -329,3 +329,63 @@ test('청크 metadata의 close_talk_gate는 closeTalkGate로 옮기고 없으면
     null,
   ]);
 });
+
+test('chunk metadata input counts map to the chunk and default to 0 when the key is absent', async () => {
+  const heap = new ArrayBuffer(8192);
+  let next = 8;
+  let callback;
+  const encoder = new TextEncoder();
+  const module = {
+    HEAPU8: new Uint8Array(heap), HEAPU32: new Uint32Array(heap), HEAPF32: new Float32Array(heap),
+    _malloc(size) { const pointer = next; next += Math.ceil(Math.max(size, 1) / 8) * 8; return pointer; },
+    _free() {}, addFunction: (fn) => { callback = fn; return 1; },
+    ccall(name, _returnType, _argumentTypes, args) {
+      if (name === 'tellus_audio_session_create') this.HEAPU32[args[0] / 4] = 1;
+      if (name === 'tellus_audio_session_push_capture') {
+        for (const extra of [{ input_clipped_samples: 9, input_non_finite_samples: 2, input_timestamp_regressions: 1 }, {}]) {
+          const bytes = encoder.encode(JSON.stringify({ codec: 'opus', sample_rate: 16000, sample_count: 320, valid_sample_count: 320, sample: 0, timestamp: 0, rms: 0, ...extra }));
+          this.HEAPU8.set(bytes, 4096);
+          callback(0, 2048, 4, 4096, bytes.length, 1n, 1n);
+        }
+      }
+      return 0;
+    },
+  };
+  const capture = await new NativeEngine(module).create({});
+  const counts = (await capture.push(new Float32Array(4), 16000, 0))
+    .map(({ chunk }) => [chunk.inputClippedSamples, chunk.inputNonFiniteSamples, chunk.inputTimestampRegressions]);
+  assert.deepEqual(counts, [[9, 2, 1], [0, 0, 0]]);
+});
+
+// A failed session function throws the status name followed by the copy_last_error explanation; an engine without the export throws the name only.
+test('session function failures keep the error code prefix and append the engine explanation', async () => {
+  for (const exported of [true, false]) {
+    const heap = new ArrayBuffer(8192);
+    let next = 8;
+    const encoder = new TextEncoder();
+    const message = 'native sample rate 44101 Hz is unsupported';
+    const copies = [];
+    const module = {
+      HEAPU8: new Uint8Array(heap), HEAPU32: new Uint32Array(heap), HEAPF32: new Float32Array(heap),
+      _malloc(size) { const pointer = next; next += Math.ceil(Math.max(size, 1) / 8) * 8; return pointer; },
+      _free() {}, addFunction: () => 1, UTF8ToString: () => 'invalid_argument',
+      ...(exported ? { _tellus_audio_session_copy_last_error() {} } : {}),
+      ccall(name, _returnType, _argumentTypes, args) {
+        if (name === 'tellus_audio_session_create') this.HEAPU32[args[0] / 4] = 5;
+        if (name === 'tellus_audio_session_push_capture') return 1;
+        if (name === 'tellus_audio_session_copy_last_error') {
+          copies.push(args[0]);
+          const bytes = encoder.encode(message);
+          this.HEAPU8.set([...bytes, 0], args[1]);
+          return bytes.length;
+        }
+        return 0;
+      },
+    };
+    const capture = await new NativeEngine(module).create({});
+    await assert.rejects(capture.push(new Float32Array(4), 44101, 0), (error) =>
+      error.message === (exported ? `invalid_argument: ${message}` : 'invalid_argument'));
+    assert.equal(await capture.lastError(), exported ? message : null);
+    assert.deepEqual(copies, exported ? [5, 5] : []);
+  }
+});

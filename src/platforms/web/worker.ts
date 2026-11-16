@@ -126,7 +126,8 @@ async function dispatch(request: WorkerRequest): Promise<unknown> {
       const status = await native.json<NativeStatus>('get_status');
       const loadedModels = session.models.map((model) => model.model_id)
         .filter((id) => isVadModel(id) ? status.vad_loaded : status.denoise_loaded);
-      return { ...status, loadedModels } satisfies WorkerStatus;
+      // Adds the last failure explanation; null on old engines.
+      return { ...status, loadedModels, last_error_message: await native.lastError() } satisfies WorkerStatus;
     }
     case 'denoise': await native.call('set_denoise_enabled', [command.enabled ? 1 : 0]); return command.enabled;
     case 'micGainDb': return native.call('set_mic_gain_db', [validateGainDb(command.db)]);

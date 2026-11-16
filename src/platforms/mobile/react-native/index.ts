@@ -5,7 +5,7 @@ import type { AudioCapture, AudioCaptureCallback, AudioCaptureConfig, AudioChunk
 import type { EngineAuthorizationRequest, EngineAuthorizationStatus, EngineModelKey, EngineModelKeyRequest } from '../../../bindings/typescript/authorization/contracts.js';
 import type { AudioDeviceListResult, AudioDeviceSource, AudioDeviceStatus } from '../../../bindings/typescript/audio-devices.js';
 
-export type { AudioCapture, AudioCaptureCallback, AudioCaptureConfig, AudioChunk, CaptureStatus, NativeEngineAssets, RecordingNotificationConfig, VADConfig, AutoGainControlConfig } from '../../../bindings/typescript/capture-types.js';
+export type { AudioCapture, AudioCaptureCallback, AudioCaptureConfig, AudioCaptureEngineError, AudioChunk, CaptureStatus, NativeEngineAssets, RecordingNotificationConfig, VADConfig, AutoGainControlConfig } from '../../../bindings/typescript/capture-types.js';
 export type { AudioDeviceInfo, AudioDeviceListResult, AudioDeviceOperationError, AudioDeviceSource, AudioDeviceStatus } from '../../../bindings/typescript/audio-devices.js';
 
 /** Lists the devices the OS currently exposes. Does not request permission or start capture. */
@@ -264,13 +264,19 @@ class NativeAudioCapture implements AudioCapture {
               learnedLevelDbfs: chunk.close_talk_gate.learned_level_dbfs ?? null } : null,
             discontinuity: gap ? { reason: gap.reason, droppedChunks: gap.dropped_chunks, droppedSamples: gap.dropped_samples,
               fromSample: gap.from_sample, toSample: gap.to_sample } : undefined,
+            // The engine omits zero input counts and old kits never send them.
+            inputClippedSamples: chunk.input_clipped_samples ?? 0,
+            inputNonFiniteSamples: chunk.input_non_finite_samples ?? 0,
+            inputTimestampRegressions: chunk.input_timestamp_regressions ?? 0,
           });
         } finally { if (!this.disposed) this.native.acknowledgeChunk(); }
-      }, code => {
+      }, (code, message) => {
         if (this.disposed || deliveryEpoch !== this.deliveryEpoch) return;
         this.receiving = false;
         const errorRevision = this.controlRevision;
-        void this.deviceError(new Error(code)).then(error => {
+        // message stays the comparable error code; the engine explanation is added as engineMessage. Old natives pass none.
+        const failure = message ? Object.assign(new Error(code), { engineMessage: message }) : new Error(code);
+        void this.deviceError(failure).then(error => {
           if (!this.disposed && deliveryEpoch === this.deliveryEpoch && errorRevision === this.controlRevision) callback(error);
         });
       });
@@ -344,6 +350,9 @@ class NativeAudioCapture implements AudioCapture {
       vadEnabled: this.config.vadEnabled ?? true,
       // Absent on old kits and null before configure: leave the optional field out rather than reporting a false that was never measured.
       ...(typeof status.input_held === 'boolean' ? { inputHeld: status.input_held } : {}),
+      // Old kits report no input counts, so the optional fields stay absent instead of a 0 that was never measured.
+      inputClippedSamples: status.input_clipped_samples, inputNonFiniteSamples: status.input_non_finite_samples,
+      inputTimestampRegressions: status.input_timestamp_regressions, lastErrorMessage: status.last_error_message ?? null,
       modelsLoaded: [...this.loaded], deviceStatus };
   }
   async setDenoiseEnabled(enabled: boolean): Promise<void> {

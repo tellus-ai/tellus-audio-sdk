@@ -9,7 +9,7 @@ let instances = 0;
 // C ABI boundary double. Reports container bytes as model_id and records the configure JSON and loaded models.
 // Models in loadFailures fail to load; denoiseLoadFailed is the value core reports in its status.
 // closeTalkThreshold and denoiseAttenuationLimit add the wasm exports an engine with each setting has.
-function engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gains, thresholds, limits, closeTalkThreshold, denoiseAttenuationLimit, inputHold, holds, tuning, tuningCalls }) {
+function engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gains, thresholds, limits, closeTalkThreshold, denoiseAttenuationLimit, inputHold, holds, tuning, tuningCalls, lastError, failStart }) {
   const heap = new ArrayBuffer(1 << 20);
   let next = 8;
   const module = {
@@ -21,6 +21,7 @@ function engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gai
     ...(denoiseAttenuationLimit ? { _tellus_audio_session_set_denoise_attenuation_limit_db() {} } : {}),
     ...Object.fromEntries((tuning ?? []).map((name) => [`_tellus_audio_session_${name}`, () => {}])),
     ...(inputHold ? { _tellus_audio_session_hold_input() {}, _tellus_audio_session_release_input() {} } : {}),
+    ...(lastError === undefined ? {} : { _tellus_audio_session_copy_last_error() {} }),
     ccall(name, _returnType, _argumentTypes, args) {
       const text = (pointer, length) => decoder.decode(module.HEAPU8.subarray(pointer, pointer + length));
       const reply = (value, output, written) => {
@@ -28,6 +29,12 @@ function engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gai
         module.HEAPU8.set(bytes, output);
         module.HEAPU32[written / 4] = bytes.length;
       };
+      if (name === 'tellus_audio_session_start' && failStart) return 3;
+      if (name === 'tellus_audio_session_copy_last_error') {
+        const bytes = encoder.encode(lastError);
+        module.HEAPU8.set([...bytes, 0], args[1]);
+        return bytes.length;
+      }
       if (name === 'tellus_audio_model_container_inspect') reply({ model_id: text(args[0], args[1]), key_id: 'release-1' }, args[2], args[4]);
       if (name === 'tellus_audio_session_create') module.HEAPU32[args[0] / 4] = 7;
       if (name === 'tellus_audio_session_configure') configured.push(JSON.parse(text(args[1], args[2])));
@@ -52,7 +59,7 @@ function engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gai
 }
 
 // Runs the worker module on a fresh worker global and initializes it with only the given encrypted models.
-async function worker(models, { loadFailures = [], denoiseLoadFailed = false, closeTalkThreshold = false, denoiseAttenuationLimit = false, inputHold = false, tuning = [] } = {}) {
+async function worker(models, { loadFailures = [], denoiseLoadFailed = false, closeTalkThreshold = false, denoiseAttenuationLimit = false, inputHold = false, tuning = [], lastError, failStart = false } = {}) {
   const responses = new Map();
   const configured = [];
   const loaded = [];
@@ -67,7 +74,7 @@ async function worker(models, { loadFailures = [], denoiseLoadFailed = false, cl
     resolve(response);
   } };
   globalThis.self = scope;
-  globalThis.tellusTestEngine = () => engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gains, thresholds, limits, closeTalkThreshold, denoiseAttenuationLimit, inputHold, holds, tuning, tuningCalls });
+  globalThis.tellusTestEngine = () => engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gains, thresholds, limits, closeTalkThreshold, denoiseAttenuationLimit, inputHold, holds, tuning, tuningCalls, lastError, failStart });
   globalThis.fetch = async (url) => ({ ok: true, arrayBuffer: async () => encoder.encode(new URL(url).pathname.slice(1).replace('.temc', '')).buffer });
   await import(`../../../platforms/web/runtime/platforms/web/worker.js?instance=${++instances}`);
   let id = 0;
@@ -327,4 +334,18 @@ test('an invalid output config never reaches native configuration', async () => 
   assert.equal((await send(0, { operation: 'create', config: { processing: { chunkDurationMs: 10 } } })).error, 'tellus_processing_config_invalid');
   assert.equal((await send(0, { operation: 'create', config: { processing: { sampleRate: 44100 } } })).error, 'tellus_opus_sample_rate_unsupported');
   assert.deepEqual(configured, []);
+});
+
+test('worker errors keep the status name prefix, append the engine explanation, and status carries last_error_message', async () => {
+  const { send } = await worker([], { lastError: 'panic: pipeline exploded', failStart: true });
+  const { result: id } = await send(0, { operation: 'create', config: {} });
+  assert.equal((await send(id, { operation: 'start' })).error, 'native_failed: panic: pipeline exploded');
+  assert.equal((await send(id, { operation: 'status' })).result.last_error_message, 'panic: pipeline exploded');
+});
+
+test('an engine without the copy_last_error export throws only the status name and reports a null last_error_message', async () => {
+  const { send } = await worker([], { failStart: true });
+  const { result: id } = await send(0, { operation: 'create', config: {} });
+  assert.equal((await send(id, { operation: 'start' })).error, 'native_failed');
+  assert.equal((await send(id, { operation: 'status' })).result.last_error_message, null);
 });

@@ -258,6 +258,11 @@ export class BrowserCapture implements AudioCapture {
       ...(status.general_denoise_attenuation_limit_db === undefined ? {} : { generalDenoiseAttenuationLimitDb: status.general_denoise_attenuation_limit_db }),
       ...(status.close_talk_learned_level_dbfs === undefined ? {} : { closeTalkLearnedLevelDbfs: status.close_talk_learned_level_dbfs }),
       ...(typeof status.close_talk_level_learned === 'boolean' ? { closeTalkLevelLearned: status.close_talk_level_learned } : {}),
+      // Old engines report no input counts, so the optional fields stay absent.
+      ...(status.input_clipped_samples === undefined ? {} : { inputClippedSamples: status.input_clipped_samples }),
+      ...(status.input_non_finite_samples === undefined ? {} : { inputNonFiniteSamples: status.input_non_finite_samples }),
+      ...(status.input_timestamp_regressions === undefined ? {} : { inputTimestampRegressions: status.input_timestamp_regressions }),
+      lastErrorMessage: status.last_error_message ?? null,
       deviceStatus: [this.deviceStatus, ...(this.playbackDeviceStatus ? [this.playbackDeviceStatus] : [])],
       modelsLoaded: status.loadedModels,
     };

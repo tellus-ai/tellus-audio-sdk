@@ -932,3 +932,53 @@ test('알림 등록 대기 중 pause·stop·invalidate는 늦은 start와 resume
     assert.equal(starts, 0);
   }
 });
+
+test('chunks carry the engine input counts and default to 0 when the keys are absent', async () => {
+  const { native, create } = fixture();
+  const capture = await create();
+  const chunks = [];
+  await capture.start((error, chunk) => { if (chunk) chunks.push(chunk); });
+  const send = extra => native.callback(new Uint8Array([1]).buffer, JSON.stringify({ codec: 'opus', sample_rate: 16000,
+    sample: 0, sample_count: 320, valid_sample_count: 320, timestamp: 0, rms: 0, ...extra }), native.epoch, 1n);
+  send({ input_clipped_samples: 12, input_non_finite_samples: 3, input_timestamp_regressions: 1 });
+  send({});
+  const counts = chunk => [chunk.inputClippedSamples, chunk.inputNonFiniteSamples, chunk.inputTimestampRegressions];
+  assert.deepEqual(counts(chunks[0]), [12, 3, 1]);
+  assert.deepEqual(counts(chunks[1]), [0, 0, 0]);
+});
+
+test('status reports the engine input counts and last error message; old kits leave the counts absent and the message null', async () => {
+  const { native, create } = fixture();
+  native.getStatus = async () => JSON.stringify({ lifecycle: 'running', denoise_enabled: true, input_clipped_samples: 40,
+    input_non_finite_samples: 2, input_timestamp_regressions: 5, last_error_message: 'native sample rate 44101 Hz is unsupported' });
+  const status = await (await create()).getStatus();
+  assert.deepEqual([status.inputClippedSamples, status.inputNonFiniteSamples, status.inputTimestampRegressions], [40, 2, 5]);
+  assert.equal(status.lastErrorMessage, 'native sample rate 44101 Hz is unsupported');
+  native.getStatus = async () => JSON.stringify({ lifecycle: 'running', denoise_enabled: true });
+  const old = await (await create()).getStatus();
+  assert.deepEqual([old.inputClippedSamples, old.inputNonFiniteSamples, old.inputTimestampRegressions, old.lastErrorMessage], [undefined, undefined, undefined, null]);
+});
+
+test('engine failure callbacks keep the error code as message and add the engine explanation as engineMessage', async () => {
+  const { native, create } = fixture();
+  const capture = await create();
+  const reported = new Promise(resolve => capture.start(resolve));
+  await new Promise(setImmediate);
+  native.onError('invalid_argument', 'native sample rate 44101 Hz is unsupported');
+  const error = await reported;
+  assert.equal(error.message, 'invalid_argument');
+  assert.equal(error.engineMessage, 'native sample rate 44101 Hz is unsupported');
+  const legacy = await create();
+  const legacyReported = new Promise(resolve => legacy.start(resolve));
+  await new Promise(setImmediate);
+  // Old natives pass the code only, and an empty explanation adds no engineMessage either.
+  native.onError('internal_error');
+  const legacyError = await legacyReported;
+  assert.equal(legacyError.message, 'internal_error');
+  assert.equal('engineMessage' in legacyError, false);
+  const blank = await create();
+  const blankReported = new Promise(resolve => blank.start(resolve));
+  await new Promise(setImmediate);
+  native.onError('capture_output_queue_full', '');
+  assert.equal('engineMessage' in await blankReported, false);
+});

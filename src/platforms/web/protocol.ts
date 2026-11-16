@@ -28,11 +28,17 @@ export interface NativeStatus {
   /** Absent on engines without input hold support. null before configure. */
   input_held?: boolean | null;
   vad_loaded: boolean;
+  /** Session-lifetime input normalization counts. Absent on engines older than v0.4.9. */
+  input_clipped_samples?: number;
+  input_non_finite_samples?: number;
+  input_timestamp_regressions?: number;
 }
 
 /** Native status plus the IDs of the loaded models, read from the encrypted container headers. */
 export interface WorkerStatus extends NativeStatus {
   loadedModels: string[];
+  /** Last failure explanation the worker read with copy_last_error; null when none or on old engines. */
+  last_error_message: string | null;
 }
 
 export type WorkerCommand =

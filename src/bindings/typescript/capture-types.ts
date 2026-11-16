@@ -100,6 +100,15 @@ export interface AudioChunk {
   };
   /** close_talk gate decision for this chunk's microphone audio; null when the gate did not process it (general mode, denoise off, stale bypass). Absent on engines without close-talk diagnostics support. */
   closeTalkGate?: CloseTalkGateDiagnostics | null;
+  /**
+   * Device input samples the engine clamped to ±1 (finite values outside [-1, 1]) since the previous chunk; 0 when there were none.
+   * Like the two fields below, it lags the audio by the processing delay, and counts from an input hold attach to the first chunk after release.
+   */
+  inputClippedSamples?: number;
+  /** Device input samples the engine replaced with 0 (NaN or ±inf) since the previous chunk; 0 when there were none. */
+  inputNonFiniteSamples?: number;
+  /** Device input calls whose timestamp went backwards since the previous chunk. They are accepted and chunk timestamps never go backwards; 0 when there were none. */
+  inputTimestampRegressions?: number;
 }
 
 export interface CaptureStatus {
@@ -130,11 +139,29 @@ export interface CaptureStatus {
   closeTalkLevelLearned?: boolean;
   /** Whether input is held (see holdInput). Absent on engines without input hold support. */
   inputHeld?: boolean;
+  /** Capture-lifetime count of device input samples clamped to ±1. 0 before the first start; reset, pause, stop/start and hold keep it. Absent on engines older than v0.4.9. */
+  inputClippedSamples?: number;
+  /** Capture-lifetime count of NaN or ±inf device input samples replaced with 0. Kept like inputClippedSamples. Absent on engines older than v0.4.9. */
+  inputNonFiniteSamples?: number;
+  /** Capture-lifetime count of device input calls whose timestamp went backwards. Kept like inputClippedSamples. Absent on engines older than v0.4.9. */
+  inputTimestampRegressions?: number;
+  /** Explanation of the last failed engine call; null when none failed or the engine left no explanation. A successful call does not clear it. */
+  lastErrorMessage?: string | null;
   vadEnabled: boolean;
   modelsLoaded: string[];
   deviceStatus?: AudioDeviceStatus[];
 }
 
+/**
+ * An engine failure delivered to the React Native error callback. message stays the error code (for example internal_error or
+ * invalid_argument) so existing comparisons keep working; engineMessage is the engine's explanation, absent when the engine left none
+ * or predates v0.4.9. On the web the same explanation is appended to message as "code: explanation" (the code prefix is unchanged).
+ */
+export interface AudioCaptureEngineError extends Error {
+  engineMessage?: string;
+}
+
+/** The error may carry deviceStatus for device failures or engineMessage for engine failures (AudioCaptureEngineError). */
 export type AudioCaptureCallback = (error: Error | null, chunk?: AudioChunk) => void;
 
 export interface RecordingNotificationConfig {

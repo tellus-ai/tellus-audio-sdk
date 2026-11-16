@@ -1136,3 +1136,17 @@ test('status maps close-talk tuning fields', async () => {
   assert.equal(empty.closeTalkLevelLearned, undefined, "absent on engines without tuning support");
   await bare.capture.dispose();
 });
+
+test('status maps engine input counts and the last error message, leaving the counts absent for older engines', async () => {
+  const base = { lifecycle: 'running', denoise_enabled: false, denoise_loaded: false, vad_loaded: false, loadedModels: [] };
+  for (const [reported, expected] of [
+    [{ input_clipped_samples: 40, input_non_finite_samples: 2, input_timestamp_regressions: 5, last_error_message: 'invalid_argument detail' }, [40, 2, 5, 'invalid_argument detail']],
+    [{ input_clipped_samples: 0, input_non_finite_samples: 0, input_timestamp_regressions: 0, last_error_message: null }, [0, 0, 0, null]],
+    [{}, [undefined, undefined, undefined, null]],
+  ]) {
+    const { capture } = environment({ status: () => ({ ...base, ...reported }) });
+    const status = await capture.getStatus();
+    assert.deepEqual([status.inputClippedSamples, status.inputNonFiniteSamples, status.inputTimestampRegressions, status.lastErrorMessage], expected);
+    await capture.dispose();
+  }
+});
