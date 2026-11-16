@@ -30,12 +30,29 @@ export class NativeEngine {
     return result;
   }
 
-  async checked(name: string, args: unknown[] = []): Promise<void> {
+  /** Throws the status name on a non-zero status. With a session handle it appends the engine explanation as "code: explanation" (code only when there is none or the engine is old). */
+  async checked(name: string, args: unknown[] = [], session?: number): Promise<void> {
     const result = await this.call(name, args);
     if (result !== 0) {
       const pointer = await this.call('status_name', [result]);
-      throw new Error(this.module.UTF8ToString(pointer));
+      const code = this.module.UTF8ToString(pointer);
+      const message = session === undefined ? '' : await this.lastError(session);
+      throw new Error(message && message !== code ? `${code}: ${message}` : code);
     }
+  }
+
+  /** The session's last failure explanation; empty when none failed or the engine has no copy_last_error export. */
+  async lastError(session: number): Promise<string> {
+    if (!this.supports('session_copy_last_error')) return '';
+    const capacity = 1024;
+    const buffer = this.module._malloc(capacity);
+    if (!buffer) return '';
+    try {
+      if (await this.call('session_copy_last_error', [session, buffer, capacity]) === 0) return '';
+      const bytes = this.module.HEAPU8.subarray(buffer, buffer + capacity);
+      const end = bytes.indexOf(0);
+      return decoder.decode(bytes.subarray(0, end < 0 ? capacity : end));
+    } finally { this.module._free(buffer); }
   }
 
   async bytes<T>(bytes: Uint8Array, use: (pointer: number, length: number) => Promise<T>): Promise<T> {
@@ -50,7 +67,7 @@ export class NativeEngine {
     return this.bytes(encoder.encode(value), use);
   }
 
-  async json<T>(name: string, args: unknown[]): Promise<T> {
+  async json<T>(name: string, args: unknown[], session?: number): Promise<T> {
     const output = this.module._malloc(4096);
     const written = this.module._malloc(4);
     if (!output || !written) {
@@ -59,7 +76,7 @@ export class NativeEngine {
       throw new Error('tellus_wasm_allocation_failed');
     }
     try {
-      await this.checked(name, [...args, output, 4096, written]);
+      await this.checked(name, [...args, output, 4096, written], session);
       const length = this.module.HEAPU32[written / 4];
       return JSON.parse(decoder.decode(this.module.HEAPU8.subarray(output, output + length))) as T;
     } finally {
@@ -75,7 +92,7 @@ export class NativeEngine {
     try {
       await this.checked('session_create', [output]);
       handle = this.module.HEAPU32[output / 4];
-      await this.text(JSON.stringify(nativeConfig(config)), (pointer, length) => this.checked('session_configure', [handle, pointer, length]));
+      await this.text(JSON.stringify(nativeConfig(config)), (pointer, length) => this.checked('session_configure', [handle, pointer, length], handle));
       return new NativeCapture(this, handle);
     } catch (error) {
       if (handle) await this.checked('session_destroy', [handle]);
@@ -135,17 +152,26 @@ export class NativeCapture {
           droppedSamples: native.discontinuity.dropped_samples,
           fromSample: native.discontinuity.from_sample, toSample: native.discontinuity.to_sample,
         } }),
+        // The engine omits zero input counts and old engines never send them.
+        inputClippedSamples: native.input_clipped_samples ?? 0,
+        inputNonFiniteSamples: native.input_non_finite_samples ?? 0,
+        inputTimestampRegressions: native.input_timestamp_regressions ?? 0,
       };
       this.chunks.push({ chunk, epoch: epoch.toString(), authorizationGeneration: generation.toString() });
     }, 'viiiiijj');
   }
 
   call(operation: string, args: unknown[] = []): Promise<void> {
-    return this.engine.checked(`session_${operation}`, [this.handle, ...args]);
+    return this.engine.checked(`session_${operation}`, [this.handle, ...args], this.handle);
   }
 
   json<T>(operation: string): Promise<T> {
-    return this.engine.json(`session_${operation}`, [this.handle]);
+    return this.engine.json(`session_${operation}`, [this.handle], this.handle);
+  }
+
+  /** This session's last failure explanation, or null when there is none. */
+  async lastError(): Promise<string | null> {
+    return (await this.engine.lastError(this.handle)) || null;
   }
 
   text(operation: string, value: string): Promise<void> {
@@ -153,7 +179,7 @@ export class NativeCapture {
   }
 
   authorizationRequest(conversation: string): Promise<unknown> {
-    return this.engine.text(conversation, (pointer, length) => this.engine.json('session_create_authorization_request', [this.handle, pointer, length]));
+    return this.engine.text(conversation, (pointer, length) => this.engine.json('session_create_authorization_request', [this.handle, pointer, length], this.handle));
   }
 
   async applyModelKey(modelId: string, keyId: string, wrappedKey: Uint8Array): Promise<void> {

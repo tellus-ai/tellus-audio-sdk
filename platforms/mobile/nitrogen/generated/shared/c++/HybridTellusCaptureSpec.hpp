@@ -66,7 +66,7 @@ namespace margelo::nitro::tellus {
       virtual std::shared_ptr<Promise<std::string>> inspectModelFile(const std::string& path) = 0;
       virtual std::shared_ptr<Promise<void>> applyModelKey(const std::string& modelId, const std::string& keyId, const std::shared_ptr<ArrayBuffer>& wrappedKey) = 0;
       virtual std::shared_ptr<Promise<void>> loadModelFile(const std::string& path) = 0;
-      virtual std::shared_ptr<Promise<void>> start(const std::function<void(const std::shared_ptr<ArrayBuffer>& /* payload */, const std::string& /* metadata */, uint64_t /* epoch */, uint64_t /* generation */)>& onChunk, const std::function<void(const std::string& /* code */)>& onError) = 0;
+      virtual std::shared_ptr<Promise<void>> start(const std::function<void(const std::shared_ptr<ArrayBuffer>& /* payload */, const std::string& /* metadata */, uint64_t /* epoch */, uint64_t /* generation */)>& onChunk, const std::function<void(const std::string& /* code */, const std::string& /* message */)>& onError) = 0;
       virtual std::shared_ptr<Promise<void>> pause() = 0;
       virtual std::shared_ptr<Promise<void>> resume() = 0;
       virtual std::shared_ptr<Promise<void>> stop() = 0;
@@ -79,6 +79,7 @@ namespace margelo::nitro::tellus {
       virtual std::shared_ptr<Promise<void>> setCloseTalkHoldMs(double ms) = 0;
       virtual std::shared_ptr<Promise<void>> setCloseTalkKeepGapDb(double db) = 0;
       virtual std::shared_ptr<Promise<void>> setCloseTalkLevelMarginDb(double db) = 0;
+      virtual std::shared_ptr<Promise<void>> setCloseTalkLevelMinDbfs(double dbfs) = 0;
       virtual std::shared_ptr<Promise<void>> setCloseTalkLearnedLevelDbfs(const std::optional<std::variant<nitro::NullType, double>>& dbfs) = 0;
       virtual std::shared_ptr<Promise<void>> setDenoiseAttenuationLimitDb(double db) = 0;
       virtual std::shared_ptr<Promise<void>> setGeneralDenoiseAttenuationLimitDb(const std::optional<std::variant<nitro::NullType, double>>& db) = 0;

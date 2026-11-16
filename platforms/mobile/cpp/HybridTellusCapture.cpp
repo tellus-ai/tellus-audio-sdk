@@ -10,6 +10,7 @@ DenoiseSettingFn (*HybridTellusCapture::_denoiseAttenuationLimitResolver)() = re
 DenoiseSettingFn (*HybridTellusCapture::_closeTalkHoldResolver)() = resolveSetCloseTalkHoldMs;
 DenoiseSettingFn (*HybridTellusCapture::_closeTalkKeepGapResolver)() = resolveSetCloseTalkKeepGapDb;
 DenoiseSettingFn (*HybridTellusCapture::_closeTalkLevelMarginResolver)() = resolveSetCloseTalkLevelMarginDb;
+DenoiseSettingFn (*HybridTellusCapture::_closeTalkLevelMinResolver)() = resolveSetCloseTalkLevelMinDbfs;
 DenoiseSettingFn (*HybridTellusCapture::_closeTalkLearnedLevelResolver)() = resolveSetCloseTalkLearnedLevelDbfs;
 DenoiseClearFn (*HybridTellusCapture::_clearCloseTalkLearnedLevelResolver)() = resolveClearCloseTalkLearnedLevel;
 DenoiseSettingFn (*HybridTellusCapture::_generalDenoiseAttenuationLimitResolver)() = resolveSetGeneralDenoiseAttenuationLimitDb;
@@ -139,13 +140,14 @@ std::shared_ptr<Promise<void>> HybridTellusCapture::loadModelFile(const std::str
 
 std::shared_ptr<Promise<void>> HybridTellusCapture::start(
     const std::function<void(const std::shared_ptr<ArrayBuffer>&, const std::string&, uint64_t, uint64_t)>& chunk,
-    const std::function<void(const std::string&)>& error) {
+    const std::function<void(const std::string&, const std::string&)>& error) {
   auto session = acquire();
+  // A capture latched by an internal error can restart with stop then start. A successful engine start clears the latch.
   return session->submit([state = session.get(), chunk, error] {
     state->onChunk = chunk;
     state->onError = error;
     state->start(false);
-  });
+  }, false, true);
 }
 
 std::shared_ptr<Promise<void>> HybridTellusCapture::pause() {
@@ -164,7 +166,8 @@ std::shared_ptr<Promise<void>> HybridTellusCapture::stop() {
   auto session = acquire();
   session->stopAccepting();
   session->cancelPlayback();
-  return session->submit([state = session.get()] { state->stop(); });
+  // stop still cleans up the engine and clears the latch after an internal error.
+  return session->submit([state = session.get()] { state->stop(); }, false, true);
 }
 
 std::shared_ptr<Promise<void>> HybridTellusCapture::close() {
@@ -175,20 +178,18 @@ std::shared_ptr<Promise<void>> HybridTellusCapture::close() {
   return session->submit([state = session.get()] { state->close(); }, true);
 }
 
+// Status stays readable after an internal-error latch so the failure cause can be read.
 std::shared_ptr<Promise<std::string>> HybridTellusCapture::getStatus() {
   auto session = acquire();
-  return session->submit([state = session.get()] {
-    return state->json([&](auto* bytes, auto capacity, auto* written) {
-      return tellus_audio_session_get_status(state->handle, bytes, capacity, written);
-    });
-  });
+  return session->submit([state = session.get()] { return state->status(); }, false, true);
 }
 
 std::shared_ptr<Promise<void>> HybridTellusCapture::reset() {
   auto session = acquire();
   const auto capturing = session->isCapturing();
   const auto revision = session->suspendDelivery();
-  return session->submit([state = session.get(), revision, capturing] { state->reset(revision, capturing); });
+  // A capture latched by an internal error can reset; a successful engine reset clears the latch.
+  return session->submit([state = session.get(), revision, capturing] { state->reset(revision, capturing); }, false, true);
 }
 
 std::shared_ptr<Promise<void>> HybridTellusCapture::setDenoiseEnabled(bool enabled) {
@@ -260,6 +261,20 @@ std::shared_ptr<Promise<void>> HybridTellusCapture::setCloseTalkLevelMarginDb(do
 
 void HybridTellusCapture::setCloseTalkLevelMarginResolverForTesting(DenoiseSettingFn (*resolver)()) {
   _closeTalkLevelMarginResolver = resolver;
+}
+
+std::shared_ptr<Promise<void>> HybridTellusCapture::setCloseTalkLevelMinDbfs(double value) {
+  if (!std::isfinite(value) || value < -100 || value > 0) throw std::invalid_argument("invalid_close_talk_level_min_dbfs");
+  auto session = acquire();
+  const auto setValue = _closeTalkLevelMinResolver();
+  if (!setValue) throw std::runtime_error("tellus_close_talk_level_min_unsupported");
+  return session->submit([state = session.get(), setValue, value] {
+    state->check(setValue(state->handle, static_cast<float>(value)));
+  });
+}
+
+void HybridTellusCapture::setCloseTalkLevelMinResolverForTesting(DenoiseSettingFn (*resolver)()) {
+  _closeTalkLevelMinResolver = resolver;
 }
 
 std::shared_ptr<Promise<void>> HybridTellusCapture::setCloseTalkLearnedLevelDbfs(const std::optional<std::variant<nitro::NullType, double>>& dbfs) {

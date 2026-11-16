@@ -3,6 +3,7 @@
 #include "AudioDevice.hpp"
 #include "CaptureWorker.hpp"
 #include "InputHold.hpp"
+#include "LastError.hpp"
 #include "tellus_audio_engine.h"
 #include <NitroModules/ArrayBuffer.hpp>
 #include <NitroModules/Promise.hpp>
@@ -12,6 +13,13 @@
 
 namespace margelo::nitro::tellus {
 
+// An engine status failure. what() is the status name as before; message is the engine's explanation (empty with an old kit).
+class EngineError final : public std::runtime_error {
+public:
+  EngineError(const char* code, std::string message) : std::runtime_error(code), message(std::move(message)) {}
+  const std::string message;
+};
+
 // Manages the Rust handle and worker lifetimes together. The destructor ends OS input and all processing calls first.
 class CaptureSession final {
 public:
@@ -20,17 +28,19 @@ public:
   TellusAudioSession* handle = nullptr;
   uint32_t processingRate = 16000;
   std::function<void(std::shared_ptr<ArrayBuffer>, const std::string&, uint64_t, uint64_t)> onChunk;
-  std::function<void(const std::string&)> onError;
+  // The first argument is the error code, the second the engine explanation (empty when there is none).
+  std::function<void(const std::string&, const std::string&)> onError;
   std::atomic<bool> closed{false};
 
+  // allowFailed marks recovery and query work (start, stop, reset, status) that still runs after an internal-error latch. allowClosed allows both.
   template<typename F>
-  auto submit(F operation, bool allowClosed = false) {
+  auto submit(F operation, bool allowClosed = false, bool allowFailed = false) {
     using Result = std::invoke_result_t<F>;
     auto promise = Promise<Result>::create();
-    if (!_worker->enqueue([this, promise, operation = std::move(operation), allowClosed]() mutable {
+    if (!_worker->enqueue([this, promise, operation = std::move(operation), allowClosed, allowFailed]() mutable {
       try {
         if (closed && !allowClosed) throw std::runtime_error("capture_disposed");
-        if (_failed && !allowClosed) throw std::runtime_error("internal_error");
+        if (_failed && !allowClosed && !allowFailed) throw std::runtime_error("internal_error");
         if constexpr (std::is_void_v<Result>) { operation(); promise->resolve(); }
         else promise->resolve(operation());
       } catch (...) { promise->reject(std::current_exception()); }
@@ -69,12 +79,19 @@ public:
   bool isCapturing() const { return _captureEnabled; }
   bool canDeliver(uint64_t epoch, uint64_t generation);
   void acknowledgeChunk();
+  // On a non-OK status, records the engine explanation as the last error and throws EngineError. INTERNAL_ERROR sets the failure latch.
   void check(TellusStatus status);
   std::string json(std::function<TellusStatus(uint8_t*, size_t, size_t*)> call);
+  // The engine status JSON plus last_error_message, the last engine failure explanation (null when there is none).
+  std::string status();
+  // The explanation of the last failed engine call. Empty when there is none or the kit predates it.
+  std::string lastErrorMessage();
+  // Tests swap the resolver to exercise the old-kit path, then restore resolveCopyLastError.
+  static void setCopyLastErrorResolverForTesting(CopyLastErrorFn (*resolver)());
 
 private:
   void process(const CaptureWorker::Frame& frame);
-  void fail(const std::string& error);
+  void fail(const std::string& error, const std::string& message = {});
   void clearQueuedCapture();
   void requirePlayback(uint64_t ticket);
   void finishPlayback();
@@ -91,7 +108,11 @@ private:
   std::condition_variable _playbackFinished;
   std::atomic<size_t> _pendingChunks{0};
   std::atomic<bool> _outputOverflow{false};
+  // Latch set after INTERNAL_ERROR. A successful start, stop or reset engine call clears it.
   std::atomic<bool> _failed{false};
+  std::mutex _lastErrorMutex;
+  std::string _lastErrorMessage;
+  static CopyLastErrorFn (*_copyLastErrorResolver)();
   bool _started = false;
   bool _deviceSelectionLocked = false;
   bool _authorizationMonitored = false;

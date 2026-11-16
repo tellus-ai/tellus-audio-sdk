@@ -3,7 +3,7 @@ import type { AudioDeviceStatus } from '../../bindings/typescript/audio-devices.
 import { gainConfig } from '../../bindings/typescript/audio-gain.js';
 import { BrowserCapture } from './capture.js';
 import { audioDeviceError } from './devices.js';
-import { denoiseMode, outputSampleRate, validateCloseTalkHoldMs, validateCloseTalkKeepGapDb, validateCloseTalkLearnedLevelDbfs, validateCloseTalkLevelMarginDb, validateCloseTalkThresholdDb, validateDenoiseAttenuationLimitDb, validateGeneralDenoiseAttenuationLimitDb } from './protocol.js';
+import { denoiseMode, outputSampleRate, validateCloseTalkHoldMs, validateCloseTalkKeepGapDb, validateCloseTalkLearnedLevelDbfs, validateCloseTalkLevelMarginDb, validateCloseTalkLevelMinDbfs, validateCloseTalkThresholdDb, validateDenoiseAttenuationLimitDb, validateGeneralDenoiseAttenuationLimitDb } from './protocol.js';
 import { WorkerClient } from './worker-client.js';
 
 export type {
@@ -46,6 +46,7 @@ export class AudioEngine {
       if (config.closeTalkHoldMs !== undefined) validateCloseTalkHoldMs(config.closeTalkHoldMs);
       if (config.closeTalkKeepGapDb !== undefined) validateCloseTalkKeepGapDb(config.closeTalkKeepGapDb);
       if (config.closeTalkLevelMarginDb !== undefined) validateCloseTalkLevelMarginDb(config.closeTalkLevelMarginDb);
+      if (config.closeTalkLevelMinDbfs !== undefined) validateCloseTalkLevelMinDbfs(config.closeTalkLevelMinDbfs);
       if (config.closeTalkLearnedLevelDbfs !== undefined) validateCloseTalkLearnedLevelDbfs(config.closeTalkLearnedLevelDbfs);
       if (config.denoiseAttenuationLimitDb !== undefined) validateDenoiseAttenuationLimitDb(config.denoiseAttenuationLimitDb);
       if (config.generalDenoiseAttenuationLimitDb !== undefined) validateGeneralDenoiseAttenuationLimitDb(config.generalDenoiseAttenuationLimitDb);

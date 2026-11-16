@@ -136,6 +136,7 @@ const engine = await AudioEngine.init({
   closeTalkHoldMs: 250,            // 열림 근거가 끊긴 뒤 더 여는 시간, 기본 250
   closeTalkKeepGapDb: 4,           // 열린 게이트 유지 기준 = 열림 임계값 - 이 값, 기본 4
   closeTalkLevelMarginDb: 2,       // 학습 레벨 - 이 값 이상이면 열림 근거, 기본 2
+  closeTalkLevelMinDbfs: -20,      // 학습 레벨이 이 값 이상일 때만 크기 보조 사용, 기본 -20 (-100..=0 dBFS)
   closeTalkLearnedLevelDbfs: null, // 앞 capture에서 받은 학습 레벨, 기본 null
 });
 const capture = engine.createCapture();
@@ -147,7 +148,9 @@ capture.setCloseTalkLearnedLevelDbfs(null); // 학습 레벨을 직접 지울 �
 
 학습 레벨은 capture 객체에 속합니다. pause/resume, stop/start, 음소거, hold, 마이크 재시작을 지나도 남고, general·denoise 꺼짐 중에 넣은 값은 저장해 두었다가 다음 close_talk 게이트가 이어 씁니다. `setCloseTalkLearnedLevelDbfs(dbfs)`는 학습 기록을 비우고 학습 레벨을 `dbfs`(유한한 -100..0 dBFS)로 두며, `null`이면 학습 레벨도 지웁니다. 이것과 새 capture 외에는, 앞서 연 마이크와 장치 id가 다른 마이크가 열릴 때(`micDeviceId` 변경이나 OS 기본 입력 변경) 엔진이 학습을 스스로 지웁니다. 다른 마이크에서 배운 레벨은 맞지 않기 때문입니다. 새 capture에서 학습을 이어 가려면 앞 capture의 `getStatus().closeTalkLearnedLevelDbfs`를 `closeTalkLearnedLevelDbfs` 설정으로 넘깁니다(기록은 넘어가지 않고 주입값으로 시작합니다).
 
-`getStatus()`는 `closeTalkHoldMs`·`closeTalkKeepGapDb`·`closeTalkLevelMarginDb`(저장값), `closeTalkLearnedLevelDbfs`(게이트가 쓰는 학습 레벨, 게이트가 없으면 저장된 주입값, 없으면 `null`, stop 뒤에도 마지막 값), `closeTalkLevelLearned`(자체 학습 값일 때만 `true`)를 보고합니다. 출력 청크의 `closeTalkGate`는 그 청크의 마이크 오디오를 close_talk 게이트가 처리했을 때 `{ open, openRatio, lsnrDb, levelDbfs, learnedLevelDbfs }`이고 그 밖(general·denoise 꺼짐·음소거·hold·스피커 전용)에는 `null`입니다. 값은 청크 오디오를 낸 10 ms hop의 판정이라 게이트 보류(300 ms)가 반영되어 있습니다. 모든 상태 필드와 `closeTalkGate`는 선택 필드이고 지원하지 않는 엔진에서는 없습니다(`undefined`).
+`closeTalkLevelMinDbfs`는 동기 setter `setCloseTalkLevelMinDbfs(dbfs)`로도 바꿉니다. `closeTalkLevelMinDbfs`(유한한 -100..0 dBFS, 기본 -20)는 크기 보조(학습 레벨 - 여유 이상이면 열림)를 쓰는 하한으로, 학습한 레벨이 이 값 이상일 때만 크기 보조가 동작합니다. 15-30 cm에서 쓰면 학습 레벨이 -20보다 낮아 크기 보조가 꺼지므로 -32처럼 낮추면 더 작은 학습 음성에서도 동작합니다. 대신 멀거나 작은 목소리, 12 dB 감쇠 한도를 통과한 큰 소음이 게이트를 열 수 있습니다. 엔진 v0.4.9+가 필요하며 구형 엔진에서는 기본값(-20)이 아닌 값을 설정하면 unsupported 오류가 납니다.
+
+`getStatus()`는 `closeTalkHoldMs`·`closeTalkKeepGapDb`·`closeTalkLevelMarginDb`·`closeTalkLevelMinDbfs`(저장값), `closeTalkLearnedLevelDbfs`(게이트가 쓰는 학습 레벨, 게이트가 없으면 저장된 주입값, 없으면 `null`, stop 뒤에도 마지막 값), `closeTalkLevelLearned`(자체 학습 값일 때만 `true`)를 보고합니다. 출력 청크의 `closeTalkGate`는 그 청크의 마이크 오디오를 close_talk 게이트가 처리했을 때 `{ open, openRatio, lsnrDb, levelDbfs, learnedLevelDbfs }`이고 그 밖(general·denoise 꺼짐·음소거·hold·스피커 전용)에는 `null`입니다. 값은 청크 오디오를 낸 10 ms hop의 판정이라 게이트 보류(300 ms)가 반영되어 있습니다. 모든 상태 필드와 `closeTalkGate`는 선택 필드이고 지원하지 않는 엔진에서는 없습니다(`undefined`).
 
 범위를 벗어나거나 유한하지 않은 값은 native가 던지는 `invalid_close_talk_hold_ms: expected a finite value within 0..=2000`, `invalid_close_talk_keep_gap_db: ...0..=20`, `invalid_close_talk_level_margin_db: ...0..=20`, `invalid_close_talk_learned_level_dbfs: expected a finite value within -100..=0 or null` 오류를 그대로 전달합니다. 구형 kit에서는 setter마다 `close_talk_hold_unsupported: install a native engine with close-talk hold support`, `close_talk_keep_gap_unsupported: install a native engine with close-talk keep gap support`, `close_talk_level_margin_unsupported: install a native engine with close-talk level margin support`, `close_talk_learned_level_unsupported: install a native engine with close-talk learned level support`를 던집니다. 설정을 명시하면 생성자에서, setter는 호출 시점에 던집니다. `closeTalkLearnedLevelDbfs: null`은 엔진 기본값이라 구형 kit에서도 던지지 않습니다.
 

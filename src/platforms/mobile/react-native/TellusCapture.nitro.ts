@@ -16,7 +16,8 @@ export interface TellusCapture extends HybridObject<{ ios: 'c++'; android: 'c++'
   loadModelFile(path: string): Promise<void>;
   start(
     onChunk: (payload: ArrayBuffer, metadata: string, epoch: UInt64, generation: UInt64) => void,
-    onError: (code: string) => void,
+    /** message is the engine's failure explanation, or an empty string when there is none. */
+    onError: (code: string, message: string) => void,
   ): Promise<void>;
   pause(): Promise<void>;
   resume(): Promise<void>;
@@ -30,6 +31,7 @@ export interface TellusCapture extends HybridObject<{ ios: 'c++'; android: 'c++'
   setCloseTalkHoldMs(ms: number): Promise<void>;
   setCloseTalkKeepGapDb(db: number): Promise<void>;
   setCloseTalkLevelMarginDb(db: number): Promise<void>;
+  setCloseTalkLevelMinDbfs(dbfs: number): Promise<void>;
   setCloseTalkLearnedLevelDbfs(dbfs: number | null): Promise<void>;
   setDenoiseAttenuationLimitDb(db: number): Promise<void>;
   setGeneralDenoiseAttenuationLimitDb(db: number | null): Promise<void>;

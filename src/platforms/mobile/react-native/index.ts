@@ -5,7 +5,7 @@ import type { AudioCapture, AudioCaptureCallback, AudioCaptureConfig, AudioChunk
 import type { EngineAuthorizationRequest, EngineAuthorizationStatus, EngineModelKey, EngineModelKeyRequest } from '../../../bindings/typescript/authorization/contracts.js';
 import type { AudioDeviceListResult, AudioDeviceSource, AudioDeviceStatus } from '../../../bindings/typescript/audio-devices.js';
 
-export type { AudioCapture, AudioCaptureCallback, AudioCaptureConfig, AudioChunk, CaptureStatus, NativeEngineAssets, RecordingNotificationConfig, VADConfig, AutoGainControlConfig } from '../../../bindings/typescript/capture-types.js';
+export type { AudioCapture, AudioCaptureCallback, AudioCaptureConfig, AudioCaptureEngineError, AudioChunk, CaptureStatus, NativeEngineAssets, RecordingNotificationConfig, VADConfig, AutoGainControlConfig } from '../../../bindings/typescript/capture-types.js';
 export type { AudioDeviceInfo, AudioDeviceListResult, AudioDeviceOperationError, AudioDeviceSource, AudioDeviceStatus } from '../../../bindings/typescript/audio-devices.js';
 
 /** Lists the devices the OS currently exposes. Does not request permission or start capture. */
@@ -64,6 +64,10 @@ function validateCloseTalkKeepGapDb(db: number): number {
 function validateCloseTalkLevelMarginDb(db: number): number {
   if (typeof db !== 'number' || !Number.isFinite(db) || db < 0 || db > 20) throw new Error('invalid_close_talk_level_margin_db: expected a finite value within 0..=20');
   return db;
+}
+function validateCloseTalkLevelMinDbfs(dbfs: number): number {
+  if (typeof dbfs !== 'number' || !Number.isFinite(dbfs) || dbfs < -100 || dbfs > 0) throw new Error('invalid_close_talk_level_min_dbfs: expected a finite value within -100..=0');
+  return dbfs;
 }
 function validateCloseTalkLearnedLevelDbfs(dbfs: number | null): number | null {
   if (dbfs === null) return null;
@@ -150,6 +154,8 @@ class NativeAudioCapture implements AudioCapture {
       if (config.closeTalkHoldMs !== undefined) await this.applyCloseTalkHoldMs(config.closeTalkHoldMs);
       if (config.closeTalkKeepGapDb !== undefined) await this.applyCloseTalkKeepGapDb(config.closeTalkKeepGapDb);
       if (config.closeTalkLevelMarginDb !== undefined) await this.applyCloseTalkLevelMarginDb(config.closeTalkLevelMarginDb);
+      // -20 equals the default, so the setter is not called; a default setting never fails on old kits.
+      if (config.closeTalkLevelMinDbfs !== undefined && config.closeTalkLevelMinDbfs !== -20) await this.applyCloseTalkLevelMinDbfs(config.closeTalkLevelMinDbfs);
       // null equals the default (no learned level), so the setter is not called; a null setting never fails on old kits.
       if (config.closeTalkLearnedLevelDbfs !== undefined && config.closeTalkLearnedLevelDbfs !== null) await this.applyCloseTalkLearnedLevelDbfs(config.closeTalkLearnedLevelDbfs);
       if (config.denoiseAttenuationLimitDb !== undefined) await this.applyDenoiseAttenuationLimitDb(config.denoiseAttenuationLimitDb);
@@ -258,13 +264,19 @@ class NativeAudioCapture implements AudioCapture {
               learnedLevelDbfs: chunk.close_talk_gate.learned_level_dbfs ?? null } : null,
             discontinuity: gap ? { reason: gap.reason, droppedChunks: gap.dropped_chunks, droppedSamples: gap.dropped_samples,
               fromSample: gap.from_sample, toSample: gap.to_sample } : undefined,
+            // The engine omits zero input counts and old kits never send them.
+            inputClippedSamples: chunk.input_clipped_samples ?? 0,
+            inputNonFiniteSamples: chunk.input_non_finite_samples ?? 0,
+            inputTimestampRegressions: chunk.input_timestamp_regressions ?? 0,
           });
         } finally { if (!this.disposed) this.native.acknowledgeChunk(); }
-      }, code => {
+      }, (code, message) => {
         if (this.disposed || deliveryEpoch !== this.deliveryEpoch) return;
         this.receiving = false;
         const errorRevision = this.controlRevision;
-        void this.deviceError(new Error(code)).then(error => {
+        // message stays the comparable error code; the engine explanation is added as engineMessage. Old natives pass none.
+        const failure = message ? Object.assign(new Error(code), { engineMessage: message }) : new Error(code);
+        void this.deviceError(failure).then(error => {
           if (!this.disposed && deliveryEpoch === this.deliveryEpoch && errorRevision === this.controlRevision) callback(error);
         });
       });
@@ -330,6 +342,7 @@ class NativeAudioCapture implements AudioCapture {
       denoiseLoadFailed: status.denoise_load_failed, closeTalkThresholdDb: status.close_talk_threshold_db,
       closeTalkHoldMs: status.close_talk_hold_ms, closeTalkKeepGapDb: status.close_talk_keep_gap_db,
       closeTalkLevelMarginDb: status.close_talk_level_margin_db,
+      closeTalkLevelMinDbfs: status.close_talk_level_min_dbfs,
       closeTalkLearnedLevelDbfs: status.close_talk_learned_level_dbfs === undefined ? undefined : status.close_talk_learned_level_dbfs ?? null,
       closeTalkLevelLearned: typeof status.close_talk_level_learned === 'boolean' ? status.close_talk_level_learned : undefined,
       denoiseAttenuationLimitDb: status.denoise_attenuation_limit_db,
@@ -337,6 +350,9 @@ class NativeAudioCapture implements AudioCapture {
       vadEnabled: this.config.vadEnabled ?? true,
       // Absent on old kits and null before configure: leave the optional field out rather than reporting a false that was never measured.
       ...(typeof status.input_held === 'boolean' ? { inputHeld: status.input_held } : {}),
+      // Old kits report no input counts, so the optional fields stay absent instead of a 0 that was never measured.
+      inputClippedSamples: status.input_clipped_samples, inputNonFiniteSamples: status.input_non_finite_samples,
+      inputTimestampRegressions: status.input_timestamp_regressions, lastErrorMessage: status.last_error_message ?? null,
       modelsLoaded: [...this.loaded], deviceStatus };
   }
   async setDenoiseEnabled(enabled: boolean): Promise<void> {
@@ -407,6 +423,20 @@ class NativeAudioCapture implements AudioCapture {
   private async applyCloseTalkLevelMarginDb(db: number): Promise<void> {
     if (typeof this.native.setCloseTalkLevelMarginDb !== 'function') throw new Error('tellus_close_talk_level_margin_unsupported');
     await callOptionalNative('tellus_close_talk_level_margin_unsupported', () => this.native.setCloseTalkLevelMarginDb!(db));
+  }
+
+  async setCloseTalkLevelMinDbfs(dbfs: number): Promise<void> {
+    validateCloseTalkLevelMinDbfs(dbfs);
+    if (this.disposed) throw new Error('capture_disposed');
+    const revision = this.controlRevision;
+    await this.ready;
+    this.checkControl(revision);
+    await this.applyCloseTalkLevelMinDbfs(dbfs);
+  }
+
+  private async applyCloseTalkLevelMinDbfs(dbfs: number): Promise<void> {
+    if (typeof this.native.setCloseTalkLevelMinDbfs !== 'function') throw new Error('tellus_close_talk_level_min_unsupported');
+    await callOptionalNative('tellus_close_talk_level_min_unsupported', () => this.native.setCloseTalkLevelMinDbfs!(dbfs));
   }
 
   async setCloseTalkLearnedLevelDbfs(dbfs: number | null): Promise<void> {
@@ -514,6 +544,7 @@ export class AudioEngine {
     if (config.closeTalkHoldMs !== undefined) validateCloseTalkHoldMs(config.closeTalkHoldMs);
     if (config.closeTalkKeepGapDb !== undefined) validateCloseTalkKeepGapDb(config.closeTalkKeepGapDb);
     if (config.closeTalkLevelMarginDb !== undefined) validateCloseTalkLevelMarginDb(config.closeTalkLevelMarginDb);
+    if (config.closeTalkLevelMinDbfs !== undefined) validateCloseTalkLevelMinDbfs(config.closeTalkLevelMinDbfs);
     if (config.closeTalkLearnedLevelDbfs !== undefined) validateCloseTalkLearnedLevelDbfs(config.closeTalkLearnedLevelDbfs);
     if (config.denoiseAttenuationLimitDb !== undefined) validateDenoiseAttenuationLimitDb(config.denoiseAttenuationLimitDb);
     if (config.generalDenoiseAttenuationLimitDb !== undefined) validateGeneralDenoiseAttenuationLimitDb(config.generalDenoiseAttenuationLimitDb);

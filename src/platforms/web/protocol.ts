@@ -22,16 +22,23 @@ export interface NativeStatus {
   close_talk_hold_ms?: number | null;
   close_talk_keep_gap_db?: number | null;
   close_talk_level_margin_db?: number | null;
+  close_talk_level_min_dbfs?: number | null;
   close_talk_learned_level_dbfs?: number | null;
   close_talk_level_learned?: boolean | null;
   /** Absent on engines without input hold support. null before configure. */
   input_held?: boolean | null;
   vad_loaded: boolean;
+  /** Session-lifetime input normalization counts. Absent on engines older than v0.4.9. */
+  input_clipped_samples?: number;
+  input_non_finite_samples?: number;
+  input_timestamp_regressions?: number;
 }
 
 /** Native status plus the IDs of the loaded models, read from the encrypted container headers. */
 export interface WorkerStatus extends NativeStatus {
   loadedModels: string[];
+  /** Last failure explanation the worker read with copy_last_error; null when none or on old engines. */
+  last_error_message: string | null;
 }
 
 export type WorkerCommand =
@@ -49,6 +56,7 @@ export type WorkerCommand =
   | { operation: 'closeTalkHoldMs'; ms: number }
   | { operation: 'closeTalkKeepGapDb'; db: number }
   | { operation: 'closeTalkLevelMarginDb'; db: number }
+  | { operation: 'closeTalkLevelMinDbfs'; dbfs: number }
   | { operation: 'closeTalkLearnedLevelDbfs'; dbfs: number | null }
   | { operation: 'denoiseAttenuationLimitDb'; db: number }
   | { operation: 'generalDenoiseAttenuationLimitDb'; db: number | null }
@@ -111,6 +119,12 @@ export function validateCloseTalkKeepGapDb(db: number): number {
 export function validateCloseTalkLevelMarginDb(db: number): number {
   if (typeof db !== 'number' || !Number.isFinite(db) || db < 0 || db > 20) throw new Error('invalid_close_talk_level_margin_db: expected a finite value within 0..=20');
   return db;
+}
+
+/** Validates the close_talk level assist floor with the same rule as core (finite -100..=0 dBFS) and returns it. */
+export function validateCloseTalkLevelMinDbfs(dbfs: number): number {
+  if (typeof dbfs !== 'number' || !Number.isFinite(dbfs) || dbfs < -100 || dbfs > 0) throw new Error('invalid_close_talk_level_min_dbfs: expected a finite value within -100..=0');
+  return dbfs;
 }
 
 /** Validates the close_talk learned level injection with the same rule as core (finite -100..=0 dBFS, or null) and returns it. */

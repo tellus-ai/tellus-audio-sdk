@@ -359,6 +359,8 @@ const tuning = [
     invalid: [NaN, Infinity, -1, 21, null, '4'], message: 'invalid_close_talk_keep_gap_db: expected a finite value within 0..=20' },
   { setter: 'setCloseTalkLevelMarginDb', key: 'closeTalkLevelMarginDb', unsupported: 'tellus_close_talk_level_margin_unsupported', valid: 3,
     invalid: [NaN, Infinity, -1, 21, null, '2'], message: 'invalid_close_talk_level_margin_db: expected a finite value within 0..=20' },
+  { setter: 'setCloseTalkLevelMinDbfs', key: 'closeTalkLevelMinDbfs', unsupported: 'tellus_close_talk_level_min_unsupported', valid: -32,
+    invalid: [NaN, Infinity, -101, 1, null, undefined, '-20'], message: 'invalid_close_talk_level_min_dbfs: expected a finite value within -100..=0' },
   { setter: 'setCloseTalkLearnedLevelDbfs', key: 'closeTalkLearnedLevelDbfs', unsupported: 'tellus_close_talk_learned_level_unsupported', valid: -40,
     invalid: [NaN, Infinity, -101, 1, undefined, '-40'], message: 'invalid_close_talk_learned_level_dbfs: expected a finite value within -100..=0 or null' },
   { setter: 'setGeneralDenoiseAttenuationLimitDb', key: 'generalDenoiseAttenuationLimitDb', unsupported: 'tellus_general_denoise_attenuation_limit_unsupported', valid: 6,
@@ -413,6 +415,16 @@ for (const { setter, key, unsupported, valid, invalid, message } of tuning) {
   });
 }
 
+test('closeTalkLevelMinDbfs default (-20) config never calls the setter, so old kits still start', async () => {
+  const { native, create } = fixture();
+  const applied = [];
+  native.setCloseTalkLevelMinDbfs = async value => { applied.push(value); };
+  await (await create({ closeTalkLevelMinDbfs: -20 })).start(() => {});
+  assert.deepEqual(applied, []);
+  delete native.setCloseTalkLevelMinDbfs;
+  await (await create({ closeTalkLevelMinDbfs: -20 })).start(() => {});
+});
+
 test('setCloseTalkLearnedLevelDbfs(null) reaches native as null, old kits reject, and an initial null never calls the setter', async () => {
   const { native, create } = fixture();
   const applied = [];
@@ -454,11 +466,12 @@ test('status reports the general denoise attenuation limit, null when unlimited,
 test('status reports the close_talk tuning values and learned level, and old status JSON leaves them undefined', async () => {
   const { native, create } = fixture();
   native.getStatus = async () => JSON.stringify({ lifecycle: 'idle', denoise_enabled: true, close_talk_hold_ms: 300,
-    close_talk_keep_gap_db: 5, close_talk_level_margin_db: 3, close_talk_learned_level_dbfs: -42.5, close_talk_level_learned: true });
+    close_talk_keep_gap_db: 5, close_talk_level_margin_db: 3, close_talk_level_min_dbfs: -32, close_talk_learned_level_dbfs: -42.5, close_talk_level_learned: true });
   const status = await (await create()).getStatus();
   assert.equal(status.closeTalkHoldMs, 300);
   assert.equal(status.closeTalkKeepGapDb, 5);
   assert.equal(status.closeTalkLevelMarginDb, 3);
+  assert.equal(status.closeTalkLevelMinDbfs, -32);
   assert.equal(status.closeTalkLearnedLevelDbfs, -42.5);
   assert.equal(status.closeTalkLevelLearned, true);
   native.getStatus = async () => JSON.stringify({ lifecycle: 'idle', denoise_enabled: true, close_talk_learned_level_dbfs: null, close_talk_level_learned: false });
@@ -918,4 +931,54 @@ test('알림 등록 대기 중 pause·stop·invalidate는 늦은 start와 resume
     await assert.rejects(pending, /capture_cancelled/);
     assert.equal(starts, 0);
   }
+});
+
+test('chunks carry the engine input counts and default to 0 when the keys are absent', async () => {
+  const { native, create } = fixture();
+  const capture = await create();
+  const chunks = [];
+  await capture.start((error, chunk) => { if (chunk) chunks.push(chunk); });
+  const send = extra => native.callback(new Uint8Array([1]).buffer, JSON.stringify({ codec: 'opus', sample_rate: 16000,
+    sample: 0, sample_count: 320, valid_sample_count: 320, timestamp: 0, rms: 0, ...extra }), native.epoch, 1n);
+  send({ input_clipped_samples: 12, input_non_finite_samples: 3, input_timestamp_regressions: 1 });
+  send({});
+  const counts = chunk => [chunk.inputClippedSamples, chunk.inputNonFiniteSamples, chunk.inputTimestampRegressions];
+  assert.deepEqual(counts(chunks[0]), [12, 3, 1]);
+  assert.deepEqual(counts(chunks[1]), [0, 0, 0]);
+});
+
+test('status reports the engine input counts and last error message; old kits leave the counts absent and the message null', async () => {
+  const { native, create } = fixture();
+  native.getStatus = async () => JSON.stringify({ lifecycle: 'running', denoise_enabled: true, input_clipped_samples: 40,
+    input_non_finite_samples: 2, input_timestamp_regressions: 5, last_error_message: 'native sample rate 44101 Hz is unsupported' });
+  const status = await (await create()).getStatus();
+  assert.deepEqual([status.inputClippedSamples, status.inputNonFiniteSamples, status.inputTimestampRegressions], [40, 2, 5]);
+  assert.equal(status.lastErrorMessage, 'native sample rate 44101 Hz is unsupported');
+  native.getStatus = async () => JSON.stringify({ lifecycle: 'running', denoise_enabled: true });
+  const old = await (await create()).getStatus();
+  assert.deepEqual([old.inputClippedSamples, old.inputNonFiniteSamples, old.inputTimestampRegressions, old.lastErrorMessage], [undefined, undefined, undefined, null]);
+});
+
+test('engine failure callbacks keep the error code as message and add the engine explanation as engineMessage', async () => {
+  const { native, create } = fixture();
+  const capture = await create();
+  const reported = new Promise(resolve => capture.start(resolve));
+  await new Promise(setImmediate);
+  native.onError('invalid_argument', 'native sample rate 44101 Hz is unsupported');
+  const error = await reported;
+  assert.equal(error.message, 'invalid_argument');
+  assert.equal(error.engineMessage, 'native sample rate 44101 Hz is unsupported');
+  const legacy = await create();
+  const legacyReported = new Promise(resolve => legacy.start(resolve));
+  await new Promise(setImmediate);
+  // Old natives pass the code only, and an empty explanation adds no engineMessage either.
+  native.onError('internal_error');
+  const legacyError = await legacyReported;
+  assert.equal(legacyError.message, 'internal_error');
+  assert.equal('engineMessage' in legacyError, false);
+  const blank = await create();
+  const blankReported = new Promise(resolve => blank.start(resolve));
+  await new Promise(setImmediate);
+  native.onError('capture_output_queue_full', '');
+  assert.equal('engineMessage' in await blankReported, false);
 });

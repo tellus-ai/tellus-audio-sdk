@@ -21,6 +21,8 @@ const settings = [
     error: 'close_talk_keep_gap_unsupported: install a native engine with close-talk keep gap support' },
   { key: 'closeTalkLevelMarginDb', setter: 'setCloseTalkLevelMarginDb', value: 3,
     error: 'close_talk_level_margin_unsupported: install a native engine with close-talk level margin support' },
+  { key: 'closeTalkLevelMinDbfs', setter: 'setCloseTalkLevelMinDbfs', value: -32,
+    error: 'close_talk_level_min_unsupported: install a native engine with close-talk level minimum support' },
   { key: 'closeTalkLearnedLevelDbfs', setter: 'setCloseTalkLearnedLevelDbfs', value: -18,
     error: 'close_talk_learned_level_unsupported: install a native engine with close-talk learned level support' },
   { key: 'generalDenoiseAttenuationLimitDb', setter: 'setGeneralDenoiseAttenuationLimitDb', value: 9,
@@ -37,6 +39,12 @@ test('desktop close-talk tuning rejects each setting on a native engine without 
   }
 });
 
+test('desktop close-talk level minimum default config (-20) needs no setter', () => {
+  const AudioCapture = wrapper(class { getStatus() { return {}; } });
+  assert.doesNotThrow(() => new AudioCapture({ closeTalkLevelMinDbfs: -20 }));
+  assert.doesNotThrow(() => new AudioCapture({}));
+});
+
 test('desktop close-talk learned level null config is the engine default and needs no setter', () => {
   const AudioCapture = wrapper(class { getStatus() { return {}; } });
   assert.doesNotThrow(() => new AudioCapture({ closeTalkLearnedLevelDbfs: null }));
@@ -45,26 +53,28 @@ test('desktop close-talk learned level null config is the engine default and nee
 test('desktop close-talk tuning config and runtime changes reach the owning native capture unchanged', () => {
   const calls = [];
   let configured;
-  const status = { closeTalkHoldMs: 100, closeTalkKeepGapDb: 6, closeTalkLevelMarginDb: 3,
+  const status = { closeTalkHoldMs: 100, closeTalkKeepGapDb: 6, closeTalkLevelMarginDb: 3, closeTalkLevelMinDbfs: -32,
     closeTalkLearnedLevelDbfs: null, closeTalkLevelLearned: false };
   const AudioCapture = wrapper(class {
     constructor(config) { configured = config; }
     setCloseTalkHoldMs(ms) { calls.push(['hold', ms]); }
     setCloseTalkKeepGapDb(db) { calls.push(['keepGap', db]); }
     setCloseTalkLevelMarginDb(db) { calls.push(['levelMargin', db]); }
+    setCloseTalkLevelMinDbfs(dbfs) { calls.push(['levelMin', dbfs]); }
     setCloseTalkLearnedLevelDbfs(dbfs) { calls.push(['learnedLevel', dbfs]); }
     getStatus() { return status; }
   });
-  const capture = new AudioCapture({ closeTalkHoldMs: 100, closeTalkKeepGapDb: 6, closeTalkLevelMarginDb: 3, closeTalkLearnedLevelDbfs: -18 });
-  assert.deepEqual([configured.closeTalkHoldMs, configured.closeTalkKeepGapDb, configured.closeTalkLevelMarginDb, configured.closeTalkLearnedLevelDbfs],
-    [100, 6, 3, -18]);
+  const capture = new AudioCapture({ closeTalkHoldMs: 100, closeTalkKeepGapDb: 6, closeTalkLevelMarginDb: 3, closeTalkLevelMinDbfs: -32, closeTalkLearnedLevelDbfs: -18 });
+  assert.deepEqual([configured.closeTalkHoldMs, configured.closeTalkKeepGapDb, configured.closeTalkLevelMarginDb, configured.closeTalkLevelMinDbfs, configured.closeTalkLearnedLevelDbfs],
+    [100, 6, 3, -32, -18]);
   assert.deepEqual(capture.getStatus(), status);
   capture.setCloseTalkHoldMs(0);
   capture.setCloseTalkKeepGapDb(20);
   capture.setCloseTalkLevelMarginDb(0);
+  capture.setCloseTalkLevelMinDbfs(-100);
   capture.setCloseTalkLearnedLevelDbfs(-30);
   capture.setCloseTalkLearnedLevelDbfs(null);
-  assert.deepEqual(calls, [['hold', 0], ['keepGap', 20], ['levelMargin', 0], ['learnedLevel', -30], ['learnedLevel', null]]);
+  assert.deepEqual(calls, [['hold', 0], ['keepGap', 20], ['levelMargin', 0], ['levelMin', -100], ['learnedLevel', -30], ['learnedLevel', null]]);
 });
 
 test('desktop close-talk tuning passes native validation errors through', () => {

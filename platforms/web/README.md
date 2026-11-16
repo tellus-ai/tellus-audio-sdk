@@ -79,12 +79,14 @@ const engine = await AudioEngine.init({
   closeTalkHoldMs: 250,             // 열린 게이트 유지 시간, 기본 250 (0..=2000 ms)
   closeTalkKeepGapDb: 4,            // 열린 뒤 유지 문턱 간격, 기본 4 (0..=20 dB)
   closeTalkLevelMarginDb: 2,        // 학습 레벨 마진, 기본 2 (0..=20 dB)
+  closeTalkLevelMinDbfs: -20,       // 학습 레벨이 이 값 이상일 때만 크기 보조 사용, 기본 -20 (-100..=0 dBFS)
   closeTalkLearnedLevelDbfs: null,  // 학습 레벨 주입, 기본 null (-100..=0 dBFS)
 }, assets);
 const capture = engine.createCapture();
 await capture.setCloseTalkHoldMs(300);
 await capture.setCloseTalkKeepGapDb(6);
 await capture.setCloseTalkLevelMarginDb(3);
+await capture.setCloseTalkLevelMinDbfs(-32);
 await capture.setCloseTalkLearnedLevelDbfs(-40);   // 값을 주입
 await capture.setCloseTalkLearnedLevelDbfs(null);  // 학습을 지움
 ```
@@ -93,7 +95,9 @@ setter는 `setCloseTalkThresholdDb`와 같이 다음 10 ms hop부터 적용되�
 
 학습 레벨은 denoise 토글, stop/start, pause/resume, reset을 지나 capture 객체 수명 동안 남습니다. 지우는 것은 `setCloseTalkLearnedLevelDbfs(null)`과 새 capture 객체뿐이므로 **입력 장치를 바꾸는 앱은 null로 호출해야 합니다.** 새 capture로 이어 가려면 앞 객체의 `getStatus().closeTalkLearnedLevelDbfs`를 새 `closeTalkLearnedLevelDbfs`로 넘기십시오(기록은 넘어가지 않고 주입값으로 시작합니다).
 
-`getStatus()`는 `closeTalkHoldMs`·`closeTalkKeepGapDb`·`closeTalkLevelMarginDb`·`closeTalkLearnedLevelDbfs`(`number | null`)·`closeTalkLevelLearned`(자체 학습 완료 여부)를 보고하며, 지원하지 않는 엔진에서는 없습니다. 청크의 `closeTalkGate`는 게이트가 처리한 청크에서 `{ open, openRatio, lsnrDb, levelDbfs, learnedLevelDbfs }`, 아니면 `null`입니다.
+`setCloseTalkLevelMinDbfs(dbfs)`는 Promise를 반환하며, 구형 엔진에서는 `tellus_close_talk_level_min_unsupported`로 거부됩니다. `closeTalkLevelMinDbfs`(유한한 -100..0 dBFS, 기본 -20)는 크기 보조(학습 레벨 - 여유 이상이면 열림)를 쓰는 하한으로, 학습한 레벨이 이 값 이상일 때만 크기 보조가 동작합니다. 15-30 cm에서 쓰면 학습 레벨이 -20보다 낮아 크기 보조가 꺼지므로 -32처럼 낮추면 더 작은 학습 음성에서도 동작합니다. 대신 멀거나 작은 목소리, 12 dB 감쇠 한도를 통과한 큰 소음이 게이트를 열 수 있습니다. 엔진 v0.4.9+가 필요하며 구형 엔진에서는 기본값(-20)이 아닌 값을 설정하면 unsupported 오류가 납니다.
+
+`getStatus()`는 `closeTalkHoldMs`·`closeTalkKeepGapDb`·`closeTalkLevelMarginDb`·`closeTalkLevelMinDbfs`·`closeTalkLearnedLevelDbfs`(`number | null`)·`closeTalkLevelLearned`(자체 학습 완료 여부)를 보고하며, 지원하지 않는 엔진에서는 없습니다. 청크의 `closeTalkGate`는 게이트가 처리한 청크에서 `{ open, openRatio, lsnrDb, levelDbfs, learnedLevelDbfs }`, 아니면 `null`입니다.
 
 ## 입력 hold
 
@@ -117,3 +121,9 @@ await capture.releaseInput();  // 업링크 켬
 - hold·release는 호출한 순서대로 적용되며, 이후의 reset/pause/denoise 토글로 취소되지 않습니다.
 - hold 중에도 `reset()`과 `setDenoiseEnabled()`는 기존 동작 그대로이며 hold를 풀지 않습니다. hold를 푸는 것은 `releaseInput()`뿐입니다.
 - 이 API는 엔진 v0.4.6 이상이 필요하며, 구형 kit에서는 `tellus_input_hold_unsupported`로 거부합니다. WASM export가 없으면 호출 전에 확인합니다.
+
+## 장치 입력 결함과 실패 원인
+
+엔진은 장치 입력 결함으로 캡처를 멈추지 않습니다. [-1, 1] 밖 유한값은 ±1로 자르고 NaN·±inf는 0으로 바꾸며 샘플 수·샘플 시계는 그대로입니다. 같은 스트림에서 직전보다 이른 timestamp도 받으며 청크 `timestamp`는 뒤로 가지 않습니다. 지원하지 않는 장치 레이트는 계속 실패하며 `invalid_argument`입니다.
+
+정규화 수는 `getStatus()`의 누적 `inputClippedSamples`·`inputNonFiniteSamples`·`inputTimestampRegressions`(reset·pause/resume·stop/start·hold로 지우지 않음)와 같은 이름의 청크 필드(앞 청크 뒤 이 청크까지의 수, 없으면 0)로 봅니다. 엔진 실패 오류의 `message`는 기존 오류 코드로 시작하고 엔진 설명을 `코드: 설명`으로 붙입니다(예: `invalid_argument: native sample rate 44101 Hz is unsupported: ...`). 코드를 비교할 때는 `startsWith`를 씁니다. `getStatus().lastErrorMessage`는 마지막으로 실패한 엔진 호출의 설명이고 없으면 `null`입니다. 이 동작은 엔진 v0.4.9 이상이 필요하고, 그 전 엔진에서는 오류가 코드만이고 `lastErrorMessage`는 `null`, 누적 수 필드는 없습니다.

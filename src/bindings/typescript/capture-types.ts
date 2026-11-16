@@ -31,6 +31,8 @@ export interface AudioCaptureConfig {
   closeTalkKeepGapDb?: number;
   /** close_talk level margin in dB, finite 0..=20, engine default 2. A 200 ms level at or above the learned level minus this margin is open evidence regardless of lsnr. Changeable at runtime with setCloseTalkLevelMarginDb. */
   closeTalkLevelMarginDb?: number;
+  /** close_talk level assist floor in dBFS, finite -100..=0, engine default -20. The level assist (open by loudness: level at or above the learned level minus closeTalkLevelMarginDb) is used only when the learned level is at or above this floor. Lowering it (e.g. -32 for 15-30 cm use) lets the assist work for quieter learned voices, at the cost that far or quiet voices, or loud noise surviving the 12 dB attenuation limit, may open the gate. Changeable at runtime with setCloseTalkLevelMinDbfs. Requires engine v0.4.9+. */
+  closeTalkLevelMinDbfs?: number;
   /** Learned close_talk speech level in dBFS applied when the gate is created, finite -100..=0, or null (default: none). Pass a value read from getStatus().closeTalkLearnedLevelDbfs to carry it into a new capture. */
   closeTalkLearnedLevelDbfs?: number | null;
   vadEnabled?: boolean;
@@ -98,6 +100,15 @@ export interface AudioChunk {
   };
   /** close_talk gate decision for this chunk's microphone audio; null when the gate did not process it (general mode, denoise off, stale bypass). Absent on engines without close-talk diagnostics support. */
   closeTalkGate?: CloseTalkGateDiagnostics | null;
+  /**
+   * Device input samples the engine clamped to ±1 (finite values outside [-1, 1]) since the previous chunk; 0 when there were none.
+   * Like the two fields below, it lags the audio by the processing delay, and counts from an input hold attach to the first chunk after release.
+   */
+  inputClippedSamples?: number;
+  /** Device input samples the engine replaced with 0 (NaN or ±inf) since the previous chunk; 0 when there were none. */
+  inputNonFiniteSamples?: number;
+  /** Device input calls whose timestamp went backwards since the previous chunk. They are accepted and chunk timestamps never go backwards; 0 when there were none. */
+  inputTimestampRegressions?: number;
 }
 
 export interface CaptureStatus {
@@ -120,17 +131,37 @@ export interface CaptureStatus {
   closeTalkKeepGapDb?: number;
   /** Stored close_talk level margin (dB), reported in every denoiseMode. Absent on engines without close-talk tuning support. */
   closeTalkLevelMarginDb?: number;
+  /** Stored close_talk level assist floor (dBFS), reported in every denoiseMode. Absent on engines without close-talk level minimum support. */
+  closeTalkLevelMinDbfs?: number;
   /** Learned level (dBFS) the close_talk gate currently uses, from its own learning or injection; null if none. Keeps the last value while not running. Absent on engines without close-talk tuning support. */
   closeTalkLearnedLevelDbfs?: number | null;
   /** True only when closeTalkLearnedLevelDbfs comes from the gate's own learning (at least 30 levels), not from injection. Absent on engines without close-talk tuning support. */
   closeTalkLevelLearned?: boolean;
   /** Whether input is held (see holdInput). Absent on engines without input hold support. */
   inputHeld?: boolean;
+  /** Capture-lifetime count of device input samples clamped to ±1. 0 before the first start; reset, pause, stop/start and hold keep it. Absent on engines older than v0.4.9. */
+  inputClippedSamples?: number;
+  /** Capture-lifetime count of NaN or ±inf device input samples replaced with 0. Kept like inputClippedSamples. Absent on engines older than v0.4.9. */
+  inputNonFiniteSamples?: number;
+  /** Capture-lifetime count of device input calls whose timestamp went backwards. Kept like inputClippedSamples. Absent on engines older than v0.4.9. */
+  inputTimestampRegressions?: number;
+  /** Explanation of the last failed engine call; null when none failed or the engine left no explanation. A successful call does not clear it. */
+  lastErrorMessage?: string | null;
   vadEnabled: boolean;
   modelsLoaded: string[];
   deviceStatus?: AudioDeviceStatus[];
 }
 
+/**
+ * An engine failure delivered to the React Native error callback. message stays the error code (for example internal_error or
+ * invalid_argument) so existing comparisons keep working; engineMessage is the engine's explanation, absent when the engine left none
+ * or predates v0.4.9. On the web the same explanation is appended to message as "code: explanation" (the code prefix is unchanged).
+ */
+export interface AudioCaptureEngineError extends Error {
+  engineMessage?: string;
+}
+
+/** The error may carry deviceStatus for device failures or engineMessage for engine failures (AudioCaptureEngineError). */
 export type AudioCaptureCallback = (error: Error | null, chunk?: AudioChunk) => void;
 
 export interface RecordingNotificationConfig {
@@ -161,6 +192,8 @@ export interface AudioCapture extends AuthorizableAudioCapture {
   setCloseTalkKeepGapDb(db: number): Promise<void>;
   /** Updates the close_talk level margin (dB, finite 0..=20) from the next 10 ms hop, keeping held audio and learning. Rejects with a platform unsupported error on engines without the API. */
   setCloseTalkLevelMarginDb(db: number): Promise<void>;
+  /** Updates the close_talk level assist floor (dBFS, finite -100..=0) from the next 10 ms hop, keeping held audio and learning. Rejects with a platform unsupported error on engines without the API (requires engine v0.4.9+). */
+  setCloseTalkLevelMinDbfs(dbfs: number): Promise<void>;
   /**
    * Clears the close_talk learning history and sets the learned level to dbfs (finite -100..=0); the gate's own learning replaces it after 30 new levels. null clears the learned level too.
    * Learning survives denoise on/off, mode switches, pause/resume, stop/start, and mic restarts, so apps that switch input device reset it with null. Rejects with a platform unsupported error on engines without the API.

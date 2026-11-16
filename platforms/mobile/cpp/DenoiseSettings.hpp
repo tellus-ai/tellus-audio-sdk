@@ -20,6 +20,7 @@ DenoiseSettingFn resolveSetDenoiseAttenuationLimitDb();
 DenoiseSettingFn resolveSetCloseTalkHoldMs();
 DenoiseSettingFn resolveSetCloseTalkKeepGapDb();
 DenoiseSettingFn resolveSetCloseTalkLevelMarginDb();
+DenoiseSettingFn resolveSetCloseTalkLevelMinDbfs();
 DenoiseSettingFn resolveSetCloseTalkLearnedLevelDbfs();
 DenoiseClearFn resolveClearCloseTalkLearnedLevel();
 // General-mode attenuation limit set and clear. nullptr when the linked engine kit predates them.
