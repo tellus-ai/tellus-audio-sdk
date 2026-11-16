@@ -33,7 +33,7 @@ function engineModule(configured, { loaded, loadFailures, denoiseLoadFailed, gai
       if (name === 'tellus_audio_session_configure') configured.push(JSON.parse(text(args[1], args[2])));
       if (name === 'tellus_audio_session_hold_input' || name === 'tellus_audio_session_release_input') holds.push([name, ...args]);
       if (name === 'tellus_audio_session_set_mic_gain_db') gains.push([...args]);
-      if (/^tellus_audio_session_(set_close_talk_(hold_ms|keep_gap_db|level_margin_db|learned_level_dbfs)|clear_close_talk_learned_level|set_general_denoise_attenuation_limit_db|clear_general_denoise_attenuation_limit)$/.test(name)) tuningCalls.push([name.slice('tellus_audio_session_'.length), ...args.slice(1)]);
+      if (/^tellus_audio_session_(set_close_talk_(hold_ms|keep_gap_db|level_margin_db|level_min_dbfs|learned_level_dbfs)|clear_close_talk_learned_level|set_general_denoise_attenuation_limit_db|clear_general_denoise_attenuation_limit)$/.test(name)) tuningCalls.push([name.slice('tellus_audio_session_'.length), ...args.slice(1)]);
       if (name === 'tellus_audio_session_set_close_talk_threshold_db') thresholds.push([...args]);
       if (name === 'tellus_audio_session_set_denoise_attenuation_limit_db') limits.push([...args]);
       if (name === 'tellus_audio_session_model_key_request') reply({ public_key: 'b'.repeat(64) }, args[1], args[3]);
@@ -245,28 +245,30 @@ test('a denoise model load failure logs, still loads the VAD model and leaves no
   assert.deepEqual((await send(sessionId, { operation: 'modelRequests' })).result, []);
 });
 
-const TUNING_EXPORTS = ['set_close_talk_hold_ms', 'set_close_talk_keep_gap_db', 'set_close_talk_level_margin_db', 'set_close_talk_learned_level_dbfs', 'clear_close_talk_learned_level'];
+const TUNING_EXPORTS = ['set_close_talk_hold_ms', 'set_close_talk_keep_gap_db', 'set_close_talk_level_margin_db', 'set_close_talk_level_min_dbfs', 'set_close_talk_learned_level_dbfs', 'clear_close_talk_learned_level'];
 
 test('close_talk 튜닝 setter는 export가 있으면 검증 후 native에 전달되고 이전 epoch 요청은 취소된다', async () => {
   const { send, configured, tuningCalls } = await worker([], { tuning: TUNING_EXPORTS.map((name) => name) });
   const { result: id } = await send(0, { operation: 'create', config: { closeTalkHoldMs: 300, closeTalkLearnedLevelDbfs: -40 } });
-  for (const key of ['closeTalkHoldMs', 'closeTalkKeepGapDb', 'closeTalkLevelMarginDb', 'closeTalkLearnedLevelDbfs']) assert.ok(!(key in configured[0]), `${key}는 configure JSON에 들어가지 않는다`);
+  for (const key of ['closeTalkHoldMs', 'closeTalkKeepGapDb', 'closeTalkLevelMarginDb', 'closeTalkLevelMinDbfs', 'closeTalkLearnedLevelDbfs']) assert.ok(!(key in configured[0]), `${key}는 configure JSON에 들어가지 않는다`);
   for (const command of [
     { operation: 'closeTalkHoldMs', ms: 300 }, { operation: 'closeTalkKeepGapDb', db: 5 }, { operation: 'closeTalkLevelMarginDb', db: 3 },
-    { operation: 'closeTalkLearnedLevelDbfs', dbfs: -40 }, { operation: 'closeTalkLearnedLevelDbfs', dbfs: null },
+    { operation: 'closeTalkLevelMinDbfs', dbfs: -32 }, { operation: 'closeTalkLearnedLevelDbfs', dbfs: -40 }, { operation: 'closeTalkLearnedLevelDbfs', dbfs: null },
   ]) assert.equal((await send(id, command)).error, undefined);
-  assert.deepEqual(tuningCalls, [['set_close_talk_hold_ms', 300], ['set_close_talk_keep_gap_db', 5], ['set_close_talk_level_margin_db', 3], ['set_close_talk_learned_level_dbfs', -40], ['clear_close_talk_learned_level']]);
-  for (const command of [{ operation: 'closeTalkHoldMs', ms: 300 }, { operation: 'closeTalkKeepGapDb', db: 5 }, { operation: 'closeTalkLevelMarginDb', db: 3 }, { operation: 'closeTalkLearnedLevelDbfs', dbfs: null }]) {
+  assert.deepEqual(tuningCalls, [['set_close_talk_hold_ms', 300], ['set_close_talk_keep_gap_db', 5], ['set_close_talk_level_margin_db', 3], ['set_close_talk_level_min_dbfs', -32], ['set_close_talk_learned_level_dbfs', -40], ['clear_close_talk_learned_level']]);
+  for (const command of [{ operation: 'closeTalkHoldMs', ms: 300 }, { operation: 'closeTalkKeepGapDb', db: 5 }, { operation: 'closeTalkLevelMarginDb', db: 3 }, { operation: 'closeTalkLevelMinDbfs', dbfs: -32 }, { operation: 'closeTalkLearnedLevelDbfs', dbfs: null }]) {
     assert.match((await send(id, command, 1)).error, /tellus_capture_cancelled/);
   }
   for (const [command, pattern] of [
     [{ operation: 'closeTalkHoldMs', ms: 2001 }, /invalid_close_talk_hold_ms: expected a finite value within 0\.\.=2000/],
     [{ operation: 'closeTalkKeepGapDb', db: 21 }, /invalid_close_talk_keep_gap_db: expected a finite value within 0\.\.=20/],
     [{ operation: 'closeTalkLevelMarginDb', db: -1 }, /invalid_close_talk_level_margin_db: expected a finite value within 0\.\.=20/],
+    [{ operation: 'closeTalkLevelMinDbfs', dbfs: -101 }, /invalid_close_talk_level_min_dbfs: expected a finite value within -100\.\.=0/],
+    [{ operation: 'closeTalkLevelMinDbfs', dbfs: undefined }, /invalid_close_talk_level_min_dbfs/],
     [{ operation: 'closeTalkLearnedLevelDbfs', dbfs: 1 }, /invalid_close_talk_learned_level_dbfs: expected a finite value within -100\.\.=0 or null/],
     [{ operation: 'closeTalkLearnedLevelDbfs', dbfs: Number.NaN }, /invalid_close_talk_learned_level_dbfs/],
   ]) assert.match((await send(id, command)).error, pattern);
-  assert.equal(tuningCalls.length, 5);
+  assert.equal(tuningCalls.length, 6);
 });
 
 test('general 모드 감쇠 한도 setter는 값은 set, null은 clear로 보내고 검증·취소·미지원을 처리한다', async () => {
@@ -289,6 +291,7 @@ test('close_talk 튜닝 export가 없는 엔진은 native 호출 없이 각 sett
   assert.equal((await send(id, { operation: 'closeTalkHoldMs', ms: 250 })).error, undefined);
   assert.match((await send(id, { operation: 'closeTalkKeepGapDb', db: 4 })).error, /tellus_close_talk_keep_gap_unsupported/);
   assert.match((await send(id, { operation: 'closeTalkLevelMarginDb', db: 2 })).error, /tellus_close_talk_level_margin_unsupported/);
+  assert.match((await send(id, { operation: 'closeTalkLevelMinDbfs', dbfs: -32 })).error, /tellus_close_talk_level_min_unsupported/);
   assert.match((await send(id, { operation: 'closeTalkLearnedLevelDbfs', dbfs: -40 })).error, /tellus_close_talk_learned_level_unsupported/);
   assert.match((await send(id, { operation: 'closeTalkLearnedLevelDbfs', dbfs: null })).error, /tellus_close_talk_learned_level_unsupported/);
   const none = await worker([]);

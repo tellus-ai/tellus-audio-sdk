@@ -1,7 +1,7 @@
 import type { AudioCaptureConfig, BrowserEngineAssets } from '../../bindings/typescript/capture-types.js';
 import { validateGainDb } from '../../bindings/typescript/audio-gain.js';
 import { NativeEngine, type EngineModule, type NativeCapture } from './native.js';
-import { isVadModel, type DeliveredChunk, type NativeStatus, validateCloseTalkHoldMs, validateCloseTalkKeepGapDb, validateCloseTalkLearnedLevelDbfs, validateCloseTalkLevelMarginDb, validateCloseTalkThresholdDb, validateDenoiseAttenuationLimitDb, validateGeneralDenoiseAttenuationLimitDb, type WorkerCommand, type WorkerRequest, type WorkerResponse, WorkerStatus } from './protocol.js';
+import { isVadModel, type DeliveredChunk, type NativeStatus, validateCloseTalkHoldMs, validateCloseTalkKeepGapDb, validateCloseTalkLearnedLevelDbfs, validateCloseTalkLevelMarginDb, validateCloseTalkLevelMinDbfs, validateCloseTalkThresholdDb, validateDenoiseAttenuationLimitDb, validateGeneralDenoiseAttenuationLimitDb, type WorkerCommand, type WorkerRequest, type WorkerResponse, WorkerStatus } from './protocol.js';
 
 interface EncryptedModel {
   model_id: string;
@@ -142,6 +142,9 @@ async function dispatch(request: WorkerRequest): Promise<unknown> {
     case 'closeTalkLevelMarginDb':
       if (!engine.supports('session_set_close_talk_level_margin_db')) throw new Error('tellus_close_talk_level_margin_unsupported');
       return native.call('set_close_talk_level_margin_db', [validateCloseTalkLevelMarginDb(command.db)]);
+    case 'closeTalkLevelMinDbfs':
+      if (!engine.supports('session_set_close_talk_level_min_dbfs')) throw new Error('tellus_close_talk_level_min_unsupported');
+      return native.call('set_close_talk_level_min_dbfs', [validateCloseTalkLevelMinDbfs(command.dbfs)]);
     case 'closeTalkLearnedLevelDbfs': {
       // null goes to the C clear function. NaN sent to the float setter is INVALID_ARGUMENT, not null.
       const dbfs = validateCloseTalkLearnedLevelDbfs(command.dbfs);

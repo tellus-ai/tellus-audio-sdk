@@ -1052,6 +1052,7 @@ const TUNING = [
   ['closeTalkHoldMs', 'setCloseTalkHoldMs', 'ms', 300, 0, 2000, [-1, 2001, NaN, Infinity, null, '1'], /invalid_close_talk_hold_ms/, /tellus_close_talk_hold_unsupported/],
   ['closeTalkKeepGapDb', 'setCloseTalkKeepGapDb', 'db', 6, 0, 20, [-1, 21, NaN, Infinity, null, '1'], /invalid_close_talk_keep_gap_db/, /tellus_close_talk_keep_gap_unsupported/],
   ['closeTalkLevelMarginDb', 'setCloseTalkLevelMarginDb', 'db', 3, 0, 20, [-1, 21, NaN, Infinity, null, '1'], /invalid_close_talk_level_margin_db/, /tellus_close_talk_level_margin_unsupported/],
+  ['closeTalkLevelMinDbfs', 'setCloseTalkLevelMinDbfs', 'dbfs', -32, -100, 0, [-101, 1, NaN, Infinity, null, '1', undefined], /invalid_close_talk_level_min_dbfs/, /tellus_close_talk_level_min_unsupported/],
   ['closeTalkLearnedLevelDbfs', 'setCloseTalkLearnedLevelDbfs', 'dbfs', -40, -100, 0, [-101, 1, NaN, Infinity, '1', undefined], /invalid_close_talk_learned_level_dbfs/, /tellus_close_talk_learned_level_unsupported/],
   ['generalDenoiseAttenuationLimitDb', 'setGeneralDenoiseAttenuationLimitDb', 'db', 6, 0, 60, [-1, 61, NaN, Infinity, '1', undefined], /invalid_general_denoise_attenuation_limit_db/, /tellus_general_denoise_attenuation_limit_unsupported/],
 ];
@@ -1125,9 +1126,9 @@ test('status maps the general denoise attenuation limit, keeping null and leavin
 
 test('status maps close-talk tuning fields', async () => {
   const { capture } = environment({ status: () => ({ lifecycle: 'stopped', denoise_enabled: false, denoise_loaded: false, vad_loaded: false,
-    close_talk_hold_ms: 250, close_talk_keep_gap_db: 4, close_talk_level_margin_db: 2, close_talk_learned_level_dbfs: -42.5, close_talk_level_learned: true }) });
+    close_talk_hold_ms: 250, close_talk_keep_gap_db: 4, close_talk_level_margin_db: 2, close_talk_level_min_dbfs: -32, close_talk_learned_level_dbfs: -42.5, close_talk_level_learned: true }) });
   const status = await capture.getStatus();
-  assert.deepEqual([status.closeTalkHoldMs, status.closeTalkKeepGapDb, status.closeTalkLevelMarginDb, status.closeTalkLearnedLevelDbfs, status.closeTalkLevelLearned], [250, 4, 2, -42.5, true]);
+  assert.deepEqual([status.closeTalkHoldMs, status.closeTalkKeepGapDb, status.closeTalkLevelMarginDb, status.closeTalkLevelMinDbfs, status.closeTalkLearnedLevelDbfs, status.closeTalkLevelLearned], [250, 4, 2, -32, -42.5, true]);
   await capture.dispose();
   const bare = environment({ status: () => ({ lifecycle: 'stopped', denoise_enabled: false, denoise_loaded: false, vad_loaded: false, close_talk_learned_level_dbfs: null }) });
   const empty = await bare.capture.getStatus();

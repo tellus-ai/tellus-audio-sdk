@@ -40,6 +40,7 @@ public:
   std::shared_ptr<Promise<void>> setCloseTalkHoldMs(double ms) override;
   std::shared_ptr<Promise<void>> setCloseTalkKeepGapDb(double db) override;
   std::shared_ptr<Promise<void>> setCloseTalkLevelMarginDb(double db) override;
+  std::shared_ptr<Promise<void>> setCloseTalkLevelMinDbfs(double dbfs) override;
   // A null dbfs clears the learned level (the C ABI clear function). Apps that switch input device pass null.
   std::shared_ptr<Promise<void>> setCloseTalkLearnedLevelDbfs(const std::optional<std::variant<nitro::NullType, double>>& dbfs) override;
   std::shared_ptr<Promise<void>> setDenoiseAttenuationLimitDb(double db) override;
@@ -60,6 +61,7 @@ public:
   static void setCloseTalkHoldResolverForTesting(DenoiseSettingFn (*resolver)());
   static void setCloseTalkKeepGapResolverForTesting(DenoiseSettingFn (*resolver)());
   static void setCloseTalkLevelMarginResolverForTesting(DenoiseSettingFn (*resolver)());
+  static void setCloseTalkLevelMinResolverForTesting(DenoiseSettingFn (*resolver)());
   static void setCloseTalkLearnedLevelResolverForTesting(DenoiseSettingFn (*resolver)());
   static void setClearCloseTalkLearnedLevelResolverForTesting(DenoiseClearFn (*resolver)());
   static void setGeneralDenoiseAttenuationLimitResolverForTesting(DenoiseSettingFn (*resolver)());
@@ -77,6 +79,7 @@ private:
   static DenoiseSettingFn (*_closeTalkHoldResolver)();
   static DenoiseSettingFn (*_closeTalkKeepGapResolver)();
   static DenoiseSettingFn (*_closeTalkLevelMarginResolver)();
+  static DenoiseSettingFn (*_closeTalkLevelMinResolver)();
   static DenoiseSettingFn (*_closeTalkLearnedLevelResolver)();
   static DenoiseClearFn (*_clearCloseTalkLearnedLevelResolver)();
   static DenoiseSettingFn (*_generalDenoiseAttenuationLimitResolver)();

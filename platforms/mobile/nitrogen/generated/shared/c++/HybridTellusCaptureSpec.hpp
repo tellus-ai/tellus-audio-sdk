@@ -79,6 +79,7 @@ namespace margelo::nitro::tellus {
       virtual std::shared_ptr<Promise<void>> setCloseTalkHoldMs(double ms) = 0;
       virtual std::shared_ptr<Promise<void>> setCloseTalkKeepGapDb(double db) = 0;
       virtual std::shared_ptr<Promise<void>> setCloseTalkLevelMarginDb(double db) = 0;
+      virtual std::shared_ptr<Promise<void>> setCloseTalkLevelMinDbfs(double dbfs) = 0;
       virtual std::shared_ptr<Promise<void>> setCloseTalkLearnedLevelDbfs(const std::optional<std::variant<nitro::NullType, double>>& dbfs) = 0;
       virtual std::shared_ptr<Promise<void>> setDenoiseAttenuationLimitDb(double db) = 0;
       virtual std::shared_ptr<Promise<void>> setGeneralDenoiseAttenuationLimitDb(const std::optional<std::variant<nitro::NullType, double>>& db) = 0;

@@ -359,6 +359,8 @@ const tuning = [
     invalid: [NaN, Infinity, -1, 21, null, '4'], message: 'invalid_close_talk_keep_gap_db: expected a finite value within 0..=20' },
   { setter: 'setCloseTalkLevelMarginDb', key: 'closeTalkLevelMarginDb', unsupported: 'tellus_close_talk_level_margin_unsupported', valid: 3,
     invalid: [NaN, Infinity, -1, 21, null, '2'], message: 'invalid_close_talk_level_margin_db: expected a finite value within 0..=20' },
+  { setter: 'setCloseTalkLevelMinDbfs', key: 'closeTalkLevelMinDbfs', unsupported: 'tellus_close_talk_level_min_unsupported', valid: -32,
+    invalid: [NaN, Infinity, -101, 1, null, undefined, '-20'], message: 'invalid_close_talk_level_min_dbfs: expected a finite value within -100..=0' },
   { setter: 'setCloseTalkLearnedLevelDbfs', key: 'closeTalkLearnedLevelDbfs', unsupported: 'tellus_close_talk_learned_level_unsupported', valid: -40,
     invalid: [NaN, Infinity, -101, 1, undefined, '-40'], message: 'invalid_close_talk_learned_level_dbfs: expected a finite value within -100..=0 or null' },
   { setter: 'setGeneralDenoiseAttenuationLimitDb', key: 'generalDenoiseAttenuationLimitDb', unsupported: 'tellus_general_denoise_attenuation_limit_unsupported', valid: 6,
@@ -413,6 +415,16 @@ for (const { setter, key, unsupported, valid, invalid, message } of tuning) {
   });
 }
 
+test('closeTalkLevelMinDbfs default (-20) config never calls the setter, so old kits still start', async () => {
+  const { native, create } = fixture();
+  const applied = [];
+  native.setCloseTalkLevelMinDbfs = async value => { applied.push(value); };
+  await (await create({ closeTalkLevelMinDbfs: -20 })).start(() => {});
+  assert.deepEqual(applied, []);
+  delete native.setCloseTalkLevelMinDbfs;
+  await (await create({ closeTalkLevelMinDbfs: -20 })).start(() => {});
+});
+
 test('setCloseTalkLearnedLevelDbfs(null) reaches native as null, old kits reject, and an initial null never calls the setter', async () => {
   const { native, create } = fixture();
   const applied = [];
@@ -454,11 +466,12 @@ test('status reports the general denoise attenuation limit, null when unlimited,
 test('status reports the close_talk tuning values and learned level, and old status JSON leaves them undefined', async () => {
   const { native, create } = fixture();
   native.getStatus = async () => JSON.stringify({ lifecycle: 'idle', denoise_enabled: true, close_talk_hold_ms: 300,
-    close_talk_keep_gap_db: 5, close_talk_level_margin_db: 3, close_talk_learned_level_dbfs: -42.5, close_talk_level_learned: true });
+    close_talk_keep_gap_db: 5, close_talk_level_margin_db: 3, close_talk_level_min_dbfs: -32, close_talk_learned_level_dbfs: -42.5, close_talk_level_learned: true });
   const status = await (await create()).getStatus();
   assert.equal(status.closeTalkHoldMs, 300);
   assert.equal(status.closeTalkKeepGapDb, 5);
   assert.equal(status.closeTalkLevelMarginDb, 3);
+  assert.equal(status.closeTalkLevelMinDbfs, -32);
   assert.equal(status.closeTalkLearnedLevelDbfs, -42.5);
   assert.equal(status.closeTalkLevelLearned, true);
   native.getStatus = async () => JSON.stringify({ lifecycle: 'idle', denoise_enabled: true, close_talk_learned_level_dbfs: null, close_talk_level_learned: false });

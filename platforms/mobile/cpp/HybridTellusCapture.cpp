@@ -10,6 +10,7 @@ DenoiseSettingFn (*HybridTellusCapture::_denoiseAttenuationLimitResolver)() = re
 DenoiseSettingFn (*HybridTellusCapture::_closeTalkHoldResolver)() = resolveSetCloseTalkHoldMs;
 DenoiseSettingFn (*HybridTellusCapture::_closeTalkKeepGapResolver)() = resolveSetCloseTalkKeepGapDb;
 DenoiseSettingFn (*HybridTellusCapture::_closeTalkLevelMarginResolver)() = resolveSetCloseTalkLevelMarginDb;
+DenoiseSettingFn (*HybridTellusCapture::_closeTalkLevelMinResolver)() = resolveSetCloseTalkLevelMinDbfs;
 DenoiseSettingFn (*HybridTellusCapture::_closeTalkLearnedLevelResolver)() = resolveSetCloseTalkLearnedLevelDbfs;
 DenoiseClearFn (*HybridTellusCapture::_clearCloseTalkLearnedLevelResolver)() = resolveClearCloseTalkLearnedLevel;
 DenoiseSettingFn (*HybridTellusCapture::_generalDenoiseAttenuationLimitResolver)() = resolveSetGeneralDenoiseAttenuationLimitDb;
@@ -260,6 +261,20 @@ std::shared_ptr<Promise<void>> HybridTellusCapture::setCloseTalkLevelMarginDb(do
 
 void HybridTellusCapture::setCloseTalkLevelMarginResolverForTesting(DenoiseSettingFn (*resolver)()) {
   _closeTalkLevelMarginResolver = resolver;
+}
+
+std::shared_ptr<Promise<void>> HybridTellusCapture::setCloseTalkLevelMinDbfs(double value) {
+  if (!std::isfinite(value) || value < -100 || value > 0) throw std::invalid_argument("invalid_close_talk_level_min_dbfs");
+  auto session = acquire();
+  const auto setValue = _closeTalkLevelMinResolver();
+  if (!setValue) throw std::runtime_error("tellus_close_talk_level_min_unsupported");
+  return session->submit([state = session.get(), setValue, value] {
+    state->check(setValue(state->handle, static_cast<float>(value)));
+  });
+}
+
+void HybridTellusCapture::setCloseTalkLevelMinResolverForTesting(DenoiseSettingFn (*resolver)()) {
+  _closeTalkLevelMinResolver = resolver;
 }
 
 std::shared_ptr<Promise<void>> HybridTellusCapture::setCloseTalkLearnedLevelDbfs(const std::optional<std::variant<nitro::NullType, double>>& dbfs) {

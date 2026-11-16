@@ -6,6 +6,7 @@ extern "C" int32_t tellus_audio_session_set_denoise_attenuation_limit_db(TellusA
 extern "C" int32_t tellus_audio_session_set_close_talk_hold_ms(TellusAudioSession* session, float ms) __attribute__((weak));
 extern "C" int32_t tellus_audio_session_set_close_talk_keep_gap_db(TellusAudioSession* session, float db) __attribute__((weak));
 extern "C" int32_t tellus_audio_session_set_close_talk_level_margin_db(TellusAudioSession* session, float db) __attribute__((weak));
+extern "C" int32_t tellus_audio_session_set_close_talk_level_min_dbfs(TellusAudioSession* session, float dbfs) __attribute__((weak));
 extern "C" int32_t tellus_audio_session_set_close_talk_learned_level_dbfs(TellusAudioSession* session, float dbfs) __attribute__((weak));
 extern "C" int32_t tellus_audio_session_clear_close_talk_learned_level(TellusAudioSession* session) __attribute__((weak));
 extern "C" int32_t tellus_audio_session_set_general_denoise_attenuation_limit_db(TellusAudioSession* session, float db) __attribute__((weak));
@@ -31,6 +32,10 @@ DenoiseSettingFn resolveSetCloseTalkKeepGapDb() {
 
 DenoiseSettingFn resolveSetCloseTalkLevelMarginDb() {
   return &tellus_audio_session_set_close_talk_level_margin_db;
+}
+
+DenoiseSettingFn resolveSetCloseTalkLevelMinDbfs() {
+  return &tellus_audio_session_set_close_talk_level_min_dbfs;
 }
 
 DenoiseSettingFn resolveSetCloseTalkLearnedLevelDbfs() {

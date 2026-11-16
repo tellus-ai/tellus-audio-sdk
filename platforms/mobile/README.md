@@ -85,18 +85,22 @@ const engine = await AudioEngine.init({
   closeTalkHoldMs: 250,               // 열린 게이트 유지 시간, 기본 250 (0..=2000 ms)
   closeTalkKeepGapDb: 4,              // 유지 기준 = 열림 임계값 - 폭, 기본 4 (0..=20 dB)
   closeTalkLevelMarginDb: 2,          // 레벨 >= 학습값 - 여유면 근거, 기본 2 (0..=20 dB)
+  closeTalkLevelMinDbfs: -20,         // 학습 레벨이 이 값 이상일 때만 크기 보조 사용, 기본 -20 (-100..=0 dBFS)
   closeTalkLearnedLevelDbfs: -42,     // 학습 레벨 주입, -100..=0 또는 null(기본)
 });
 const capture = engine.createCapture();
 await capture.setCloseTalkHoldMs(400);
 await capture.setCloseTalkKeepGapDb(6);
 await capture.setCloseTalkLevelMarginDb(3);
+await capture.setCloseTalkLevelMinDbfs(-32);
 await capture.setCloseTalkLearnedLevelDbfs(null); // 학습값 지우기
 ```
 
 네 setter는 다음 10 ms hop부터 적용되며 보관 중인 오디오를 버리지 않습니다. 기본값은 이전 상수와 같아 setter를 부르지 않으면 출력이 바뀌지 않습니다. 구형 kit은 configure가 새 키를 거부하므로 초기 설정도 임계값처럼 configure 뒤 setter로 적용하고, 함수가 없으면 `tellus_close_talk_hold_unsupported`·`tellus_close_talk_keep_gap_unsupported`·`tellus_close_talk_level_margin_unsupported`·`tellus_close_talk_learned_level_unsupported`로 Promise를 거부합니다. 범위를 벗어난 값은 `invalid_close_talk_hold_ms: expected a finite value within 0..=2000`, `invalid_close_talk_keep_gap_db: expected a finite value within 0..=20`, `invalid_close_talk_level_margin_db: expected a finite value within 0..=20`, `invalid_close_talk_learned_level_dbfs: expected a finite value within -100..=0 or null`입니다. C++ 글루는 `tellus_audio_session_set_close_talk_hold_ms`·`..._keep_gap_db`·`..._level_margin_db`·`..._learned_level_dbfs`·`tellus_audio_session_clear_close_talk_learned_level`(`null`)을 약한 참조로 찾으며, podspec의 `-Wl,-U` 플래그로 구형 라이브러리와도 링크됩니다(Android는 기존 약한 심볼과 같은 방식입니다). 이 API는 엔진 v0.4.8 이상이 필요합니다.
 
-`getStatus()`는 `closeTalkHoldMs`·`closeTalkKeepGapDb`·`closeTalkLevelMarginDb`·`closeTalkLearnedLevelDbfs`(`number | null`)·`closeTalkLevelLearned`를 선택 필드로 보고하며 구형 엔진에서는 없습니다. 청크의 `closeTalkGate`는 게이트가 처리한 청크에만 `{ open, openRatio, lsnrDb, levelDbfs, learnedLevelDbfs }`로 채워지고 그 외에는 `null`입니다.
+`setCloseTalkLevelMinDbfs(dbfs)`는 Promise를 반환하며, 구형 엔진에서는 `tellus_close_talk_level_min_unsupported`로 거부됩니다. `closeTalkLevelMinDbfs`(유한한 -100..0 dBFS, 기본 -20)는 크기 보조(학습 레벨 - 여유 이상이면 열림)를 쓰는 하한으로, 학습한 레벨이 이 값 이상일 때만 크기 보조가 동작합니다. 15-30 cm에서 쓰면 학습 레벨이 -20보다 낮아 크기 보조가 꺼지므로 -32처럼 낮추면 더 작은 학습 음성에서도 동작합니다. 대신 멀거나 작은 목소리, 12 dB 감쇠 한도를 통과한 큰 소음이 게이트를 열 수 있습니다. 엔진 v0.4.9+가 필요하며 구형 엔진에서는 기본값(-20)이 아닌 값을 설정하면 unsupported 오류가 납니다.
+
+`getStatus()`는 `closeTalkHoldMs`·`closeTalkKeepGapDb`·`closeTalkLevelMarginDb`·`closeTalkLevelMinDbfs`·`closeTalkLearnedLevelDbfs`(`number | null`)·`closeTalkLevelLearned`를 선택 필드로 보고하며 구형 엔진에서는 없습니다. 청크의 `closeTalkGate`는 게이트가 처리한 청크에만 `{ open, openRatio, lsnrDb, levelDbfs, learnedLevelDbfs }`로 채워지고 그 외에는 `null`입니다.
 
 학습 레벨은 denoise 켜기·끄기, stop/start, pause/resume을 지나 세션 동안 유지됩니다. 지우는 방법은 `setCloseTalkLearnedLevelDbfs(null)`과 새 capture 객체뿐이므로, **입력 장치를 바꾸는 앱은 `null`로 학습 레벨을 지워야 합니다**. 새 capture 객체로 이어 가려면 앞 객체의 `getStatus().closeTalkLearnedLevelDbfs`를 새 객체의 `closeTalkLearnedLevelDbfs`로 넘깁니다(기록은 넘어가지 않고 주입값으로 시작합니다). 이 API는 새 엔진 kit이 필요합니다.
 

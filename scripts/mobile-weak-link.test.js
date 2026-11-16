@@ -16,6 +16,7 @@ test('mobile podspec lets every weakly referenced engine function stay undefined
     '-Wl,-U,_tellus_audio_session_set_close_talk_hold_ms',
     '-Wl,-U,_tellus_audio_session_set_close_talk_keep_gap_db',
     '-Wl,-U,_tellus_audio_session_set_close_talk_level_margin_db',
+    '-Wl,-U,_tellus_audio_session_set_close_talk_level_min_dbfs',
     '-Wl,-U,_tellus_audio_session_set_close_talk_learned_level_dbfs',
     '-Wl,-U,_tellus_audio_session_clear_close_talk_learned_level',
     '-Wl,-U,_tellus_audio_session_set_general_denoise_attenuation_limit_db',

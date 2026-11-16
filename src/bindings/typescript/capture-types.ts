@@ -31,6 +31,8 @@ export interface AudioCaptureConfig {
   closeTalkKeepGapDb?: number;
   /** close_talk level margin in dB, finite 0..=20, engine default 2. A 200 ms level at or above the learned level minus this margin is open evidence regardless of lsnr. Changeable at runtime with setCloseTalkLevelMarginDb. */
   closeTalkLevelMarginDb?: number;
+  /** close_talk level assist floor in dBFS, finite -100..=0, engine default -20. The level assist (open by loudness: level at or above the learned level minus closeTalkLevelMarginDb) is used only when the learned level is at or above this floor. Lowering it (e.g. -32 for 15-30 cm use) lets the assist work for quieter learned voices, at the cost that far or quiet voices, or loud noise surviving the 12 dB attenuation limit, may open the gate. Changeable at runtime with setCloseTalkLevelMinDbfs. Requires engine v0.4.9+. */
+  closeTalkLevelMinDbfs?: number;
   /** Learned close_talk speech level in dBFS applied when the gate is created, finite -100..=0, or null (default: none). Pass a value read from getStatus().closeTalkLearnedLevelDbfs to carry it into a new capture. */
   closeTalkLearnedLevelDbfs?: number | null;
   vadEnabled?: boolean;
@@ -120,6 +122,8 @@ export interface CaptureStatus {
   closeTalkKeepGapDb?: number;
   /** Stored close_talk level margin (dB), reported in every denoiseMode. Absent on engines without close-talk tuning support. */
   closeTalkLevelMarginDb?: number;
+  /** Stored close_talk level assist floor (dBFS), reported in every denoiseMode. Absent on engines without close-talk level minimum support. */
+  closeTalkLevelMinDbfs?: number;
   /** Learned level (dBFS) the close_talk gate currently uses, from its own learning or injection; null if none. Keeps the last value while not running. Absent on engines without close-talk tuning support. */
   closeTalkLearnedLevelDbfs?: number | null;
   /** True only when closeTalkLearnedLevelDbfs comes from the gate's own learning (at least 30 levels), not from injection. Absent on engines without close-talk tuning support. */
@@ -161,6 +165,8 @@ export interface AudioCapture extends AuthorizableAudioCapture {
   setCloseTalkKeepGapDb(db: number): Promise<void>;
   /** Updates the close_talk level margin (dB, finite 0..=20) from the next 10 ms hop, keeping held audio and learning. Rejects with a platform unsupported error on engines without the API. */
   setCloseTalkLevelMarginDb(db: number): Promise<void>;
+  /** Updates the close_talk level assist floor (dBFS, finite -100..=0) from the next 10 ms hop, keeping held audio and learning. Rejects with a platform unsupported error on engines without the API (requires engine v0.4.9+). */
+  setCloseTalkLevelMinDbfs(dbfs: number): Promise<void>;
   /**
    * Clears the close_talk learning history and sets the learned level to dbfs (finite -100..=0); the gate's own learning replaces it after 30 new levels. null clears the learned level too.
    * Learning survives denoise on/off, mode switches, pause/resume, stop/start, and mic restarts, so apps that switch input device reset it with null. Rejects with a platform unsupported error on engines without the API.

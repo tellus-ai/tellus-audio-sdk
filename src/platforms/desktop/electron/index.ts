@@ -78,6 +78,8 @@ export interface AudioCaptureConfig {
   closeTalkKeepGapDb?: number;
   /** close_talk level margin in dB: a 200 ms level within this of the learned level is open evidence. Finite 0..=20, engine default 2. Changeable at runtime with setCloseTalkLevelMarginDb. */
   closeTalkLevelMarginDb?: number;
+  /** close_talk level assist floor in dBFS: the level assist is used only when the learned level is at or above this. Finite -100..=0, engine default -20. Lowering it (e.g. -32 for 15-30 cm use) lets the assist work for quieter learned voices, but far or quiet voices, or loud noise surviving the 12 dB attenuation limit, may open the gate. Changeable at runtime with setCloseTalkLevelMinDbfs. Requires engine v0.4.9+. */
+  closeTalkLevelMinDbfs?: number;
   /** Learned close_talk speech level (dBFS) to start from, e.g. a previous capture's getStatus().closeTalkLearnedLevelDbfs. Finite -100..=0, or null (default) for none. */
   closeTalkLearnedLevelDbfs?: number | null;
   /** Enables the native VAD gate. Native default is false. */
@@ -234,6 +236,8 @@ export interface CaptureStatus {
   closeTalkKeepGapDb?: number;
   /** Stored close_talk level margin (dB). Absent on native engines without close-talk level margin support. */
   closeTalkLevelMarginDb?: number;
+  /** Stored close_talk level assist floor (dBFS). Absent on native engines without close-talk level minimum support. */
+  closeTalkLevelMinDbfs?: number;
   /** Learned level (dBFS, self-learned or injected) the gate uses, the stored injected value while no gate runs, or null. Kept after stop. Absent on native engines without close-talk learned level support. */
   closeTalkLearnedLevelDbfs?: number | null;
   /** True only when closeTalkLearnedLevelDbfs comes from self-learning. Absent on native engines without close-talk learned level support. */
@@ -815,6 +819,8 @@ export class AudioCapture {
     if (config?.closeTalkHoldMs !== undefined) this.#requireCloseTalkHoldSupport();
     if (config?.closeTalkKeepGapDb !== undefined) this.#requireCloseTalkKeepGapSupport();
     if (config?.closeTalkLevelMarginDb !== undefined) this.#requireCloseTalkLevelMarginSupport();
+    // -20 is the engine default, so only another value requires the setter.
+    if (config?.closeTalkLevelMinDbfs !== undefined && config.closeTalkLevelMinDbfs !== -20) this.#requireCloseTalkLevelMinSupport();
     // null is the engine default (no learned level), so only a value requires the setter.
     if (config?.closeTalkLearnedLevelDbfs != null) this.#requireCloseTalkLearnedLevelSupport();
     if (config?.deliveryBufferDurationMs !== undefined &&
@@ -907,6 +913,12 @@ export class AudioCapture {
     }
   }
 
+  #requireCloseTalkLevelMinSupport(): void {
+    if (typeof this.#native.setCloseTalkLevelMinDbfs !== 'function') {
+      throw new Error('close_talk_level_min_unsupported: install a native engine with close-talk level minimum support');
+    }
+  }
+
   #requireCloseTalkLearnedLevelSupport(): void {
     if (typeof this.#native.setCloseTalkLearnedLevelDbfs !== 'function') {
       throw new Error('close_talk_learned_level_unsupported: install a native engine with close-talk learned level support');
@@ -980,6 +992,12 @@ export class AudioCapture {
   setCloseTalkLevelMarginDb(db: number): void {
     this.#requireCloseTalkLevelMarginSupport();
     this.#native.setCloseTalkLevelMarginDb(db);
+  }
+
+  /** Updates the close_talk level assist floor from the next 10 ms hop, keeping held audio and learning. The native engine rejects values outside finite -100..=0. */
+  setCloseTalkLevelMinDbfs(dbfs: number): void {
+    this.#requireCloseTalkLevelMinSupport();
+    this.#native.setCloseTalkLevelMinDbfs(dbfs);
   }
 
   /**

@@ -79,12 +79,14 @@ const engine = await AudioEngine.init({
   closeTalkHoldMs: 250,             // 열린 게이트 유지 시간, 기본 250 (0..=2000 ms)
   closeTalkKeepGapDb: 4,            // 열린 뒤 유지 문턱 간격, 기본 4 (0..=20 dB)
   closeTalkLevelMarginDb: 2,        // 학습 레벨 마진, 기본 2 (0..=20 dB)
+  closeTalkLevelMinDbfs: -20,       // 학습 레벨이 이 값 이상일 때만 크기 보조 사용, 기본 -20 (-100..=0 dBFS)
   closeTalkLearnedLevelDbfs: null,  // 학습 레벨 주입, 기본 null (-100..=0 dBFS)
 }, assets);
 const capture = engine.createCapture();
 await capture.setCloseTalkHoldMs(300);
 await capture.setCloseTalkKeepGapDb(6);
 await capture.setCloseTalkLevelMarginDb(3);
+await capture.setCloseTalkLevelMinDbfs(-32);
 await capture.setCloseTalkLearnedLevelDbfs(-40);   // 값을 주입
 await capture.setCloseTalkLearnedLevelDbfs(null);  // 학습을 지움
 ```
@@ -93,7 +95,9 @@ setter는 `setCloseTalkThresholdDb`와 같이 다음 10 ms hop부터 적용되�
 
 학습 레벨은 denoise 토글, stop/start, pause/resume, reset을 지나 capture 객체 수명 동안 남습니다. 지우는 것은 `setCloseTalkLearnedLevelDbfs(null)`과 새 capture 객체뿐이므로 **입력 장치를 바꾸는 앱은 null로 호출해야 합니다.** 새 capture로 이어 가려면 앞 객체의 `getStatus().closeTalkLearnedLevelDbfs`를 새 `closeTalkLearnedLevelDbfs`로 넘기십시오(기록은 넘어가지 않고 주입값으로 시작합니다).
 
-`getStatus()`는 `closeTalkHoldMs`·`closeTalkKeepGapDb`·`closeTalkLevelMarginDb`·`closeTalkLearnedLevelDbfs`(`number | null`)·`closeTalkLevelLearned`(자체 학습 완료 여부)를 보고하며, 지원하지 않는 엔진에서는 없습니다. 청크의 `closeTalkGate`는 게이트가 처리한 청크에서 `{ open, openRatio, lsnrDb, levelDbfs, learnedLevelDbfs }`, 아니면 `null`입니다.
+`setCloseTalkLevelMinDbfs(dbfs)`는 Promise를 반환하며, 구형 엔진에서는 `tellus_close_talk_level_min_unsupported`로 거부됩니다. `closeTalkLevelMinDbfs`(유한한 -100..0 dBFS, 기본 -20)는 크기 보조(학습 레벨 - 여유 이상이면 열림)를 쓰는 하한으로, 학습한 레벨이 이 값 이상일 때만 크기 보조가 동작합니다. 15-30 cm에서 쓰면 학습 레벨이 -20보다 낮아 크기 보조가 꺼지므로 -32처럼 낮추면 더 작은 학습 음성에서도 동작합니다. 대신 멀거나 작은 목소리, 12 dB 감쇠 한도를 통과한 큰 소음이 게이트를 열 수 있습니다. 엔진 v0.4.9+가 필요하며 구형 엔진에서는 기본값(-20)이 아닌 값을 설정하면 unsupported 오류가 납니다.
+
+`getStatus()`는 `closeTalkHoldMs`·`closeTalkKeepGapDb`·`closeTalkLevelMarginDb`·`closeTalkLevelMinDbfs`·`closeTalkLearnedLevelDbfs`(`number | null`)·`closeTalkLevelLearned`(자체 학습 완료 여부)를 보고하며, 지원하지 않는 엔진에서는 없습니다. 청크의 `closeTalkGate`는 게이트가 처리한 청크에서 `{ open, openRatio, lsnrDb, levelDbfs, learnedLevelDbfs }`, 아니면 `null`입니다.
 
 ## 입력 hold
 

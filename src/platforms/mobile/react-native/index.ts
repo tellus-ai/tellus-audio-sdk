@@ -65,6 +65,10 @@ function validateCloseTalkLevelMarginDb(db: number): number {
   if (typeof db !== 'number' || !Number.isFinite(db) || db < 0 || db > 20) throw new Error('invalid_close_talk_level_margin_db: expected a finite value within 0..=20');
   return db;
 }
+function validateCloseTalkLevelMinDbfs(dbfs: number): number {
+  if (typeof dbfs !== 'number' || !Number.isFinite(dbfs) || dbfs < -100 || dbfs > 0) throw new Error('invalid_close_talk_level_min_dbfs: expected a finite value within -100..=0');
+  return dbfs;
+}
 function validateCloseTalkLearnedLevelDbfs(dbfs: number | null): number | null {
   if (dbfs === null) return null;
   if (typeof dbfs !== 'number' || !Number.isFinite(dbfs) || dbfs < -100 || dbfs > 0) throw new Error('invalid_close_talk_learned_level_dbfs: expected a finite value within -100..=0 or null');
@@ -150,6 +154,8 @@ class NativeAudioCapture implements AudioCapture {
       if (config.closeTalkHoldMs !== undefined) await this.applyCloseTalkHoldMs(config.closeTalkHoldMs);
       if (config.closeTalkKeepGapDb !== undefined) await this.applyCloseTalkKeepGapDb(config.closeTalkKeepGapDb);
       if (config.closeTalkLevelMarginDb !== undefined) await this.applyCloseTalkLevelMarginDb(config.closeTalkLevelMarginDb);
+      // -20 equals the default, so the setter is not called; a default setting never fails on old kits.
+      if (config.closeTalkLevelMinDbfs !== undefined && config.closeTalkLevelMinDbfs !== -20) await this.applyCloseTalkLevelMinDbfs(config.closeTalkLevelMinDbfs);
       // null equals the default (no learned level), so the setter is not called; a null setting never fails on old kits.
       if (config.closeTalkLearnedLevelDbfs !== undefined && config.closeTalkLearnedLevelDbfs !== null) await this.applyCloseTalkLearnedLevelDbfs(config.closeTalkLearnedLevelDbfs);
       if (config.denoiseAttenuationLimitDb !== undefined) await this.applyDenoiseAttenuationLimitDb(config.denoiseAttenuationLimitDb);
@@ -330,6 +336,7 @@ class NativeAudioCapture implements AudioCapture {
       denoiseLoadFailed: status.denoise_load_failed, closeTalkThresholdDb: status.close_talk_threshold_db,
       closeTalkHoldMs: status.close_talk_hold_ms, closeTalkKeepGapDb: status.close_talk_keep_gap_db,
       closeTalkLevelMarginDb: status.close_talk_level_margin_db,
+      closeTalkLevelMinDbfs: status.close_talk_level_min_dbfs,
       closeTalkLearnedLevelDbfs: status.close_talk_learned_level_dbfs === undefined ? undefined : status.close_talk_learned_level_dbfs ?? null,
       closeTalkLevelLearned: typeof status.close_talk_level_learned === 'boolean' ? status.close_talk_level_learned : undefined,
       denoiseAttenuationLimitDb: status.denoise_attenuation_limit_db,
@@ -407,6 +414,20 @@ class NativeAudioCapture implements AudioCapture {
   private async applyCloseTalkLevelMarginDb(db: number): Promise<void> {
     if (typeof this.native.setCloseTalkLevelMarginDb !== 'function') throw new Error('tellus_close_talk_level_margin_unsupported');
     await callOptionalNative('tellus_close_talk_level_margin_unsupported', () => this.native.setCloseTalkLevelMarginDb!(db));
+  }
+
+  async setCloseTalkLevelMinDbfs(dbfs: number): Promise<void> {
+    validateCloseTalkLevelMinDbfs(dbfs);
+    if (this.disposed) throw new Error('capture_disposed');
+    const revision = this.controlRevision;
+    await this.ready;
+    this.checkControl(revision);
+    await this.applyCloseTalkLevelMinDbfs(dbfs);
+  }
+
+  private async applyCloseTalkLevelMinDbfs(dbfs: number): Promise<void> {
+    if (typeof this.native.setCloseTalkLevelMinDbfs !== 'function') throw new Error('tellus_close_talk_level_min_unsupported');
+    await callOptionalNative('tellus_close_talk_level_min_unsupported', () => this.native.setCloseTalkLevelMinDbfs!(dbfs));
   }
 
   async setCloseTalkLearnedLevelDbfs(dbfs: number | null): Promise<void> {
@@ -514,6 +535,7 @@ export class AudioEngine {
     if (config.closeTalkHoldMs !== undefined) validateCloseTalkHoldMs(config.closeTalkHoldMs);
     if (config.closeTalkKeepGapDb !== undefined) validateCloseTalkKeepGapDb(config.closeTalkKeepGapDb);
     if (config.closeTalkLevelMarginDb !== undefined) validateCloseTalkLevelMarginDb(config.closeTalkLevelMarginDb);
+    if (config.closeTalkLevelMinDbfs !== undefined) validateCloseTalkLevelMinDbfs(config.closeTalkLevelMinDbfs);
     if (config.closeTalkLearnedLevelDbfs !== undefined) validateCloseTalkLearnedLevelDbfs(config.closeTalkLearnedLevelDbfs);
     if (config.denoiseAttenuationLimitDb !== undefined) validateDenoiseAttenuationLimitDb(config.denoiseAttenuationLimitDb);
     if (config.generalDenoiseAttenuationLimitDb !== undefined) validateGeneralDenoiseAttenuationLimitDb(config.generalDenoiseAttenuationLimitDb);
