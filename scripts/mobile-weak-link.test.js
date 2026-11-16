@@ -23,11 +23,12 @@ test('mobile podspec lets every weakly referenced engine function stay undefined
     '-Wl,-U,_tellus_audio_session_clear_general_denoise_attenuation_limit',
     '-Wl,-U,_tellus_audio_session_hold_input',
     '-Wl,-U,_tellus_audio_session_release_input',
+    '-Wl,-U,_tellus_audio_session_copy_last_error',
   ]);
   assert.match(podspec, /source_files = \[[^\]]*'cpp\/\*\*\/\*\.\{hpp,cpp\}'/);
 });
 
 test('mobile android build compiles the weak-reference translation units', () => {
   const sources = read('android/CMakeLists.txt');
-  for (const unit of ['DenoiseSettings.cpp', 'InputHold.cpp']) assert.match(sources, new RegExp(`^\\s*\\.\\./cpp/${unit.replace('.', '\\.')}$`, 'm'));
+  for (const unit of ['DenoiseSettings.cpp', 'InputHold.cpp', 'LastError.cpp']) assert.match(sources, new RegExp(`^\\s*\\.\\./cpp/${unit.replace('.', '\\.')}$`, 'm'));
 });

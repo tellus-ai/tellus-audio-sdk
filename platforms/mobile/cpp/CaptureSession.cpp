@@ -2,12 +2,63 @@
 
 #include <array>
 #include <cmath>
+#include <cstdio>
 
 namespace margelo::nitro::tellus {
 
+CopyLastErrorFn (*CaptureSession::_copyLastErrorResolver)() = resolveCopyLastError;
+
+namespace {
+// Turns text into a JSON string literal. Engine explanations are UTF-8, so only quotes, backslashes and control characters are escaped.
+std::string jsonString(const std::string& text) {
+  std::string quoted = "\"";
+  for (const unsigned char c : text) {
+    if (c == '"' || c == '\\') { quoted += '\\'; quoted += static_cast<char>(c); }
+    else if (c < 0x20) {
+      std::array<char, 7> escaped{};
+      std::snprintf(escaped.data(), escaped.size(), "\\u%04x", c);
+      quoted += escaped.data();
+    } else quoted += static_cast<char>(c);
+  }
+  return quoted + "\"";
+}
+
+// The engine explanation when the error came from an engine status, otherwise an empty string.
+std::string engineMessage(const std::exception& error) {
+  const auto* engine = dynamic_cast<const EngineError*>(&error);
+  return engine ? engine->message : std::string();
+}
+} // namespace
+
 void CaptureSession::check(TellusStatus status) {
+  if (status == TELLUS_OK) return;
   if (status == TELLUS_INTERNAL_ERROR) _failed = true;
-  if (status != TELLUS_OK) throw std::runtime_error(tellus_audio_status_name(status));
+  std::string message;
+  if (const auto copy = _copyLastErrorResolver()) {
+    std::array<char, 1024> buffer{};
+    if (copy(handle, buffer.data(), buffer.size()) > 0) message = buffer.data();
+  }
+  { std::lock_guard lock(_lastErrorMutex); _lastErrorMessage = message; }
+  throw EngineError(tellus_audio_status_name(status), std::move(message));
+}
+
+std::string CaptureSession::lastErrorMessage() {
+  std::lock_guard lock(_lastErrorMutex);
+  return _lastErrorMessage;
+}
+
+std::string CaptureSession::status() {
+  auto status = json([&](auto* bytes, auto capacity, auto* written) {
+    return tellus_audio_session_get_status(handle, bytes, capacity, written);
+  });
+  const auto message = lastErrorMessage();
+  const auto end = status.rfind('}');
+  if (end == std::string::npos) return status;
+  return status.substr(0, end) + ",\"last_error_message\":" + (message.empty() ? "null" : jsonString(message)) + "}";
+}
+
+void CaptureSession::setCopyLastErrorResolverForTesting(CopyLastErrorFn (*resolver)()) {
+  _copyLastErrorResolver = resolver;
 }
 
 std::string CaptureSession::json(std::function<TellusStatus(uint8_t*, size_t, size_t*)> call) {
@@ -76,6 +127,8 @@ void CaptureSession::start(bool resume) {
     _device->stopCapture();
   }
   check(status);
+  // The engine accepted start, so clear any earlier internal-error latch.
+  _failed = false;
   _deviceSelectionLocked = true;
   _started = true;
   try {
@@ -137,6 +190,8 @@ void CaptureSession::stop() {
   clearQueuedCapture();
   _started = false;
   check(tellus_audio_session_stop(handle, chunk, this));
+  // The engine cleaned up the pipeline on stop, so clear the internal-error latch. canDeliver already dropped tail chunks while latched.
+  _failed = false;
   if (_outputOverflow.exchange(false)) fail("capture_output_queue_full");
 }
 
@@ -162,7 +217,7 @@ void CaptureSession::invalidate() {
       _started = false;
       const auto status = tellus_audio_session_pause(handle);
       if (status != TELLUS_OK && status != TELLUS_AUTHORIZATION_REQUIRED) {
-        try { check(status); } catch (const std::exception& error) { fail(error.what()); }
+        try { check(status); } catch (const std::exception& error) { fail(error.what(), engineMessage(error)); }
       }
     }
   });
@@ -172,6 +227,8 @@ void CaptureSession::reset(uint64_t revision, bool capturing) {
   const auto lost = _worker->discard(processingRate);
   if (lost > 0) check(tellus_audio_session_mark_discontinuity(handle, lost));
   check(tellus_audio_session_reset(handle));
+  // The engine discarded its history and is ready again, so clear the internal-error latch. OS capture stopped by the failure is not reopened.
+  _failed = false;
   if (capturing && revision == _controlRevision && !closed) { _captureEnabled = true; _deliveryEnabled = true; }
 }
 
@@ -308,10 +365,10 @@ void CaptureSession::process(const CaptureWorker::Frame& frame) {
     check(tellus_audio_session_push_capture(handle, frame.samples.data(), frame.count, frame.rate,
                                             frame.timestamp, chunk, this));
     if (_outputOverflow.exchange(false)) fail("capture_output_queue_full");
-  } catch (const std::exception& error) { fail(error.what()); }
+  } catch (const std::exception& error) { fail(error.what(), engineMessage(error)); }
 }
 
-void CaptureSession::fail(const std::string& error) {
+void CaptureSession::fail(const std::string& error, const std::string& message) {
   _authorizationMonitored = false;
   _captureEnabled = false;
   _deliveryEnabled = false;
@@ -319,7 +376,7 @@ void CaptureSession::fail(const std::string& error) {
   _worker->discard(processingRate);
   if (!_failed) tellus_audio_session_pause(handle);
   _started = false;
-  if (onError) { try { onError(error); } catch (...) {} }
+  if (onError) { try { onError(error, message); } catch (...) {} }
 }
 
 void CaptureSession::verifyAuthorization() {
@@ -329,7 +386,7 @@ void CaptureSession::verifyAuthorization() {
       return tellus_audio_session_get_authorization_status(handle, bytes, capacity, written);
     });
     if (status.find("\"state\":\"authorized\"") == std::string::npos) fail("engine_authorization_expired");
-  } catch (const std::exception& error) { fail(error.what()); }
+  } catch (const std::exception& error) { fail(error.what(), engineMessage(error)); }
 }
 
 } // namespace margelo::nitro::tellus

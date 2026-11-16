@@ -27,7 +27,7 @@ public:
   std::shared_ptr<Promise<void>> loadModelFile(const std::string& path) override;
   std::shared_ptr<Promise<void>> start(
       const std::function<void(const std::shared_ptr<ArrayBuffer>&, const std::string&, uint64_t, uint64_t)>& onChunk,
-      const std::function<void(const std::string&)>& onError) override;
+      const std::function<void(const std::string&, const std::string&)>& onError) override;
   std::shared_ptr<Promise<void>> pause() override;
   std::shared_ptr<Promise<void>> resume() override;
   std::shared_ptr<Promise<void>> stop() override;
