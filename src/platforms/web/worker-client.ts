@@ -5,6 +5,7 @@ export class WorkerClient {
   private nextId = 0;
   private pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
   private failure: Error | undefined;
+  private readonly failureListeners = new Set<(error: Error) => void>();
 
   constructor(private readonly worker: Worker) {
     worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
@@ -35,7 +36,15 @@ export class WorkerClient {
   }
 
   cancel(sessionId: number, epoch: number): void {
-    if (!this.failure) this.worker.postMessage({ cancel: sessionId, epoch });
+    if (this.failure) return;
+    try { this.worker.postMessage({ cancel: sessionId, epoch }); }
+    catch (error) { this.fail(error instanceof Error ? error : new Error('tellus_worker_post_failed')); }
+  }
+
+  /** Lets captures close their microphones after fatal worker failure, even with no pending requests. */
+  onFailure(listener: (error: Error) => void): () => void {
+    if (!this.failure) this.failureListeners.add(listener);
+    return () => { this.failureListeners.delete(listener); };
   }
 
   dispose(): void {
@@ -44,8 +53,11 @@ export class WorkerClient {
   }
 
   private fail(error: Error): void {
+    if (this.failure) return;
     this.failure = error;
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();
+    for (const listener of this.failureListeners) listener(error);
+    this.failureListeners.clear();
   }
 }

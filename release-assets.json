@@ -59,7 +59,9 @@
         "tellus-audio-engine.wasm",
         "models/manifest.json",
         "models/denoise.temc",
-        "models/vad.temc"
+        "models/vad.temc",
+        "speech-detection/silero_vad_v6.2.onnx",
+        "licenses/silero-vad.txt"
       ]
     }
   }

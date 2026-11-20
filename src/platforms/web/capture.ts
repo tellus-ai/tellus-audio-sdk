@@ -6,6 +6,7 @@ import type { AudioDeviceStatus } from '../../bindings/typescript/audio-devices.
 import { validateGainDb } from '../../bindings/typescript/audio-gain.js';
 import { CaptureQueue, type CaptureFrame } from './capture-queue.js';
 import { audioDeviceError } from './devices.js';
+import { acquireCapturePriority, hasCapturePriority, releaseCapturePriority } from './microphone-priority.js';
 import { validateCloseTalkHoldMs, validateCloseTalkKeepGapDb, validateCloseTalkLearnedLevelDbfs, validateCloseTalkLevelMarginDb, validateCloseTalkLevelMinDbfs, validateCloseTalkThresholdDb, validateDenoiseAttenuationLimitDb, validateGeneralDenoiseAttenuationLimitDb, type DeliveredChunk, type WorkerCommand, type WorkerStatus } from './protocol.js';
 import { WorkerClient } from './worker-client.js';
 
@@ -42,6 +43,9 @@ export class BrowserCapture implements AudioCapture {
   private epoch = 0;
   private state: CaptureStatus['state'] = 'idle';
   private disposed = false;
+  private disposal?: Promise<void>;
+  private interruptStart?: (error: Error) => void;
+  private readonly unsubscribeWorkerFailure: () => void;
   private denoiseEnabled: boolean;
   private denoiseUpdates = 0;
   // The input hold state the wrapper wants. holdInput and releaseInput change it synchronously before sending, so a later release sees a hold that has not finished yet at call time.
@@ -70,6 +74,7 @@ export class BrowserCapture implements AudioCapture {
   private playbackEpoch = 0;
   private playbackCleanup: Promise<void> = Promise.resolve();
   private approval?: { remainingMs: number; monotonicStart: number; wallStart: number };
+  private authorizationTimer?: ReturnType<typeof setTimeout>;
   private deviceStatus: AudioDeviceStatus;
 
   constructor(private readonly client: WorkerClient, private readonly context: AudioContext, private readonly config: AudioCaptureConfig, private readonly playbackDeviceStatus?: AudioDeviceStatus) {
@@ -90,6 +95,9 @@ export class BrowserCapture implements AudioCapture {
       return id;
     });
     void this.ready.catch(() => {});
+    this.unsubscribeWorkerFailure = client.onFailure((error) => {
+      if (this.state === 'running' || this.state === 'paused') this.fail(error);
+    });
     document.addEventListener('visibilitychange', this.onVisibilityChange);
   }
 
@@ -110,6 +118,7 @@ export class BrowserCapture implements AudioCapture {
     const status = await this.request<NativeAuthorizationStatus>({ operation: 'applyAuthorization', token }, epoch);
     if (epoch !== this.epoch) throw new Error('engine_authorization_cancelled');
     this.approval = status.state === 'authorized' ? { ...start, remainingMs: status.remaining_ms } : undefined;
+    this.watchAuthorization();
     return authorizationStatus(status);
   }
 
@@ -119,9 +128,7 @@ export class BrowserCapture implements AudioCapture {
 
   async invalidateAuthorization(): Promise<void> {
     this.approval = undefined;
-    this.cancel();
-    this.closeMicrophone();
-    this.state = 'stopped';
+    this.endCapture();
     await this.request({ operation: 'invalidate' });
   }
 
@@ -134,15 +141,25 @@ export class BrowserCapture implements AudioCapture {
   }
 
   async start(callback: AudioCaptureCallback): Promise<void> {
-    if (this.state === 'running') throw new Error('tellus_capture_already_running');
+    if (this.disposed || this.disposal) throw new Error('tellus_capture_disposed');
+    if (this.state === 'running' || this.state === 'paused') throw new Error('tellus_capture_already_running');
     this.callback = callback;
-    const epoch = this.epoch;
     this.state = 'running';
+    const epoch = this.epoch;
+    const interrupted = new Promise<never>((_resolve, reject) => { this.interruptStart = reject; });
+    try {
+      await Promise.race([this.startMicrophone(epoch), interrupted]);
+    } finally {
+      if (epoch === this.epoch) this.interruptStart = undefined;
+    }
+  }
+
+  private async startMicrophone(epoch: number): Promise<void> {
     const requestedDeviceId = this.config.micDeviceId;
     this.deviceStatus = { source: 'microphone', code: 'pending', ...(requestedDeviceId === undefined ? {} : { requestedDeviceId }) };
-    const resumed = this.context.resume();
-    void resumed.catch(() => {});
     try {
+      const resumed = this.context.resume();
+      void resumed.catch(() => {});
       if (requestedDeviceId !== undefined && (typeof requestedDeviceId !== 'string' || !requestedDeviceId.trim())) throw audioDeviceError(new Error('tellus_microphone_invalid_device_id'), 'microphone', typeof requestedDeviceId === 'string' ? requestedDeviceId : undefined);
       for (const setting of DENOISE_SETTINGS) {
         // Sends only what is still unapplied once in-flight runtime changes settle, so a configured value never lands after a newer runtime value.
@@ -153,6 +170,13 @@ export class BrowserCapture implements AudioCapture {
       await this.request({ operation: 'start' }, epoch);
       if (epoch !== this.epoch) return;
       if (!navigator.mediaDevices?.getUserMedia) throw audioDeviceError(new DOMException('tellus_microphone_requires_secure_context', 'NotSupportedError'), 'microphone', requestedDeviceId);
+      this.checkInputAuthorization();
+      // Preempt detection only after native start validates capture settings and the permit.
+      const handoff = acquireCapturePriority(this);
+      this.watchAuthorization();
+      await handoff;
+      if (epoch !== this.epoch) return;
+      this.checkInputAuthorization();
       const stream = await navigator.mediaDevices.getUserMedia({ audio: {
         channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false,
         ...(requestedDeviceId === undefined ? {} : { deviceId: { exact: requestedDeviceId } }),
@@ -160,7 +184,8 @@ export class BrowserCapture implements AudioCapture {
       if (epoch !== this.epoch) { stream.getTracks().forEach((track) => track.stop()); return; }
       this.stream = stream;
       await resumed;
-      if (epoch !== this.epoch) { stream.getTracks().forEach((track) => track.stop()); return; }
+      if (epoch !== this.epoch) return;
+      this.checkInputAuthorization();
       const settings = stream.getAudioTracks()[0]?.getSettings();
       const actualDeviceId = settings?.deviceId;
       if (requestedDeviceId !== undefined && actualDeviceId !== requestedDeviceId) {
@@ -187,7 +212,7 @@ export class BrowserCapture implements AudioCapture {
     } catch (error) {
       if (epoch !== this.epoch) return;
       if (error instanceof Error && 'deviceStatus' in error) this.deviceStatus = error.deviceStatus as AudioDeviceStatus;
-      await this.stop();
+      await this.stop().catch(() => {});
       throw error;
     }
   }
@@ -221,9 +246,7 @@ export class BrowserCapture implements AudioCapture {
 
   async stop(): Promise<void> {
     const previous = this.state;
-    this.state = 'stopped';
-    const epoch = this.cancel();
-    this.closeMicrophone();
+    const epoch = this.endCapture();
     if (previous === 'idle') return;
     try {
       const chunks = await this.request<DeliveredChunk[]>({ operation: 'stop' }, epoch);
@@ -234,14 +257,21 @@ export class BrowserCapture implements AudioCapture {
     }
   }
 
-  async dispose(): Promise<void> {
-    if (this.disposed) return;
+  dispose(): Promise<void> {
+    if (this.disposed) return Promise.resolve();
+    return this.disposal ??= this.disposeCapture();
+  }
+
+  private async disposeCapture(): Promise<void> {
     document.removeEventListener('visibilitychange', this.onVisibilityChange);
+    this.unsubscribeWorkerFailure();
     try { await this.stop(); }
     finally {
-      await this.request({ operation: 'destroy' });
-      this.disposed = true;
-      this.callback = undefined;
+      try { await this.request({ operation: 'destroy' }); }
+      finally {
+        this.disposed = true;
+        this.callback = undefined;
+      }
     }
   }
 
@@ -271,7 +301,8 @@ export class BrowserCapture implements AudioCapture {
   async setDenoiseEnabled(enabled: boolean): Promise<void> {
     if (this.denoiseUpdates === 0 && enabled === this.denoiseEnabled) return;
     this.denoiseUpdates++;
-    const epoch = this.cancel();
+    // There are no microphone frames to cancel while start is pending.
+    const epoch = this.interruptStart ? this.epoch : this.cancel();
     try {
       const applied = await this.request<boolean | undefined>({ operation: 'denoise', enabled }, epoch);
       if (applied !== undefined) this.denoiseEnabled = applied;
@@ -385,7 +416,7 @@ export class BrowserCapture implements AudioCapture {
   }
 
   async reset(): Promise<void> {
-    const epoch = this.cancel();
+    const epoch = this.interruptStart ? this.epoch : this.cancel();
     try { await this.request({ operation: 'reset' }, epoch); }
     finally {
       if (epoch === this.epoch && this.state === 'running') this.tap?.port.postMessage({ active: true, epoch });
@@ -495,6 +526,7 @@ export class BrowserCapture implements AudioCapture {
 
   private cancel(): number {
     this.epoch++;
+    this.interruptStart = undefined;
     if (this.sessionId) this.client.cancel(this.sessionId, this.epoch);
     this.queue.clear();
     this.tap?.port.postMessage({ active: false, epoch: this.epoch });
@@ -502,17 +534,28 @@ export class BrowserCapture implements AudioCapture {
     return this.epoch;
   }
 
+  private endCapture(): number {
+    this.state = 'stopped';
+    try { return this.cancel(); }
+    finally { this.closeMicrophone(); }
+  }
+
   private closeMicrophone(): void {
-    this.tap?.port.close();
-    this.tap?.disconnect();
-    this.source?.disconnect();
-    for (const track of this.stream?.getTracks() ?? []) {
-      track.removeEventListener('ended', this.onDeviceEnded);
-      track.stop();
+    try {
+      for (const track of this.stream?.getTracks() ?? []) {
+        track.removeEventListener('ended', this.onDeviceEnded);
+        track.stop();
+      }
+      this.tap?.port.close();
+      this.tap?.disconnect();
+      this.source?.disconnect();
+    } finally {
+      this.tap = undefined;
+      this.source = undefined;
+      this.stream = undefined;
+      clearTimeout(this.authorizationTimer);
+      releaseCapturePriority(this);
     }
-    this.tap = undefined;
-    this.source = undefined;
-    this.stream = undefined;
   }
 
   private async pump(): Promise<void> {
@@ -553,15 +596,39 @@ export class BrowserCapture implements AudioCapture {
     }
   }
 
-  private approved(): boolean {
+  private authorizationRemainingMs(): number {
     const approval = this.approval;
-    return !!approval && Math.max(performance.now() - approval.monotonicStart, Date.now() - approval.wallStart) < approval.remainingMs;
+    if (!approval) return 0;
+    return approval.remainingMs - Math.max(performance.now() - approval.monotonicStart, Date.now() - approval.wallStart);
+  }
+
+  private approved(): boolean {
+    return this.authorizationRemainingMs() > 0;
+  }
+
+  private checkInputAuthorization(): void {
+    if (this.approval && !this.approved()) throw new Error('engine_authorization_expired');
+  }
+
+  // Close the microphone when the permit expires, even during pause or permission requests.
+  private watchAuthorization(): void {
+    clearTimeout(this.authorizationTimer);
+    if (!this.approval || !hasCapturePriority(this)) return;
+    const remainingMs = this.authorizationRemainingMs();
+    if (remainingMs <= 0) {
+      this.fail(new Error('engine_authorization_expired'));
+      return;
+    }
+    this.authorizationTimer = setTimeout(() => this.watchAuthorization(), Math.ceil(remainingMs));
   }
 
   private fail(value: unknown): void {
     const error = value instanceof Error ? value : new Error('tellus_audio_processing_failed');
+    const notify = this.interruptStart ?? this.callback;
+    this.callback = undefined;
     void this.invalidateAuthorization().catch(() => {});
-    this.callback?.(error);
+    try { notify?.(error); }
+    catch (callbackError) { console.error('Audio capture callback failed', callbackError); }
   }
 
   private readonly onDeviceEnded = (): void => {

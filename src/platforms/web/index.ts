@@ -14,6 +14,9 @@ export type {
   AudioDeviceInfo, AudioDeviceListResult, AudioDeviceOperationError, AudioDeviceSource, AudioDeviceStatus,
 } from '../../bindings/typescript/audio-devices.js';
 export { listAudioDevices } from './devices.js';
+export type { SpeechDetectionEvent } from '../../bindings/typescript/speech-detection.js';
+export { SpeechDetector, type SpeechDetectionCallback } from './speech-detector.js';
+export type { BrowserSpeechDetectorAssets } from './speech-detection-protocol.js';
 
 /** Passes capture and playback samples from the same AudioContext to the engine's AEC clock. */
 export class AudioEngine {

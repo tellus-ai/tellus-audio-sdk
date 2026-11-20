@@ -1,6 +1,6 @@
 import type { AudioCaptureConfig, BrowserEngineAssets } from '../../bindings/typescript/capture-types.js';
 import { validateGainDb } from '../../bindings/typescript/audio-gain.js';
-import { NativeEngine, type EngineModule, type NativeCapture } from './native.js';
+import { loadEngineModule, NativeEngine, type NativeCapture } from './native.js';
 import { isVadModel, type DeliveredChunk, type NativeStatus, validateCloseTalkHoldMs, validateCloseTalkKeepGapDb, validateCloseTalkLearnedLevelDbfs, validateCloseTalkLevelMarginDb, validateCloseTalkLevelMinDbfs, validateCloseTalkThresholdDb, validateDenoiseAttenuationLimitDb, validateGeneralDenoiseAttenuationLimitDb, type WorkerCommand, type WorkerRequest, type WorkerResponse, WorkerStatus } from './protocol.js';
 
 interface EncryptedModel {
@@ -47,18 +47,7 @@ scope.onmessage = (event: MessageEvent<WorkerRequest | { cancel: number; epoch: 
 };
 
 async function initialize(assets: BrowserEngineAssets): Promise<void> {
-  const ortUrl = assets.ortModuleUrl ?? new URL('ort.wasm.bundle.min.mjs', assets.ortWasmBaseUrl).href;
-  const ort = await import(/* @vite-ignore */ ortUrl);
-  ort.env.wasm.numThreads = 1;
-  ort.env.wasm.proxy = false;
-  ort.env.wasm.wasmPaths = assets.ortWasmBaseUrl;
-  const imported = await import(/* @vite-ignore */ assets.engineModuleUrl);
-  if (typeof imported.default !== 'function') throw new Error('tellus_engine_module_invalid');
-  const module: EngineModule = await imported.default({
-    locateFile: (name: string) => name.endsWith('.wasm') ? assets.wasmUrl : new URL(name, assets.engineModuleUrl).href,
-    tellusOrt: ort, tellusOrtWasmBaseUrl: assets.ortWasmBaseUrl, tellusCancellationGeneration: 0,
-  });
-  engine = new NativeEngine(module);
+  engine = new NativeEngine(await loadEngineModule(assets));
   const containers = await Promise.all(assets.encryptedModels.map(async (url) => {
     const response = await fetch(url);
     if (!response.ok) throw new Error('tellus_model_download_failed');
