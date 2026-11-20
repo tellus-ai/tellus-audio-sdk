@@ -6,6 +6,8 @@ import { gainConfig, validateGainDb, type AutoGainControlConfig } from '../../..
 export type { AutoGainControlConfig } from '../../../bindings/typescript/audio-gain.js';
 import type { AudioDeviceSource, AudioDeviceStatus, AudioDeviceListResult } from '../../../bindings/typescript/audio-devices.js';
 export type { AudioDeviceSource, AudioDeviceInfo, AudioDeviceStatus, AudioDeviceListResult, AudioDeviceOperationError } from '../../../bindings/typescript/audio-devices.js';
+import type { SpeechDetectionEvent } from '../../../bindings/typescript/speech-detection.js';
+export type { SpeechDetectionEvent } from '../../../bindings/typescript/speech-detection.js';
 
 import { prepareEngineRuntime } from './runtime/engine-runtime.js';
 import { waitForCaptureTransition } from './capture-transition.js';
@@ -462,11 +464,14 @@ export interface AccessibilityPermissionCheckResult {
 
 export type ErrorCallback = (err: Error | null, arg: CaptureError) => unknown;
 export type AudioChunkCallback = (err: Error | null, arg: AudioChunk) => unknown;
+/** A terminal error is delivered once with no event. */
+export type SpeechDetectionCallback = (err: Error | null, event?: SpeechDetectionEvent) => unknown;
 
 const { nativeBinding } = prepareEngineRuntime();
 
 const {
   AudioCapture: NativeAudioCapture,
+  SpeechDetector: NativeSpeechDetector,
   listAudioDevices: nativeListAudioDevices,
   listMicDevices: nativeListMicDevices,
   listSpeakerDevices: nativeListSpeakerDevices,
@@ -1191,6 +1196,28 @@ export class AudioEngine {
 
   getStatus(): AudioEngineInitStatus {
     return this.#status;
+  }
+}
+
+/** Detects speech from microphone input without a capture permit or AudioEngine initialization. */
+export class SpeechDetector {
+  #native: any;
+
+  constructor() {
+    if (typeof NativeSpeechDetector !== 'function') {
+      throw new Error('speech_detection_unsupported: install a native engine with speech detection support');
+    }
+    this.#native = new NativeSpeechDetector();
+  }
+
+  /** Starts detection on the selected microphone, or on the default input when omitted. */
+  start(callback: SpeechDetectionCallback, deviceId?: string | null): void {
+    this.#native.start(callback, deviceId);
+  }
+
+  /** Stops detection and closes the microphone. */
+  stop(): void {
+    this.#native.stop();
   }
 }
 

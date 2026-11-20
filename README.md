@@ -14,13 +14,25 @@
 
 고객에게 발급한 `TELLUS_AUDIO_ENGINE_TOKEN`과 HTTPS 서비스 `TELLUS_AUDIO_DOWNLOAD_BASE_URL`을 설정한 뒤 대상 패키지를 설치합니다. 설치된 패키지만 엔진 산출물을 다운로드하고 SHA-256을 검증합니다. 설치 과정은 엔진 저장소나 Rust·TypeScript 소스 빌드를 요구하지 않습니다. root workspace에는 postinstall이 없습니다.
 
-Desktop은 OS·CPU에 맞는 엔진을 선택합니다. Web은 웹 엔진만 설치합니다. Mobile은 iOS·Android를 설치하며 `TELLUS_AUDIO_ENGINE_PLATFORM=ios` 또는 `android`로 대상을 제한할 수 있습니다. SDK `0.3.9`의 엔진 버전은 `0.4.9`입니다. 정확한 엔진 버전은 `release-assets.json`에 고정되어 있습니다. 실행 승인 토큰과 모델 키는 설치 토큰과 별개이며 앱의 서버 연결에서 전달합니다.
+Desktop은 OS·CPU에 맞는 엔진을 선택합니다. Web은 웹 엔진만 설치합니다. Mobile은 iOS·Android를 설치하며 `TELLUS_AUDIO_ENGINE_PLATFORM=ios` 또는 `android`로 대상을 제한할 수 있습니다. 이 저장소는 `release-assets.json`에서 엔진 `0.4.10`을 고정합니다. 앱의 서버 연결을 통해 설치 토큰과 별도의 캡처 실행 승인 토큰을 전달합니다. Web·Mobile 캡처에는 모델 키도 전달합니다.
+
+## 발화 감지
+
+`SpeechDetector`는 마이크에서 현재 발화 여부를 감지합니다. 엔진 v0.4.10이 필요합니다. 감지 기능만 사용하면 서버의 캡처 permit이나 모델 키를 발급받거나 `AudioEngine.init()`을 호출할 필요가 없습니다. SDK 엔진 설치 인증과 OS 마이크 권한은 계속 필요합니다.
+
+[Desktop](platforms/desktop/README.md#발화-감지)은 생성자와 동기 `start`·`stop`, [Web](platforms/web/README.md#발화-감지)과 [React Native](platforms/mobile/README.md#발화-감지)는 비동기 `init`·`start`·`stop`·`dispose`를 제공합니다.
+
+- 이벤트에는 `speaking: boolean`과 `timestampMs: number` 두 필드만 있습니다. `timestampMs`는 각 `start` 이후 처리한 마이크 오디오 길이(ms)이며 벽시계 시각과 무관합니다.
+- Silero 32프레임을 1.024초 창으로 묶습니다. 첫 완전한 창과 이후 발화 상태가 바뀔 때 이벤트를 받습니다. 한 창에서 음성으로 판정된 프레임이 50% 이상이면 발화 상태에 들어가고 20% 미만이면 발화 상태에서 벗어납니다.
+- 승인과 설정이 유효한 캡처가 시작되면 모든 시작 대기 중·실행 중 감지기를 종료하고 마이크가 해제된 뒤 캡처 입력을 엽니다. 캡처는 시작·실행·일시정지 중 우선권을 유지합니다. 승인 또는 설정 검증에 실패한 캡처는 기존 감지기를 유지합니다.
+- 실행 중 선점되면 callback에 `speech_detection_preempted_by_capture` 오류가 한 번 전달되고 이벤트는 생략됩니다. 시작 대기 중 선점되거나 캡처가 이미 우선권을 가진 경우 callback 호출 없이 같은 오류로 `start`가 실패합니다. Desktop은 동기 예외, Web·React Native는 Promise 거부로 알립니다.
+- 캡처 종료 후 감지하려면 앱에서 `start`를 다시 호출하세요. `stop`이나 `dispose` 후 도착한 이벤트는 버립니다.
 
 ## 유지보수 빌드
 
 SDK 저장소의 실행 래퍼와 설치 코드를 빌드하고 세 플랫폼 패키지를 조립합니다.
 
-장치 선택 API는 이 소스 변경에 포함됩니다. 현재 `release-assets.json`은 엔진 `0.4.9`에 고정되어 있으며, 설치 시 해당 버전 archive의 checksum을 검증합니다. Desktop의 신규 native API는 장치 선택을 지원하는 엔진이 필요하며, 구형 엔진에서는 명시 장치 선택을 `unsupported`로 거부합니다. 고객에게 제공하기 전에 고정된 버전의 엔진 archive와 checksum이 발행되어 있는지 확인해야 합니다. 소스 빌드·패키지 검증 통과만으로 새 장치 기능의 배포 완료를 의미하지 않습니다.
+Desktop의 신규 native API는 장치 선택을 지원하는 엔진이 필요하며, 구형 엔진에서는 명시 장치 선택을 `unsupported`로 거부합니다. 고객에게 제공하기 전에 고정된 버전의 엔진 archive와 checksum이 발행되어 있는지 확인해야 합니다. 소스 빌드·패키지 검증 통과만으로 새 장치 기능의 배포 완료를 의미하지 않습니다.
 
 Desktop의 마이크·스피커 음소거 API(`setMicMuted`·`setSpeakerMuted`)는 엔진 `0.3.6`부터 지원합니다. 그보다 오래된 엔진에서는 호출하면 `source_mute_unsupported`로 거부합니다.
 
@@ -59,6 +71,14 @@ npm pack --workspace @tellus-ai/audio-sdk-mobile
 ```
 
 모든 변경의 완료 조건은 `npm run verify:pre-commit` 통과입니다. 이 명령은 SDK 테스트·JS 구문 검사·세 설치 패키지 검증을 실행합니다.
+
+Web 설치 검증에는 공식 엔진 v0.4.10 WASM archive와 checksum 게시가 필요합니다. 게시에는 엔진의 웹 릴리스 빌드 수정이 선행되어야 합니다. [엔진 PR #215](https://github.com/tellus-ai/Tellus-audio-engine/pull/215)
+
+`npm test`는 실제 npm tarball을 별도 소비자 앱에 풀어 패키지 루트의 런타임과 TypeScript 선언을 검사합니다. Desktop의 네이티브 로딩 검사에는 해당 호스트용 엔진을 로컬에 설치해야 합니다. Web·Mobile의 이 검사는 브라우저와 Nitro 경계를 테스트 대역으로 제공합니다.
+
+- Nitro 바인딩을 갱신할 때는 SDK npm 의존성이 설치된 상태에서 `npm run generate:mobile`을 실행합니다.
+- POSIX 호스트에서 네이티브 감지와 마이크 인계를 검증하려면 C++20 컴파일러, SDK npm 의존성, 모델이 준비된 엔진 v0.4.10 소스, 테스트 라이선스로 빌드한 호스트 C ABI 라이브러리 및 호환되는 ONNX Runtime이 필요합니다. `TELLUS_ENGINE_TEST_LICENSE=1 ORT_DYLIB_PATH=<host-ort-library> node scripts/test-mobile-speech-native.mjs <engine-source> <host-library-directory>`로 실행합니다. 장치와 플랫폼 리소스 읽기·스레드 연결에는 테스트 대역을 사용합니다.
+- 모바일 번들 리소스는 `node scripts/test-mobile-speech-resources.mjs ios` 또는 `node scripts/test-mobile-speech-resources.mjs android`로 검증합니다. iOS 검사는 macOS의 Xcode(iOS Simulator SDK)와 CocoaPods gem이 설치된 Ruby(`RUBY`로 지정 가능)가 필요합니다. Android 검사는 호환 JDK·Gradle(`GRADLE`로 지정 가능)이 필요하며 독립 프로젝트에서 오프라인으로 Gradle 리소스 복사를 실행합니다.
 
 ## 디지털 게인과 자동 보정
 

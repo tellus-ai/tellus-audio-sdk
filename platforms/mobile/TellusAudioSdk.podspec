@@ -15,7 +15,11 @@ Pod::Spec.new do |s|
   s.frameworks = 'AVFoundation', 'AudioToolbox', 'UIKit'
   s.vendored_frameworks = 'vendor/ios/TellusAudioEngine.xcframework'
   s.dependency 'onnxruntime-c', '1.24.3'
-  s.resource_bundles = { 'TellusAudioSdkModels' => ['vendor/ios/models/*.temc'] }
+  s.resource_bundles = { 'TellusAudioSdkModels' => [
+    'vendor/ios/models/*.temc',
+    'vendor/ios/speech-detection/silero_vad_v6.2.onnx',
+    'vendor/ios/licenses/silero-vad.txt'
+  ] }
   s.pod_target_xcconfig = {
     'HEADER_SEARCH_PATHS' => '"$(PODS_TARGET_SRCROOT)/vendor/ios/include"',
     'CLANG_CXX_LANGUAGE_STANDARD' => 'c++20'

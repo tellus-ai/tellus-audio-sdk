@@ -71,6 +71,8 @@ public:
   static void setReleaseInputResolverForTesting(InputHoldFn (*resolver)());
 
 private:
+  static std::shared_ptr<Promise<void>> startInput(const std::shared_ptr<CaptureSession>& session,
+      bool resume, std::function<void()> setup);
   std::shared_ptr<CaptureSession> acquire();
   std::mutex _mutex;
   std::shared_ptr<CaptureSession> _session;

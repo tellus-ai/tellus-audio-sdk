@@ -467,4 +467,22 @@ std::vector<uint8_t> readEncryptedModel(const std::string& path) {
     return bytes;
   }
 }
+
+// readEncryptedModel과 같은 위치 규칙으로 감지 전용 평문 Silero를 읽는다. 모델 검증은 감지기 create가 한다.
+std::vector<uint8_t> readSpeechDetectionModel(const std::string& path) {
+  @autoreleasepool {
+    NSString* name = [NSString stringWithUTF8String:path.c_str()];
+    NSURL* url = nil;
+    if ([name hasPrefix:@"file://"]) url = [NSURL URLWithString:name];
+    else if ([name hasPrefix:@"/"]) url = [NSURL fileURLWithPath:name];
+    else {
+      NSURL* resourceURL = [[NSBundle mainBundle] URLForResource:@"TellusAudioSdkModels" withExtension:@"bundle"];
+      url = resourceURL ? [[NSBundle bundleWithURL:resourceURL] URLForResource:name withExtension:nil] : nil;
+    }
+    NSData* data = url.isFileURL ? [NSData dataWithContentsOfURL:url] : nil;
+    if (data.length == 0) throw std::runtime_error("speech_detection_model_not_found");
+    const auto* bytes = static_cast<const uint8_t*>(data.bytes);
+    return std::vector<uint8_t>(bytes, bytes + data.length);
+  }
+}
 } // namespace margelo::nitro::tellus

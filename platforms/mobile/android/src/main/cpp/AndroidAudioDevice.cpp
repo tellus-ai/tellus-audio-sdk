@@ -14,7 +14,7 @@ jclass deviceClass = nullptr;
 jclass decoderClass = nullptr;
 jmethodID decodeAudio, decodedSamples, decodedRate;
 jmethodID constructor, requestCapturePermission, startCapture, stopCapture, beginPlayback, writePlayback;
-jmethodID awaitPlayback, cancelPlayback, endPlayback, closeDevice, readModel, pauseCapture, setNotification;
+jmethodID awaitPlayback, cancelPlayback, endPlayback, closeDevice, readModel, readDetectionModel, pauseCapture, setNotification;
 jmethodID configureDevices, listAudioDevices, getAudioDeviceStatus;
 
 class JavaEnv {
@@ -321,6 +321,7 @@ void initializeAndroidAudioDevice(JNIEnv* env) {
   endPlayback = env->GetMethodID(deviceClass, "endPlayback", "()V");
   closeDevice = env->GetMethodID(deviceClass, "close", "()V");
   readModel = env->GetStaticMethodID(deviceClass, "readEncryptedModel", "(Ljava/lang/String;)[B");
+  readDetectionModel = env->GetStaticMethodID(deviceClass, "readSpeechDetectionModel", "(Ljava/lang/String;)[B");
   checkException(env);
   JNINativeMethod natives[] = {
       {const_cast<char*>("nativeSubmit"), const_cast<char*>("(JLjava/nio/ByteBuffer;IIJ)V"), reinterpret_cast<void*>(submit)},
@@ -352,11 +353,11 @@ std::unique_ptr<AudioDevice> createAudioDevice(
   return std::make_unique<AndroidAudioDevice>(std::move(capture), std::move(render), std::move(error));
 }
 
-std::vector<uint8_t> readEncryptedModel(const std::string& path) {
+static std::vector<uint8_t> readModelBytes(const std::string& path, jmethodID reader) {
   JavaEnv scope;
   auto name = scope.env->NewStringUTF(path.c_str());
   checkException(scope.env);
-  auto bytes = static_cast<jbyteArray>(scope.env->CallStaticObjectMethod(deviceClass, readModel, name));
+  auto bytes = static_cast<jbyteArray>(scope.env->CallStaticObjectMethod(deviceClass, reader, name));
   scope.env->DeleteLocalRef(name);
   checkException(scope.env);
   const auto size = scope.env->GetArrayLength(bytes);
@@ -365,5 +366,13 @@ std::vector<uint8_t> readEncryptedModel(const std::string& path) {
   scope.env->DeleteLocalRef(bytes);
   checkException(scope.env);
   return output;
+}
+
+std::vector<uint8_t> readEncryptedModel(const std::string& path) {
+  return readModelBytes(path, readModel);
+}
+
+std::vector<uint8_t> readSpeechDetectionModel(const std::string& path) {
+  return readModelBytes(path, readDetectionModel);
 }
 } // namespace margelo::nitro::tellus

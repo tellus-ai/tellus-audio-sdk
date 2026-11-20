@@ -13,9 +13,11 @@ export function copyWebAssets(destination: string): void {
   const ort = dirname(require.resolve('onnxruntime-web'));
   const ortNotices = join(ROOT, 'licenses', 'onnxruntime-web');
   const runtimeFiles = ['ort.wasm.bundle.min.mjs', 'ort-wasm-simd-threaded.mjs', 'ort-wasm-simd-threaded.wasm'];
+  const webRuntime = join(browser, 'platforms', 'web');
   const required = [
     ...manifest.assets.web.requiredFiles.map((file) => join(source, file)),
-    join(browser, 'platforms', 'web', 'worker.js'), join(browser, 'platforms', 'web', 'worklet.js'),
+    ...['worker.js', 'worklet.js', 'speech-detection-worker.js', 'native.js', 'protocol.js'].map((file) => join(webRuntime, file)),
+    join(browser, 'bindings', 'typescript', 'audio-gain.js'),
     ...runtimeFiles.map((file) => join(ort, file)),
     ...['LICENSE', 'ThirdPartyNotices.txt'].map((file) => join(ortNotices, file)),
   ];

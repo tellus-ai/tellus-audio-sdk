@@ -533,6 +533,7 @@ function fixture(assets = ['denoise.temc', 'vad.temc']) {
   const module = { exports: {} };
   vm.runInNewContext(compiled, { module, exports: module.exports, Uint8Array, Map, Set, Error, console: { warn: (...args) => warnings.push(args) },
     require: name => {
+      if (name === './speech-detector.js') return {};
       if (name === '../../../bindings/typescript/audio-gain.js') return audioGain;
       assert.equal(name, 'react-native-nitro-modules'); return { NitroModules: { createHybridObject: () => native } };
     } });

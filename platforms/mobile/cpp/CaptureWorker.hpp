@@ -26,6 +26,7 @@ public:
   ~CaptureWorker();
   void shutdown();
   bool enqueue(std::function<void()> command);
+  void enqueueCleanup(std::function<void()> cleanup);
   void enqueueUrgent(std::function<void()> cleanup);
   void capture(const float* samples, size_t count, uint32_t rate, int64_t timestamp);
   void drain();

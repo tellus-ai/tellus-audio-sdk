@@ -11,11 +11,7 @@ apply plugin: "com.android.library"
 apply plugin: "org.jetbrains.kotlin.android"
 apply from: "../nitrogen/generated/android/TellusAudioSdk+autolinking.gradle"
 
-def modelAssetsDir = layout.buildDirectory.dir("generated/tellus-model-assets")
-def syncModelAssets = tasks.register("syncTellusModelAssets", Sync) {
-  from(new File(engineDir, "models")) { include "*.temc" }
-  into(modelAssetsDir.map { it.dir("tellus-audio-sdk") })
-}
+apply from: "model-assets.gradle"
 
 android {
   namespace "com.margelo.nitro.tellus"
@@ -33,12 +29,12 @@ android {
     }
   }
   externalNativeBuild { cmake { path file("CMakeLists.txt") } }
-  sourceSets.main.assets.srcDir(modelAssetsDir)
+  sourceSets.main.assets.srcDir(layout.buildDirectory.dir("generated/tellus-model-assets"))
   sourceSets.main.jniLibs.srcDir(new File(engineDir, "jniLibs"))
   buildFeatures { prefab true }
 }
 
-tasks.named("preBuild") { dependsOn(syncModelAssets) }
+tasks.named("preBuild") { dependsOn("syncTellusModelAssets") }
 
 repositories { google(); mavenCentral() }
 dependencies {

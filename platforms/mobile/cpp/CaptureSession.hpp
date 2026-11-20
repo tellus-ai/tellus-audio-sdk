@@ -4,6 +4,8 @@
 #include "CaptureWorker.hpp"
 #include "InputHold.hpp"
 #include "LastError.hpp"
+#include "MicrophonePriority.hpp"
+#include <optional>
 #include "tellus_audio_engine.h"
 #include <NitroModules/ArrayBuffer.hpp>
 #include <NitroModules/Promise.hpp>
@@ -52,7 +54,9 @@ public:
     return promise;
   }
 
-  void start(bool resume);
+  uint64_t controlRevision() const { return _controlRevision.load(); }
+  MicrophoneHandoff beginStart(bool resume, uint64_t revision);
+  void openInput(uint64_t revision, std::exception_ptr handoffError = {});
   void configureAudioDevices(const std::string& micDeviceId, const std::string& playbackDeviceId,
                              const std::string& iosOutputRoute);
   std::string listAudioDevices(const std::string& source) { return _device->listAudioDevices(source); }
@@ -93,6 +97,8 @@ private:
   void process(const CaptureWorker::Frame& frame);
   void fail(const std::string& error, const std::string& message = {});
   void clearQueuedCapture();
+  void stopInput();
+  bool authorized();
   void requirePlayback(uint64_t ticket);
   void finishPlayback();
   void verifyAuthorization();
@@ -113,6 +119,8 @@ private:
   std::mutex _lastErrorMutex;
   std::string _lastErrorMessage;
   static CopyLastErrorFn (*_copyLastErrorResolver)();
+  CaptureInput _input;
+  std::optional<uint64_t> _opening;
   bool _started = false;
   bool _deviceSelectionLocked = false;
   bool _authorizationMonitored = false;

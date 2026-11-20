@@ -43,4 +43,7 @@ std::unique_ptr<AudioDevice> createAudioDevice(
 // Reads encrypted containers from a file:// path or the SDK resource bundle. Plaintext models are not accepted.
 std::vector<uint8_t> readEncryptedModel(const std::string& path);
 
+// 발화 감지 전용 평문 Silero 모델을 같은 위치 규칙(file:// 경로 또는 SDK resource 이름)으로 읽는다. capture 세션은 이 bytes를 받지 않는다.
+std::vector<uint8_t> readSpeechDetectionModel(const std::string& path);
+
 } // namespace margelo::nitro::tellus

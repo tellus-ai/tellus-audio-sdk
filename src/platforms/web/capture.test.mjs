@@ -66,6 +66,7 @@ function environment(responses = {}, config = {}, worker) {
   };
   // With a worker, requests go to the Worker model, which keeps using the default responses above (respond).
   const client = {
+    onFailure: () => () => {},
     cancel(_id, epoch) { cancels.push(epoch); worker?.cancel(epoch); },
     request: async (_id, epoch, command) => {
       commands.push(command.operation);

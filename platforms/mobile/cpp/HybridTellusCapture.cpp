@@ -142,12 +142,10 @@ std::shared_ptr<Promise<void>> HybridTellusCapture::start(
     const std::function<void(const std::shared_ptr<ArrayBuffer>&, const std::string&, uint64_t, uint64_t)>& chunk,
     const std::function<void(const std::string&, const std::string&)>& error) {
   auto session = acquire();
-  // A capture latched by an internal error can restart with stop then start. A successful engine start clears the latch.
-  return session->submit([state = session.get(), chunk, error] {
+  return startInput(session, false, [state = session.get(), chunk, error] {
     state->onChunk = chunk;
     state->onError = error;
-    state->start(false);
-  }, false, true);
+  });
 }
 
 std::shared_ptr<Promise<void>> HybridTellusCapture::pause() {
@@ -159,7 +157,29 @@ std::shared_ptr<Promise<void>> HybridTellusCapture::pause() {
 
 std::shared_ptr<Promise<void>> HybridTellusCapture::resume() {
   auto session = acquire();
-  return session->submit([state = session.get()] { state->start(true); });
+  return startInput(session, true, {});
+}
+
+std::shared_ptr<Promise<void>> HybridTellusCapture::startInput(
+    const std::shared_ptr<CaptureSession>& session, bool resume, std::function<void()> setup) {
+  const auto revision = session->controlRevision();
+  auto prepared = session->submit([state = session.get(), revision, resume, setup = std::move(setup)] {
+    if (setup) setup();
+    auto handoff = state->beginStart(resume, revision);
+    if (handoff.closing.empty()) state->openInput(revision);
+    return handoff;
+  }, false, !resume);
+  // 두 worker 밖에서 입력 반환과 앱 callback을 기다린다. callback이 마지막 capture를 dispose해도
+  // 이 참조가 worker 명령이 끝날 때까지 세션을 보유하며 worker 밖에서 해제한다.
+  return Promise<void>::async([session, revision, prepared] {
+    const auto handoff = prepared->await().get();
+    if (handoff.closing.empty()) return;
+    std::exception_ptr error;
+    try { handoff.wait(); } catch (...) { error = std::current_exception(); }
+    session->submit([state = session.get(), revision, error] {
+      state->openInput(revision, error);
+    }, true)->await().get();
+  });
 }
 
 std::shared_ptr<Promise<void>> HybridTellusCapture::stop() {

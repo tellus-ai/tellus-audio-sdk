@@ -11,6 +11,7 @@
 #import <type_traits>
 
 #include "HybridTellusCapture.hpp"
+#include "HybridTellusSpeechDetector.hpp"
 
 @interface TellusAudioSdkAutolinking : NSObject
 @end
@@ -28,6 +29,15 @@
                     "The HybridObject \"HybridTellusCapture\" is not default-constructible! "
                     "Create a public constructor that takes zero arguments to be able to autolink this HybridObject.");
       return std::make_shared<HybridTellusCapture>();
+    }
+  );
+  HybridObjectRegistry::registerHybridObjectConstructor(
+    "TellusSpeechDetector",
+    []() -> std::shared_ptr<HybridObject> {
+      static_assert(std::is_default_constructible_v<HybridTellusSpeechDetector>,
+                    "The HybridObject \"HybridTellusSpeechDetector\" is not default-constructible! "
+                    "Create a public constructor that takes zero arguments to be able to autolink this HybridObject.");
+      return std::make_shared<HybridTellusSpeechDetector>();
     }
   );
 }

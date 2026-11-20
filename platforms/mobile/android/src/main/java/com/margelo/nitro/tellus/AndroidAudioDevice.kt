@@ -378,5 +378,14 @@ class AndroidAudioDevice(@Volatile private var nativeHandle: Long) {
         output.toByteArray()
       }
     }
+
+    /** readEncryptedModel과 같은 위치 규칙으로 발화 감지 전용 평문 Silero를 읽는다. 모델 검증은 native 감지기가 한다. */
+    @JvmStatic fun readSpeechDetectionModel(path: String): ByteArray {
+      val app = checkNotNull(NitroModules.applicationContext) { "react_context_unavailable" }
+      val input = if (path.startsWith("file://") || path.startsWith("/")) {
+        File(path.removePrefix("file://")).inputStream()
+      } else app.assets.open(if (path.startsWith("asset://")) path.removePrefix("asset://") else "tellus-audio-sdk/$path")
+      return input.use { it.readBytes() }
+    }
   }
 }

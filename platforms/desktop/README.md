@@ -13,9 +13,44 @@ import { AudioEngine } from '@tellus-ai/audio-sdk-desktop';
 import { attachEngineAuthorization } from '@tellus-ai/audio-sdk-desktop/authorization';
 ```
 
-기존 Electron 캡처·장치 조회·권한·승인 API를 유지합니다. Electron 앱의 마이크·시스템 오디오 권한 안내는 앱 번들 설정에 선언합니다. 모델은 암호화 `.temc`를 사용하며 캡처 시작 전에 서버 실행 승인과 모델 키를 적용합니다.
+기존 Electron 캡처·장치 조회·권한·승인 API를 유지합니다. Electron 앱의 마이크·시스템 오디오 권한 안내는 앱 번들 설정에 선언합니다. 캡처는 시작 전에 서버 실행 승인을 적용합니다.
 
 엔진을 다시 설치하려면 `npm run install:binary --prefix node_modules/@tellus-ai/audio-sdk-desktop`를 실행하고, 로딩 검증은 같은 prefix의 `npm run check:binary`로 실행합니다. 고객 설치에는 엔진 소스 저장소가 필요하지 않습니다.
+
+## 발화 감지
+
+엔진 v0.4.10을 설치하고 앱에 OS 마이크 권한을 허용하세요. 서버 캡처 permit·모델 키·`AudioEngine.init()` 없이 동기 API로 감지합니다.
+
+```ts
+import { SpeechDetector } from '@tellus-ai/audio-sdk-desktop';
+import type { SpeechDetectionCallback } from '@tellus-ai/audio-sdk-desktop';
+
+const detector = new SpeechDetector();
+const onSpeech: SpeechDetectionCallback = (error, event) => {
+  if (error) {
+    console.error('감지 종료', error.message);
+    return;
+  }
+  if (event) console.log(event.speaking, event.timestampMs);
+};
+
+function startDetection(deviceId?: string) {
+  try {
+    detector.start(onSpeech, deviceId); // 생략하면 기본 마이크
+  } catch (error) {
+    console.error('감지 시작 실패', error);
+  }
+}
+
+startDetection();
+// 감지를 멈출 때 detector.stop()을 호출합니다.
+```
+
+`speaking`과 `timestampMs`만 전달합니다. `timestampMs`는 이번 시작 이후 처리된 마이크 오디오 길이(ms)입니다. 첫 완전한 1.024초 창이 끝날 때, 이후에는 발화 상태가 바뀔 때 이벤트를 받습니다.
+
+승인·설정이 유효한 캡처는 감지를 종료하고 마이크를 넘겨받습니다. 승인이나 설정 검증에 실패하면 감지를 계속합니다. 실행 중 선점은 이벤트 없이 callback에 `speech_detection_preempted_by_capture`를 한 번 전달합니다. 시작 대기 중 선점되거나 캡처가 이미 우선권을 가진 경우 `start()`가 callback 호출 없이 같은 오류를 던집니다.
+
+캡처가 일시정지되어도 우선권을 유지합니다. 캡처 종료 후 `startDetection()`을 다시 호출하세요. `stop()` 이후 도착한 이벤트는 버립니다.
 
 ## 장치 선택
 
