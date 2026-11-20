@@ -7,16 +7,16 @@ const { test } = require('node:test');
 const { currentAssetKey, nativeFileCandidates } = require('../dist/platform/asset-key');
 
 for (const [metadata, actual, passed] of [
-  ['0.4.2', '0.3.4', false],
-  ['0.3.4', '0.4.2', false],
-  ['0.4.2', '0.4.2', true],
+  ['0.4.10', '0.4.9', false],
+  ['0.4.9', '0.4.10', false],
+  ['0.4.10', '0.4.10', true],
 ]) {
-  test(`desktop binary check compares pinned 0.4.2 with package ${metadata} and loaded ${actual}`, t => {
+  test(`desktop binary check compares pinned 0.4.10 with package ${metadata} and loaded ${actual}`, t => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellus-check-version-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     fs.cpSync(path.join(__dirname, '../platforms/desktop/dist'), path.join(root, 'dist'), { recursive: true });
     fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ tellusPlatform: 'desktop', main: 'index.js' }));
-    fs.writeFileSync(path.join(root, 'release-assets.json'), JSON.stringify({ nativeEngineVersion: '0.4.2' }));
+    fs.copyFileSync(path.join(__dirname, '../platforms/desktop/release-assets.json'), path.join(root, 'release-assets.json'));
     const target = process.platform === 'darwin' ? 'darwin-universal' : currentAssetKey();
     const vendor = path.join(root, 'vendor', target);
     fs.mkdirSync(vendor, { recursive: true });

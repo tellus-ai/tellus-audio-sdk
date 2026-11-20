@@ -104,16 +104,18 @@ function installerFixture(t, { corrupt = false, denied = false, baseUrl = 'https
   https.get = httpRequest;
   https.request = httpRequest;
   const { installBinary } = require(path.join(root, 'dist/installer/install-binary'));
-  return { root, installBinary, requests, asset, manifest };
+  return { root, installBinary, requests, asset };
 }
 
 test('installs the pinned CloudFront artifact through dedicated bearer tokens without forwarding the installation token', async (t) => {
-  const { root, installBinary, requests, asset, manifest } = installerFixture(t);
+  const { root, installBinary, requests, asset } = installerFixture(t);
   await installBinary();
   const serviceRequests = requests.filter(({ url }) => new URL(url).hostname === 'speech.example.test');
+  const releaseUrl = 'https://speech.example.test/v1/audio-artifacts/engine/0.4.10';
+  const archive = `tellus-audio-engine-v0.4.10-${asset.platform}.tar.gz`;
   assert.deepEqual(serviceRequests.map(({ url }) => url), [
-    `https://speech.example.test/v1/audio-artifacts/engine/${manifest.nativeEngineVersion}/${asset.sha256File}/token`,
-    `https://speech.example.test/v1/audio-artifacts/engine/${manifest.nativeEngineVersion}/${asset.file}/token`,
+    `${releaseUrl}/${archive}.sha256/token`,
+    `${releaseUrl}/${archive}/token`,
   ]);
   assert.ok(serviceRequests.every(({ headers, method }) => method === 'POST' && headers.Authorization === 'Bearer customer-installation-token'));
   const cdnRequests = requests.filter(({ url }) => new URL(url).hostname === 'download.tellus.ai.kr');

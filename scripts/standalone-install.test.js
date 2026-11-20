@@ -41,6 +41,20 @@ for (const platform of ['desktop', 'web', 'mobile']) {
         function selectedId(status: CaptureStatus) { return status.deviceStatus?.[0].actualDeviceId; }
         function errorCode(error: AudioDeviceOperationError) { return error.deviceStatus.code; }
         void config; void devices; void selectedId; void errorCode; void gain;
+        ${platform === 'desktop' ? `
+          import { SpeechDetector } from '@tellus-ai/audio-sdk-desktop';
+          import type { SpeechDetectionCallback, SpeechDetectionEvent } from '@tellus-ai/audio-sdk-desktop';
+          const detector = new SpeechDetector();
+          const callback: SpeechDetectionCallback = (error, event) => {
+            if (error || !event) return;
+            const { speaking, timestampMs }: SpeechDetectionEvent = event;
+            return speaking ? timestampMs : 0;
+          };
+          callback(new Error('speech_detection_preempted_by_capture'));
+          const started: void = detector.start(callback, 'input-id');
+          const stopped: void = detector.stop();
+          void started; void stopped;
+        ` : ''}
       `);
       const typed = spawnSync(process.execPath, [path.resolve(__dirname, '../node_modules/typescript/bin/tsc'),
         '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2020',
@@ -58,6 +72,7 @@ for (const platform of ['desktop', 'web', 'mobile']) {
       const auth = await import('@tellus-ai/audio-sdk-${platform}/authorization');
       if (typeof sdk.AudioEngine.init !== 'function' || typeof sdk.listAudioDevices !== 'function' || typeof auth.attachEngineAuthorization !== 'function') process.exit(1);
       if ('${platform}' === 'desktop') {
+        if (typeof sdk.SpeechDetector !== 'function') throw new Error('Missing desktop SpeechDetector export');
         const devices = await sdk.listAudioDevices('microphone');
         if (devices.status.code === 'unsupported') {
           let rejected = false;
