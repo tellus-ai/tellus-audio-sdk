@@ -21,9 +21,52 @@ Expo 설정은 다음과 같습니다.
 
 `npx expo run:ios` 또는 `npx expo run:android`로 SDK가 포함된 앱을 빌드하고 `npx expo start --dev-client`로 개발합니다. Swift·Kotlin 코드를 고객 앱에 작성할 필요는 없습니다. Expo Go는 이 모듈을 포함하지 않습니다.
 
-모델은 암호화 `.temc`만 설치하며 서버 실행 승인·모델 키를 적용한 뒤 캡처를 시작합니다. `playback()`·`playbackEncoded()`는 재생 PCM을 AEC 참조로 전달합니다. 기존 Promise 기반 캡처·승인·TTS API를 유지합니다.
+캡처는 암호화 `.temc` 모델을 사용합니다. 서버 실행 승인·모델 키를 적용한 뒤 캡처를 시작합니다. `playback()`·`playbackEncoded()`는 재생 PCM을 AEC 참조로 전달합니다. 기존 Promise 기반 캡처·승인·TTS API를 유지합니다.
 
 같은 대상의 설치를 검사하려면 `npm run check:binary --prefix node_modules/@tellus-ai/audio-sdk-mobile -- --platform android`를 실행합니다. 대상 옵션을 생략하면 iOS·Android 모두 검사합니다.
+
+## 발화 감지
+
+엔진 v0.4.10과 OS 마이크 권한이 필요합니다. 서버 캡처 permit·모델 키·`AudioEngine.init()` 없이 감지할 수 있습니다. 앱의 마이크 사용 목적을 설정하고 감지를 시작하기 전에 필요한 권한을 요청하세요.
+
+npm 패키지는 JS·타입 선언과 네이티브 래퍼·Nitro 생성 바인딩을 제공합니다. 엔진·모델은 설치 토큰으로 인증하는 `install:binary`가 SDK의 `vendor/ios` 또는 `vendor/android`에 내려받습니다. iOS는 CocoaPods 빌드에서 `TellusAudioSdkModels.bundle`에, Android는 Gradle 빌드에서 앱의 `assets/tellus-audio-sdk/`에 `silero_vad_v6.2.onnx`, Silero 고지 및 기존 캡처용 `.temc` 파일을 복사합니다. 엔진 설치가 끝난 뒤 앱의 네이티브 빌드를 실행하세요.
+
+```ts
+import { SpeechDetector } from '@tellus-ai/audio-sdk-mobile';
+import type { NativeSpeechDetectorAssets, SpeechDetectionCallback } from '@tellus-ai/audio-sdk-mobile';
+
+const detector = await SpeechDetector.init(); // SDK 리소스의 silero_vad_v6.2.onnx
+const onSpeech: SpeechDetectionCallback = (error, event) => {
+  if (error) {
+    console.error('감지 종료', error.message);
+    return;
+  }
+  if (event) console.log(event.speaking, event.timestampMs);
+};
+
+async function startDetection(deviceId?: string) {
+  try {
+    await detector.start(onSpeech, deviceId); // 생략하면 기본 마이크
+  } catch (error) {
+    console.error('감지 시작 실패', error);
+  }
+}
+
+// 감지만 멈출 때 await detector.stop(), 객체를 닫을 때 await detector.dispose()
+
+async function loadDetectorFromFile(modelFileUri: string) {
+  const assets: NativeSpeechDetectorAssets = { speechDetectionModel: modelFileUri };
+  return SpeechDetector.init(assets);
+}
+```
+
+`speechDetectionModel`에는 SDK 번들·assets의 리소스 이름이나 앱이 읽을 수 있는 로컬 `file://` URI 또는 절대 경로를 지정할 수 있습니다. 모델이 없거나 읽을 수 없으면 `init`이 거부됩니다. 마이크는 `start`에서 엽니다.
+
+`speaking`과 `timestampMs`만 전달합니다. `timestampMs`는 이번 시작 이후 처리된 마이크 오디오 길이(ms)입니다. 첫 완전한 1.024초 창이 끝날 때, 이후에는 발화 상태가 바뀔 때 이벤트를 받습니다.
+
+승인·설정이 유효한 캡처는 감지를 종료하고 마이크를 넘겨받습니다. 승인이나 설정 검증에 실패하면 감지를 계속합니다. 실행 중 선점은 이벤트 없이 callback에 `speech_detection_preempted_by_capture`를 한 번 전달합니다. 시작 대기 중 선점되거나 캡처가 이미 우선권을 가진 경우 callback 호출 없이 같은 오류로 `start()` Promise가 거부됩니다.
+
+캡처가 일시정지되어도 우선권을 유지합니다. 캡처 종료 후 `startDetection()`을 다시 호출하세요. `stop()`·`dispose()` 이후 도착한 이벤트는 버립니다.
 
 ## 장치 선택
 

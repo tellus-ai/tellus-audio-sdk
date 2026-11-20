@@ -20,7 +20,53 @@ const { copyWebAssets } = require('@tellus-ai/audio-sdk-web/installer');
 copyWebAssets('./public/tellus-audio');
 ```
 
-WASM·암호화 모델·Worker·Worklet·ORT·라이선스를 함께 복사합니다. 암호화 모델은 `models/denoise.temc`, `models/vad.temc`이며 `BrowserEngineAssets.encryptedModels`에 이 경로를 넘깁니다. Worker 진입점은 `tellus-audio/platforms/web/worker.js`, Worklet은 `tellus-audio/platforms/web/worklet.js`입니다. SDK 기본 옵션의 자산 경로와 맞춰 제공해야 합니다. HTTPS 또는 localhost에서 마이크 권한을 허용하고 서버의 실행 승인·모델 키를 적용합니다. 기존 Promise 기반 캡처·승인·TTS API를 유지합니다.
+WASM·캡처용 암호화 모델·감지용 평문 모델·Worker·Worklet·ORT·라이선스를 함께 복사합니다. 암호화 모델은 `models/denoise.temc`, `models/vad.temc`이며 `BrowserEngineAssets.encryptedModels`에 이 경로를 넘깁니다. Worker 진입점은 `tellus-audio/platforms/web/worker.js`, Worklet은 `tellus-audio/platforms/web/worklet.js`입니다. SDK 기본 옵션의 자산 경로와 맞춰 제공해야 합니다. HTTPS 또는 localhost에서 마이크 권한을 허용하고 서버의 실행 승인·모델 키를 적용합니다. 기존 Promise 기반 캡처·승인·TTS API를 유지합니다.
+
+## 발화 감지
+
+엔진 v0.4.10을 설치한 뒤 위의 `copyWebAssets('./public/tellus-audio')`를 실행합니다. 헬퍼는 엔진 JS·WASM, 평문 Silero 모델과 고지, ORT와 고지, SDK Worker·Worklet 및 상대 경로 import를 복사합니다. 예시는 `public`을 사이트 루트에서 제공하는 앱의 경로입니다. `platforms/web/speech-detection-worker.js`와 그 상대 경로 import, `platforms/web/worklet.js`를 원래 구조대로 제공하세요. 번들러로 SDK를 가져올 때는 Worker·Worklet URL과 관련 모듈이 함께 배포되도록 설정하세요.
+
+감지만 사용할 때는 서버 캡처 permit·모델 키·암호화 모델 경로·`AudioEngine.init()`이 필요 없습니다. HTTPS 또는 localhost에서 마이크 권한을 허용하세요. `init`은 자산을 준비하고 마이크는 `start`에서 엽니다.
+
+```ts
+import { SpeechDetector } from '@tellus-ai/audio-sdk-web';
+import type { BrowserSpeechDetectorAssets, SpeechDetectionCallback } from '@tellus-ai/audio-sdk-web';
+
+const assets: BrowserSpeechDetectorAssets = {
+  engineModuleUrl: '/tellus-audio/tellus-audio-engine.mjs',
+  wasmUrl: '/tellus-audio/tellus-audio-engine.wasm',
+  ortWasmBaseUrl: '/tellus-audio/ort/',
+  ortModuleUrl: '/tellus-audio/ort/ort.wasm.bundle.min.mjs', // 생략 가능
+  speechDetectionModelUrl: '/tellus-audio/speech-detection/silero_vad_v6.2.onnx',
+};
+const detector = await SpeechDetector.init(assets);
+const onSpeech: SpeechDetectionCallback = (error, event) => {
+  if (error) {
+    console.error('감지 종료', error.message);
+    return;
+  }
+  if (event) console.log(event.speaking, event.timestampMs);
+};
+
+// 클릭 등 사용자 제스처에서 호출합니다.
+async function startDetection(deviceId?: string) {
+  try {
+    await detector.start(onSpeech, deviceId); // 생략하면 기본 마이크
+  } catch (error) {
+    console.error('감지 시작 실패', error);
+  }
+}
+
+// 감지만 멈출 때 await detector.stop(), 객체를 닫을 때 await detector.dispose()
+```
+
+`ortModuleUrl`을 생략하면 `ortWasmBaseUrl` 아래의 `ort.wasm.bundle.min.mjs`를 불러옵니다. `ortWasmBaseUrl`은 끝에 `/`가 있는 디렉터리 URL입니다. 자산을 불러오지 못하면 `init`이 거부될 수 있습니다.
+
+`speaking`과 `timestampMs`만 전달합니다. `timestampMs`는 이번 시작 이후 처리된 마이크 오디오 길이(ms)입니다. 첫 완전한 1.024초 창이 끝날 때, 이후에는 발화 상태가 바뀔 때 이벤트를 받습니다.
+
+승인·설정이 유효한 캡처는 감지를 종료하고 마이크를 넘겨받습니다. 승인이나 설정 검증에 실패하면 감지를 계속합니다. 실행 중 선점은 이벤트 없이 callback에 `speech_detection_preempted_by_capture`를 한 번 전달합니다. 시작 대기 중 선점되거나 캡처가 이미 우선권을 가진 경우 callback 호출 없이 같은 오류로 `start()` Promise가 거부됩니다.
+
+캡처가 일시정지되어도 우선권을 유지합니다. 캡처 종료 후 사용자 제스처에서 `startDetection()`을 다시 호출하세요. `stop()`·`dispose()` 이후 도착한 이벤트는 버립니다.
 
 ## 장치 선택
 
