@@ -9,6 +9,8 @@ if(NOT EXISTS "${ENGINE_LIBRARY}")
 endif()
 add_library(TellusAudioSdk SHARED
   ../cpp/HybridTellusCapture.cpp
+  ../cpp/HybridTellusSpeechDetector.cpp
+  ../cpp/MicrophonePriority.cpp
   ../cpp/DenoiseSettings.cpp
   ../cpp/InputHold.cpp
   ../cpp/LastError.cpp

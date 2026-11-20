@@ -13,9 +13,9 @@ const { test } = require('node:test');
 const platformFiles = {
   ios: ['TellusAudioEngine.xcframework/Info.plist', 'TellusAudioEngine.xcframework/ios-arm64/libtellus_audio_engine.a',
     'TellusAudioEngine.xcframework/ios-arm64-simulator/libtellus_audio_engine.a', 'include/tellus_audio_engine.h',
-    'models/manifest.json', 'models/denoise.temc', 'models/vad.temc'],
+    'models/manifest.json', 'models/denoise.temc', 'models/vad.temc', 'speech-detection/silero_vad_v6.2.onnx', 'licenses/silero-vad.txt'],
   android: ['jniLibs/arm64-v8a/libtellus_audio_engine.so', 'jniLibs/x86_64/libtellus_audio_engine.so',
-    'include/tellus_audio_engine.h', 'models/manifest.json', 'models/denoise.temc', 'models/vad.temc'],
+    'include/tellus_audio_engine.h', 'models/manifest.json', 'models/denoise.temc', 'models/vad.temc', 'speech-detection/silero_vad_v6.2.onnx', 'licenses/silero-vad.txt'],
   web: ['tellus-audio-engine.mjs', 'tellus-audio-engine.wasm', 'models/manifest.json',
     'models/denoise.temc', 'models/vad.temc'],
 };
@@ -25,8 +25,8 @@ function installerFixture(t, { corrupt = false, denied = false, baseUrl = 'https
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.cpSync(path.join(__dirname, '../dist'), path.join(root, 'dist'), { recursive: true });
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '../release-assets.json')));
-  if (platform) {
-    const suffix = platform === 'web' ? 'wasm32-emscripten' : platform;
+  if (platform === 'web') {
+    const suffix = 'wasm32-emscripten';
     const file = `tellus-audio-engine-${manifest.nativeEngineTag}-${suffix}.tar.gz`;
     manifest.assets[platform] = { platform, file, sha256File: `${file}.sha256`, requiredFiles: platformFiles[platform] };
   }
@@ -186,6 +186,17 @@ test('stops after a second CDN authentication failure', async (t) => {
   await assert.rejects(installBinary(), /HTTP 401/);
   assert.equal(requests.length, 4);
 });
+
+for (const platform of ['ios', 'android']) {
+  test(`rejects missing Silero before replacing the installed ${platform} engine`, async t => {
+    const { root, installBinary } = installerFixture(t, { platform, missingFile: 'speech-detection/silero_vad_v6.2.onnx' });
+    const target = path.join(root, 'vendor', platform);
+    fs.mkdirSync(target, { recursive: true });
+    fs.writeFileSync(path.join(target, 'previous.txt'), 'previous engine');
+    await assert.rejects(installBinary(platform), /silero_vad_v6\.2\.onnx/);
+    assert.equal(fs.readFileSync(path.join(target, 'previous.txt'), 'utf8'), 'previous engine');
+  });
+}
 
 for (const platform of ['ios', 'android', 'web']) {
   test(`installs an explicitly selected ${platform} archive with its required payload`, async (t) => {

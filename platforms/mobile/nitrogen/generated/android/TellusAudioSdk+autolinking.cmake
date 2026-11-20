@@ -34,6 +34,7 @@ target_sources(
   ../nitrogen/generated/android/TellusAudioSdkOnLoad.cpp
   # Shared Nitrogen C++ sources
   ../nitrogen/generated/shared/c++/HybridTellusCaptureSpec.cpp
+  ../nitrogen/generated/shared/c++/HybridTellusSpeechDetectorSpec.cpp
   # Android-specific Nitrogen C++ sources
 
 )

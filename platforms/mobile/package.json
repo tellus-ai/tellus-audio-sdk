@@ -25,6 +25,7 @@
     "cpp",
     "ios",
     "android/build.gradle",
+    "android/model-assets.gradle",
     "android/gradle.properties",
     "android/CMakeLists.txt",
     "android/README.md",

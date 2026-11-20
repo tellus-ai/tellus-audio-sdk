@@ -7,6 +7,9 @@ import type { AudioDeviceListResult, AudioDeviceSource, AudioDeviceStatus } from
 
 export type { AudioCapture, AudioCaptureCallback, AudioCaptureConfig, AudioCaptureEngineError, AudioChunk, CaptureStatus, NativeEngineAssets, RecordingNotificationConfig, VADConfig, AutoGainControlConfig } from '../../../bindings/typescript/capture-types.js';
 export type { AudioDeviceInfo, AudioDeviceListResult, AudioDeviceOperationError, AudioDeviceSource, AudioDeviceStatus } from '../../../bindings/typescript/audio-devices.js';
+export { SpeechDetector } from './speech-detector.js';
+export type { NativeSpeechDetectorAssets, SpeechDetectionCallback } from './speech-detector.js';
+export type { SpeechDetectionEvent } from '../../../bindings/typescript/speech-detection.js';
 
 /** Lists the devices the OS currently exposes. Does not request permission or start capture. */
 export async function listAudioDevices(source: AudioDeviceSource): Promise<AudioDeviceListResult> {

@@ -1,0 +1,7 @@
+def engineDir = file("../vendor/android")
+tasks.register("syncTellusModelAssets", Sync) {
+  from(new File(engineDir, "models")) { include "*.temc" }
+  from(new File(engineDir, "speech-detection")) { include "silero_vad_v6.2.onnx" }
+  from(new File(engineDir, "licenses")) { include "silero-vad.txt" }
+  into(layout.buildDirectory.dir("generated/tellus-model-assets/tellus-audio-sdk"))
+}

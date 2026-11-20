@@ -30,6 +30,17 @@ bool CaptureWorker::enqueue(std::function<void()> command) {
   return true;
 }
 
+// 등록된 입력당 한 번 요청하는 정리다. 포화된 제어 큐와 교체 가능한 OS 오류 슬롯에 의존하지 않는다.
+// shutdown이 먼저면 소유자가 worker를 join한 뒤 직접 입력을 닫는다.
+void CaptureWorker::enqueueCleanup(std::function<void()> cleanup) {
+  {
+    std::lock_guard lock(_mutex);
+    if (_closed) return;
+    _commands.push_front(std::move(cleanup));
+  }
+  _ready.notify_one();
+}
+
 void CaptureWorker::enqueueUrgent(std::function<void()> cleanup) {
   {
     std::lock_guard<std::mutex> lock(_mutex);

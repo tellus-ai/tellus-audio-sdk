@@ -106,8 +106,10 @@ CaptureSession::~CaptureSession() {
   closed = true;
   _captureEnabled = false;
   _deliveryEnabled = false;
-  try { _device->stopCapture(); _device->cancelPlayback(); } catch (...) {}
+  try { _device->cancelPlayback(); } catch (...) {}
   _worker->shutdown();
+  try { stopInput(); } catch (...) {}
+  _device.reset();
   _worker.reset();
   tellus_audio_session_destroy(handle);
 }
@@ -119,34 +121,52 @@ void CaptureSession::configureAudioDevices(const std::string& mic, const std::st
   _deviceSelectionLocked = true;
 }
 
-void CaptureSession::start(bool resume) {
-  const auto revision = _controlRevision.load();
+void CaptureSession::stopInput() {
+  _device->stopCapture();
+  _opening.reset();
+  _input.release();
+}
+
+MicrophoneHandoff CaptureSession::beginStart(bool resume, uint64_t revision) {
+  if (revision != _controlRevision || closed) throw std::runtime_error("capture_cancelled");
   const auto status = resume ? tellus_audio_session_resume(handle) : tellus_audio_session_start(handle);
   if (status != TELLUS_OK && status != TELLUS_INVALID_STATE) {
     _authorizationMonitored = false;
-    _device->stopCapture();
+    stopInput();
   }
   check(status);
   // The engine accepted start, so clear any earlier internal-error latch.
   _failed = false;
   _deviceSelectionLocked = true;
   _started = true;
+  _opening = revision;
+  _authorizationMonitored = true; // 인계 중 pause해도 만료 시 우선권을 반환한다.
+  return _input.claim();
+}
+
+void CaptureSession::openInput(uint64_t revision, std::exception_ptr handoffError) {
+  // callback에서 stop·pause·dispose하거나 다음 start가 이미 시작된 경우 그 입력은 건드리지 않는다.
+  if (_opening != revision) throw std::runtime_error("capture_cancelled");
   try {
+    if (handoffError) std::rethrow_exception(handoffError);
+    if (revision != _controlRevision || closed) throw std::runtime_error("capture_cancelled");
+    if (!authorized()) throw std::runtime_error("engine_authorization_expired");
     _device->requestCapturePermission();
     check(tellus_audio_session_clear_render(handle));
     if (revision != _controlRevision || closed) throw std::runtime_error("capture_cancelled");
+    if (!authorized()) throw std::runtime_error("engine_authorization_expired");
     _device->startCapture(48000);
     check(tellus_audio_session_clear_render(handle));
     if (revision != _controlRevision || closed) throw std::runtime_error("capture_cancelled");
     _deliveryEnabled = true;
     _captureEnabled = true;
-    _authorizationMonitored = true;
+    _opening.reset();
   }
   catch (...) {
     _captureEnabled = false;
     _deliveryEnabled = false;
     _authorizationMonitored = false;
-    _device->stopCapture();
+    stopInput();
     if (!_failed) tellus_audio_session_pause(handle);
     _started = false;
     throw;
@@ -162,6 +182,7 @@ void CaptureSession::pause() {
   _captureEnabled = false;
   _deliveryEnabled = false;
   _device->pauseCapture();
+  _opening.reset();
   cancelPlayback();
   try { clearQueuedCapture(); }
   catch (...) { if (!_failed) tellus_audio_session_pause(handle); _started = false; throw; }
@@ -184,7 +205,7 @@ void CaptureSession::setRecordingNotification(const std::string& title, const st
 void CaptureSession::stop() {
   _authorizationMonitored = false;
   _captureEnabled = false;
-  _device->stopCapture();
+  stopInput();
   cancelPlayback();
   _worker->drain();
   clearQueuedCapture();
@@ -199,7 +220,7 @@ void CaptureSession::close() {
   _authorizationMonitored = false;
   _captureEnabled = false;
   _deliveryEnabled = false;
-  _device->stopCapture();
+  stopInput();
   cancelPlayback();
   _worker->discard(processingRate);
   if (!_failed) check(tellus_audio_session_invalidate_authorization(handle));
@@ -211,7 +232,7 @@ void CaptureSession::invalidate() {
   cancelPlayback();
   _worker->enqueueUrgent([this] {
     _authorizationMonitored = false;
-    try { _device->stopCapture(); cancelPlayback(); } catch (...) {}
+    try { stopInput(); cancelPlayback(); } catch (...) {}
     _worker->discard(processingRate);
     if (_started && !_failed) {
       _started = false;
@@ -372,20 +393,24 @@ void CaptureSession::fail(const std::string& error, const std::string& message) 
   _authorizationMonitored = false;
   _captureEnabled = false;
   _deliveryEnabled = false;
-  try { _device->stopCapture(); cancelPlayback(); } catch (...) {}
+  try { stopInput(); cancelPlayback(); } catch (...) {}
   _worker->discard(processingRate);
   if (!_failed) tellus_audio_session_pause(handle);
   _started = false;
   if (onError) { try { onError(error, message); } catch (...) {} }
 }
 
+bool CaptureSession::authorized() {
+  const auto status = json([&](auto* bytes, auto capacity, auto* written) {
+    return tellus_audio_session_get_authorization_status(handle, bytes, capacity, written);
+  });
+  return status.find("\"state\":\"authorized\"") != std::string::npos;
+}
+
 void CaptureSession::verifyAuthorization() {
   if (!_authorizationMonitored || closed || _failed) return;
   try {
-    const auto status = json([&](auto* bytes, auto capacity, auto* written) {
-      return tellus_audio_session_get_authorization_status(handle, bytes, capacity, written);
-    });
-    if (status.find("\"state\":\"authorized\"") == std::string::npos) fail("engine_authorization_expired");
+    if (!authorized()) fail("engine_authorization_expired");
   } catch (const std::exception& error) { fail(error.what(), engineMessage(error)); }
 }
 
