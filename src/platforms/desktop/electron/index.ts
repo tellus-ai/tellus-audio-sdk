@@ -495,6 +495,7 @@ const {
   isBuiltInSpeaker: nativeIsBuiltInSpeaker,
   init: nativeInit,
   initLogging: nativeInitLogging,
+  configureLogging: nativeConfigureLogging,
 } = nativeBinding;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1291,7 +1292,48 @@ export const preloadModels: (config?: AudioCaptureConfig | null) => AudioEngineM
     vad: status.vad,
   };
 };
-export const initLogging: (level?: string | null) => void = nativeInitLogging;
+/** One engine log entry. `message` is the event message followed by the remaining fields as `key=value`. */
+export interface EngineLogEntry {
+  level: 'error' | 'warn' | 'info' | 'debug' | 'trace';
+  target: string;
+  message: string;
+  /** Unix epoch ms. */
+  timestampMs: number;
+}
+
+/** Replaces the whole logging configuration on every call. In production, pass onLog and keep console off. */
+export interface EngineLoggingOptions {
+  /** EnvFilter syntax, for example `audio_capture=debug`. Defaults to `audio_capture=info`. */
+  level?: string;
+  /** When true, the engine also writes to process stdout. Defaults to false. */
+  console?: boolean;
+  /** Called asynchronously once per entry. Thrown exceptions are ignored. Omit it to stop host delivery. */
+  onLog?: (entry: EngineLogEntry) => void;
+}
+
+/**
+ * A string, null, or nothing keeps the legacy behavior (stdout console output). An options object replaces the logging configuration.
+ * Logging failures, including closed stdout and stderr, never change any API result.
+ *
+ * Raises: `logging_level_invalid` for an invalid level; the previous configuration stays.
+ */
+export const initLogging: (levelOrOptions?: string | null | EngineLoggingOptions) => void = (levelOrOptions) => {
+  if (levelOrOptions == null || typeof levelOrOptions === 'string') {
+    nativeInitLogging(levelOrOptions);
+    return;
+  }
+  const { level, console: consoleOutput, onLog } = levelOrOptions;
+  const deliver = onLog && ((entries: EngineLogEntry[]) => {
+    for (const entry of entries) {
+      try {
+        onLog(entry);
+      } catch {
+        // A failing host log handler must not affect the engine or the delivery of later entries.
+      }
+    }
+  });
+  nativeConfigureLogging({ level, console: consoleOutput }, deliver);
+};
 
 export { attachEngineAuthorization } from '../../../bindings/typescript/authorization/realtime.js';
 export type {

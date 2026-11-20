@@ -52,6 +52,28 @@ startDetection();
 
 캡처가 일시정지되어도 우선권을 유지합니다. 캡처 종료 후 `startDetection()`을 다시 호출하세요. `stop()` 이후 도착한 이벤트는 버립니다.
 
+## 엔진 로그
+
+엔진 로그를 어디에 남길지는 앱이 정합니다. 로그 출력이 실패해도(앱을 띄운 쪽이 stdout·stderr를 닫은 경우 포함) 어떤 API 결과도 바뀌지 않습니다. 운영에서는 `onLog`로 받아 앱 로그에 남기고 콘솔 출력은 끄세요.
+
+```ts
+import { initLogging } from '@tellus-ai/audio-sdk-desktop';
+import type { EngineLogEntry } from '@tellus-ai/audio-sdk-desktop';
+
+initLogging({
+  level: 'audio_capture=info', // EnvFilter 문법. 기본값 'audio_capture=info'
+  console: false,              // 기본값 false. true면 프로세스 stdout에도 씁니다
+  onLog: (entry: EngineLogEntry) => appLogger.log(entry.level, `[engine] ${entry.target} ${entry.message}`),
+});
+```
+
+- 호출할 때마다 레벨·콘솔 출력·`onLog` 설정 전체를 바꿉니다. `onLog`를 생략하면 앱으로 전달하지 않습니다.
+- `entry`는 `{ level, target, message, timestampMs }`입니다. `message`는 이벤트 메시지 뒤에 나머지 필드를 `key=value`로 붙인 문자열이고 `timestampMs`는 Unix epoch ms입니다.
+- `onLog`는 JS 스레드에서 비동기로 한 건씩 호출됩니다. 엔진 스레드는 앱을 기다리지 않습니다. 전달 대기 로그가 1024건을 넘으면 새 로그를 버리고 다음 전달에 `N engine log entries dropped` 경고 항목을 붙입니다.
+- `onLog`가 던진 예외는 무시하며 로그 전달은 Node 이벤트 루프를 붙잡지 않습니다.
+- 잘못된 레벨은 `logging_level_invalid`를 던지고 기존 설정을 유지합니다.
+- `initLogging('audio_capture=debug')`처럼 문자열로 부르면 기존처럼 stdout 콘솔 출력을 켭니다.
+
 ## 장치 선택
 
 ```ts
