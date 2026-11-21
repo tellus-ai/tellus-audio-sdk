@@ -54,7 +54,7 @@ startDetection();
 
 ## 엔진 로그
 
-엔진 로그를 어디에 남길지는 앱이 정합니다. 로그 출력이 실패해도(앱을 띄운 쪽이 stdout·stderr를 닫은 경우 포함) 어떤 API 결과도 바뀌지 않습니다. 운영에서는 `onLog`로 받아 앱 로그에 남기고 콘솔 출력은 끄세요.
+엔진 v0.4.11이 필요합니다. 엔진 로그를 어디에 남길지는 앱이 정합니다. 로그 출력이 실패해도(앱을 띄운 쪽이 stdout·stderr를 닫은 경우 포함) 어떤 API 결과도 바뀌지 않습니다. 운영에서는 `onLog`로 받아 앱 로그에 남기고 콘솔 출력은 끄세요.
 
 ```ts
 import { initLogging } from '@tellus-ai/audio-sdk-desktop';
