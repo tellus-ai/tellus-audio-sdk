@@ -166,6 +166,23 @@ capture.setSpeakerGainDb(-3);
 
 비동기 캡처 오류는 기존 `onError(error, captureError)` 계약을 유지하며 장치 상태를 `captureError.deviceStatus`로 제공합니다. 캡처 시작이 throw한 장치 실패는 오류의 `deviceStatus`, 이후 상태는 `capture.getStatus().deviceStatus`에서 읽습니다.
 
+## 소음 제거 켜고 끄기
+
+캡처를 멈추지 않고 마이크 소음 제거를 켜거나 끕니다.
+
+```ts
+await capture.setDenoiseEnabled(false); // 다음 마이크 처리 청크부터 소음 제거를 건너뜀
+await capture.setDenoiseEnabled(true);  // 생성 때 정한 denoiseMode로 다시 켬
+```
+
+- `Promise<void>`를 반환합니다. 생성 직후, 녹음·일시정지 중, `stop()` 뒤에 언제든 부를 수 있습니다. 실행 중이면 다음 마이크 처리 청크부터 반영하며 세션은 `recording`을 유지하고 불연속도 보고하지 않습니다.
+- 끄면 소음 제거기가 보류하던 오디오를 처리해 한 번에 내보낸 뒤 원본으로 잇습니다. 켜면 소음 제거기만 새로 시작하므로 출력 지연이 한 번 늘어납니다(`close_talk` 약 330 ms, `general` 약 30 ms). 두 경계는 5 ms 크로스페이드로 잇습니다.
+- 같은 값은 아무것도 하지 않고 resolve합니다. 호출이 겹치면 마지막 호출이 이깁니다.
+- 바꾼 값은 같은 인스턴스의 다음 `start()`에도 씁니다. 처음 `setDenoiseEnabled`를 부르기 전까지는 매 `start()`가 설정의 `denoiseEnabled`를 따릅니다.
+- `getStatus().denoiseActive`는 원하는 상태를 보고합니다. 끄기는 부른 즉시 `false`, 켜기는 resolve한 뒤 `true`이고, `start()`에서 모델을 올리지 못하면 `false`입니다.
+- 모델을 쓸 수 없으면 상태를 바꾸지 않고 엔진의 `model_required: <원인>`으로 reject합니다.
+- 이 API는 엔진 v0.4.12 이상이 필요하며(SDK 0.3.12부터 고정), 구형 kit에서는 `denoise_toggle_unsupported: install a native engine with runtime denoise toggle support`로 reject합니다(동기로 던지지 않습니다).
+
 ## close_talk 임계값과 소음 저감 상한
 
 ```ts
