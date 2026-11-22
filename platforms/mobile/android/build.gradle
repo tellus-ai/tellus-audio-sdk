@@ -30,6 +30,7 @@ android {
   }
   externalNativeBuild { cmake { path file("CMakeLists.txt") } }
   sourceSets.main.assets.srcDir(layout.buildDirectory.dir("generated/tellus-model-assets"))
+  // The engine jniLibs carry libonnxruntime.so next to the engine, so no onnxruntime-android AAR is added (it would duplicate that path).
   sourceSets.main.jniLibs.srcDir(new File(engineDir, "jniLibs"))
   buildFeatures { prefab true }
 }
@@ -41,5 +42,4 @@ dependencies {
   testImplementation "junit:junit:4.13.2"
   implementation "com.facebook.react:react-android"
   implementation project(":react-native-nitro-modules")
-  implementation "com.microsoft.onnxruntime:onnxruntime-android:${getExtOrDefault('onnxruntimeVersion')}"
 }

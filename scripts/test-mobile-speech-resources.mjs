@@ -13,7 +13,7 @@ const mobile = path.join(scripts, '../platforms/mobile');
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'tellus-model-resources-'));
 const vendor = path.join(fixture, 'vendor', platform);
 const resources = ['models/denoise.temc', 'models/vad.temc', 'models/extra.temc',
-  'speech-detection/silero_vad_v6.2.onnx', 'licenses/silero-vad.txt'];
+  'speech-detection/silero_vad_v6.2.onnx', 'licenses/silero-vad.txt', 'licenses/onnxruntime.txt', 'licenses/onnxruntime-third-party.txt'];
 const run = (command, args, cwd) => execFileSync(command, args, { cwd, stdio: 'inherit' });
 
 try {
@@ -44,7 +44,7 @@ try {
   for (const resource of resources) {
     assert.equal(fs.readFileSync(path.join(output, path.posix.basename(resource)), 'utf8'), resource);
   }
-  console.log(`Verified ${platform} final resources including flattened Silero, notice and all TEMC files.`);
+  console.log(`Verified ${platform} final resources including flattened Silero, Silero and ONNX Runtime notices and all TEMC files.`);
 } finally {
   fs.rmSync(fixture, { recursive: true, force: true });
 }

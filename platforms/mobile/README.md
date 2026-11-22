@@ -25,11 +25,23 @@ Expo 설정은 다음과 같습니다.
 
 같은 대상의 설치를 검사하려면 `npm run check:binary --prefix node_modules/@tellus-ai/audio-sdk-mobile -- --platform android`를 실행합니다. 대상 옵션을 생략하면 iOS·Android 모두 검사합니다.
 
+## ONNX Runtime
+
+SDK 0.3.12(엔진 v0.4.12)부터 ONNX Runtime 1.24.3은 SDK가 내려받는 엔진 payload에 들어 있습니다. iOS는 podspec이 `vendor/ios/onnxruntime.xcframework`를 엔진과 함께 링크하고, Android는 `vendor/android/jniLibs/<ABI>/libonnxruntime.so`를 엔진과 함께 앱에 싣습니다. 그래서 앱 빌드가 Microsoft 배포 서버(CocoaPods `onnxruntime-c`, Maven `onnxruntime-android`)에 의존하지 않습니다. ORT 고지 `onnxruntime.txt`·`onnxruntime-third-party.txt`는 Silero 고지와 같은 곳(iOS `TellusAudioSdkModels.bundle`, Android `assets/tellus-audio-sdk/`)에 복사됩니다.
+
+앱은 ONNX Runtime을 따로 추가하면 안 됩니다. `onnxruntime-c` Pod, `onnxruntime-android` AAR, `onnxruntime-react-native`를 함께 쓰면 ORT가 두 벌이 되어 iOS는 같은 이름의 `onnxruntime.framework`가, Android는 같은 경로의 `libonnxruntime.so`가 충돌합니다(Gradle `mergeNativeLibs` 실패).
+
+이전 SDK에서 올릴 때는 다음을 지운 뒤 엔진을 다시 설치하고 네이티브 빌드를 다시 실행하세요.
+
+- iOS Podfile의 `pod 'onnxruntime-c'` (지운 뒤 `pod install`)
+- Android Gradle의 `libonnxruntime.so` `pickFirsts`(`packaging.jniLibs.pickFirsts`·`packagingOptions.pickFirst`)
+- 앱 의존성의 `onnxruntime-react-native`(Android `MainApplication`에 `OnnxruntimePackage`를 직접 등록했다면 그것도)
+
 ## 발화 감지
 
 엔진 v0.4.10과 OS 마이크 권한이 필요합니다. 서버 캡처 permit·모델 키·`AudioEngine.init()` 없이 감지할 수 있습니다. 앱의 마이크 사용 목적을 설정하고 감지를 시작하기 전에 필요한 권한을 요청하세요.
 
-npm 패키지는 JS·타입 선언과 네이티브 래퍼·Nitro 생성 바인딩을 제공합니다. 엔진·모델은 설치 토큰으로 인증하는 `install:binary`가 SDK의 `vendor/ios` 또는 `vendor/android`에 내려받습니다. iOS는 CocoaPods 빌드에서 `TellusAudioSdkModels.bundle`에, Android는 Gradle 빌드에서 앱의 `assets/tellus-audio-sdk/`에 `silero_vad_v6.2.onnx`, Silero 고지 및 기존 캡처용 `.temc` 파일을 복사합니다. 엔진 설치가 끝난 뒤 앱의 네이티브 빌드를 실행하세요.
+npm 패키지는 JS·타입 선언과 네이티브 래퍼·Nitro 생성 바인딩을 제공합니다. 엔진·모델은 설치 토큰으로 인증하는 `install:binary`가 SDK의 `vendor/ios` 또는 `vendor/android`에 내려받습니다. iOS는 CocoaPods 빌드에서 `TellusAudioSdkModels.bundle`에, Android는 Gradle 빌드에서 앱의 `assets/tellus-audio-sdk/`에 `silero_vad_v6.2.onnx`, Silero·ONNX Runtime 고지 및 기존 캡처용 `.temc` 파일을 복사합니다. 엔진 설치가 끝난 뒤 앱의 네이티브 빌드를 실행하세요.
 
 ```ts
 import { SpeechDetector } from '@tellus-ai/audio-sdk-mobile';
