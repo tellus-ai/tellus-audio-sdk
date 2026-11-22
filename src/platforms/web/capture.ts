@@ -298,17 +298,15 @@ export class BrowserCapture implements AudioCapture {
     };
   }
 
+  /** Requests the toggle in call order. It does not cut the epoch, so in-flight capture still reaches the engine, and it leaves the tap alone. */
   async setDenoiseEnabled(enabled: boolean): Promise<void> {
     if (this.denoiseUpdates === 0 && enabled === this.denoiseEnabled) return;
     this.denoiseUpdates++;
-    // There are no microphone frames to cancel while start is pending.
-    const epoch = this.interruptStart ? this.epoch : this.cancel();
     try {
-      const applied = await this.request<boolean | undefined>({ operation: 'denoise', enabled }, epoch);
+      const applied = await this.request<boolean | undefined>({ operation: 'denoise', enabled });
       if (applied !== undefined) this.denoiseEnabled = applied;
     } finally {
       this.denoiseUpdates--;
-      if (epoch === this.epoch && this.state === 'running') this.tap?.port.postMessage({ active: true, epoch });
     }
   }
 
@@ -331,7 +329,7 @@ export class BrowserCapture implements AudioCapture {
    * It neither cuts the epoch nor stops engine playback, so earlier settings (setMicGainDb and the like) and an in-flight start, pause, stop or playback finish as they were.
    * While held and with a running tap (the only time held captures queue on the main thread or are on their way over the port), it sets only a capture boundary.
    * - Queued held captures are sent to the worker before the release request. The core, still held, counts their length and the queue loss length (droppedSamples) and drops them.
-   *   Resulting chunks are not delivered (held captures are never emitted live after the release). If pause, reset, stop or a denoise toggle is called in the same tick,
+   *   Resulting chunks are not delivered (held captures are never emitted live after the release). If pause, reset or stop is called in the same tick,
    *   that call cuts the epoch before the worker receives this capture, so it is dropped without being counted, like the other pending audio that call discards.
    * - The tap is re-armed with a new capture generation. Frames the tap stamped before it received this (the frame on its way over the port at release and the frames it made before it got the message)
    *   are dropped even if they arrive after the release. This length is not reported to the engine, so the input_held discontinuity after the release is that much shorter. Its size is

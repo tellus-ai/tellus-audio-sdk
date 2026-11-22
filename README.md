@@ -14,7 +14,7 @@
 
 고객에게 발급한 `TELLUS_AUDIO_ENGINE_TOKEN`과 HTTPS 서비스 `TELLUS_AUDIO_DOWNLOAD_BASE_URL`을 설정한 뒤 대상 패키지를 설치합니다. 설치된 패키지만 엔진 산출물을 다운로드하고 SHA-256을 검증합니다. 설치 과정은 엔진 저장소나 Rust·TypeScript 소스 빌드를 요구하지 않습니다. root workspace에는 postinstall이 없습니다.
 
-Desktop은 OS·CPU에 맞는 엔진을 선택합니다. Web은 웹 엔진만 설치합니다. Mobile은 iOS·Android를 설치하며 `TELLUS_AUDIO_ENGINE_PLATFORM=ios` 또는 `android`로 대상을 제한할 수 있습니다. SDK `0.3.11`은 `release-assets.json`에서 엔진 `0.4.11`을 고정합니다. 앱의 서버 연결을 통해 설치 토큰과 별도의 캡처 실행 승인 토큰을 전달합니다. Web·Mobile 캡처에는 모델 키도 전달합니다.
+Desktop은 OS·CPU에 맞는 엔진을 선택합니다. Web은 웹 엔진만 설치합니다. Mobile은 iOS·Android를 설치하며 `TELLUS_AUDIO_ENGINE_PLATFORM=ios` 또는 `android`로 대상을 제한할 수 있습니다. SDK `0.3.12`은 `release-assets.json`에서 엔진 `0.4.12`을 고정합니다. 앱의 서버 연결을 통해 설치 토큰과 별도의 캡처 실행 승인 토큰을 전달합니다. Web·Mobile 캡처에는 모델 키도 전달합니다.
 
 ## 발화 감지
 
@@ -45,6 +45,8 @@ general 모드는 기본적으로 소음 저감 상한이 없습니다(무제한
 close_talk 게이트 세부 설정 중 `closeTalkLevelMinDbfs`(유한한 -100..0 dBFS, 기본 -20)는 크기 보조(학습 레벨 - 여유 이상이면 열림)를 쓰는 하한으로, 학습한 레벨이 이 값 이상일 때만 크기 보조가 동작합니다. 15-30 cm에서 쓰면 학습 레벨이 -20보다 낮아 크기 보조가 꺼지므로 -32처럼 낮추면 더 작은 학습 음성에서도 동작합니다. 대신 멀거나 작은 목소리, 12 dB 감쇠 한도를 통과한 큰 소음이 게이트를 열 수 있습니다. 엔진 v0.4.9+가 필요하며 구형 엔진에서는 기본값(-20)이 아닌 값을 설정하면 unsupported 오류가 납니다.
 
 그 밖의 close_talk 게이트 세부 설정 `closeTalkHoldMs`(유지 시간, 기본 250, 0..2000 ms), `closeTalkKeepGapDb`(유지 기준 폭, 기본 4, 0..20 dB), `closeTalkLevelMarginDb`(크기 보조 여유, 기본 2, 0..20 dB), `closeTalkLevelMinDbfs`(크기 보조 하한, 기본 -20, -100..0 dBFS, 엔진 v0.4.9+)와 같은 이름의 setter도 세 플랫폼 공통입니다. 학습한 내 말소리 크기는 `getStatus()`의 `closeTalkLearnedLevelDbfs`·`closeTalkLevelLearned`로 읽고, `setCloseTalkLearnedLevelDbfs(값 | null)`(−100..0 dBFS)로 넣거나 지웁니다. 학습값은 이제 소음제거 켜고 끄기, 데스크톱의 모드 전환, pause/resume, stop/start, 마이크 재시작에도 남습니다. 모바일·웹에서 입력 장치를 바꿀 때는 `null`로 지우세요(데스크톱은 다른 마이크가 열리면 스스로 지웁니다). 출력 청크의 `closeTalkGate`(`open`·`openRatio`·`lsnrDb`·`levelDbfs`·`learnedLevelDbfs`)로 게이트 판정을 청크마다 확인할 수 있습니다. 이 API는 엔진 v0.4.8 이상이 필요하며, 그 전 kit에서는 `unsupported`를 냅니다. 상세는 각 플랫폼 README를 참고하세요.
+
+Desktop의 런타임 소음 제거 토글 `setDenoiseEnabled(enabled)`(Promise, 상태 `getStatus().denoiseActive`)는 캡처를 멈추지 않고 다음 마이크 처리 청크부터 소음 제거를 켜거나 끕니다. 이 API는 엔진 v0.4.12 이상이 필요하며(SDK 0.3.12부터 고정), 그 전 kit에서는 `denoise_toggle_unsupported`로 reject합니다. 상세는 [Desktop README](platforms/desktop/README.md#소음-제거-켜고-끄기)를 참고하세요.
 
 입력 hold API `holdInput()`·`releaseInput()`(상태 `getStatus().inputHeld`)는 앱이 업링크를 끄는 동안(예: TTS 재생) 입력을 보류하는 세 플랫폼 공통 API입니다. 이 API는 엔진 v0.4.6 이상이 필요하며(SDK 0.3.6부터 고정), 그 전 kit에서는 `unsupported` 오류를 냅니다. 상세는 각 플랫폼 README를 참고하세요.
 

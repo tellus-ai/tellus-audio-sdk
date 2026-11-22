@@ -275,18 +275,72 @@ test('pause while microphone permission is pending reacquires real input on resu
 });
 
 
-test('a rejected denoise enable restores the running OS input tap', async () => {
-  const { capture, permissions, nodes, commands } = environment({ denoise: () => { throw new Error('model_required'); } });
+test('a rejected denoise enable keeps the running OS input tap', async () => {
+  const { capture, permissions, nodes, commands, cancels } = environment({ denoise: () => { throw new Error('model_required'); } });
   await capture.applyAuthorization('permit');
   const starting = capture.start(() => {});
   await flush();
   permissions[0](stream());
   await starting;
+  const controls = nodes[0].controls.length;
   await assert.rejects(capture.setDenoiseEnabled(true), /model_required/);
-  assert.deepEqual(nodes[0].controls.at(-1), { active: true, epoch: 1 });
+  assert.equal(nodes[0].controls.length, controls, 'no control message after the rejection');
+  assert.deepEqual(cancels, []);
   assert.equal((await capture.getStatus()).state, 'running');
   await capture.setDenoiseEnabled(false);
   assert.equal(commands.filter((command) => command === 'denoise').length, 1);
+  await capture.dispose();
+});
+
+test('a denoise toggle keeps the capture epoch and in-flight captures', async () => {
+  let allow;
+  const validation = new Promise((resolve) => { allow = resolve; });
+  const output = { epoch: '1', authorizationGeneration: '1', chunk: {
+    data: { microphone: new Uint8Array([1]) }, sampleCount: 320, validSampleCount: 320,
+  } };
+  const { capture, permissions, nodes, cancels, epochs } = environment({ capture: () => [output], canDeliver: () => validation });
+  await capture.applyAuthorization('permit');
+  const received = [];
+  const starting = capture.start((error, chunk) => received.push({ error, chunk }));
+  await flush();
+  permissions[0](stream());
+  await starting;
+  nodes[0].port.onmessage({ data: { samples: new Float32Array(128), nativeRate: 48000, timestamp: 1, epoch: 0, generation: 0 } });
+  await flush();
+  const controls = nodes[0].controls.length;
+  await capture.setDenoiseEnabled(true);
+  allow(true);
+  await flush();
+  assert.equal(received.length, 1, 'the capture sent before the toggle is still delivered');
+  assert.equal(nodes[0].controls.length, controls, 'the toggle sends no tap control message');
+  assert.deepEqual(cancels, []);
+  assert.deepEqual(epochs.find(([operation]) => operation === 'denoise'), ['denoise', 0]);
+  await capture.dispose();
+});
+
+// Mutation to catch: if the worker drops denoise from its stale-epoch exemption (worker.ts, mirrored by the Worker model below), the epoch the
+// same-tick pause cut makes the worker drop the toggle and the requested state stays as it was, so this goes RED.
+test('an unawaited denoise toggle followed by pause in the same tick is still applied in call order', async () => {
+  let nativeDenoise = true;
+  const responses = {
+    denoise: (command) => { nativeDenoise = command.enabled; return command.enabled; },
+    status: () => ({ lifecycle: 'paused', denoise_enabled: nativeDenoise, denoise_loaded: true, vad_loaded: false }),
+  };
+  const { capture, permissions, cancels, epochs } = environment(responses, { denoiseEnabled: true }, heldCoreWorker());
+  await capture.applyAuthorization('permit');
+  const starting = capture.start(() => {});
+  await flush();
+  permissions[0](stream());
+  await starting;
+
+  const toggling = capture.setDenoiseEnabled(false);
+  const pausing = capture.pause();
+  await Promise.all([toggling, pausing]);
+
+  assert.deepEqual(cancels, [1], 'pause cut the epoch before the toggle reached the worker');
+  assert.deepEqual(epochs.find(([operation]) => operation === 'denoise'), ['denoise', 0]);
+  assert.equal(nativeDenoise, false, 'the worker applied the toggle');
+  assert.equal((await capture.getStatus()).denoiseEnabled, false);
   await capture.dispose();
 });
 
@@ -774,7 +828,7 @@ async function startedSession(responses = {}, worker) {
   return session;
 }
 
-// A Worker model that, like worker.ts, drops requests whose epoch changed (except hold and release; configuration setters are rejected with tellus_capture_cancelled, capture and stop return an empty result)
+// A Worker model that, like worker.ts, drops requests whose epoch changed (except hold, release and denoise; configuration setters are rejected with tellus_capture_cancelled, capture and stop return an empty result)
 // and, while held, counts only the length of a capture without a chunk. It records the captures the core received, split into held and live, as [timestamp, queue loss length].
 // State changes in the order requests arrive, the same as the Worker's FIFO order. With a gate, capture responses wait until that promise resolves (meanwhile frames pile up in the main-thread queue).
 function heldCoreWorker() {
@@ -785,7 +839,7 @@ function heldCoreWorker() {
     captures: { held: [], live: [] },
     cancel(epoch) { this.epoch = epoch; },
     async request(command, epoch, respond) {
-      const exempt = ['invalidate', 'destroy', 'holdInput', 'releaseInput'].includes(command.operation);
+      const exempt = ['invalidate', 'destroy', 'holdInput', 'releaseInput', 'denoise'].includes(command.operation);
       if (epoch !== this.epoch && !exempt) {
         if (['micGainDb', 'closeTalkThresholdDb', 'denoiseAttenuationLimitDb'].includes(command.operation)) throw new Error('tellus_capture_cancelled');
         return command.operation === 'capture' || command.operation === 'stop' ? [] : undefined;

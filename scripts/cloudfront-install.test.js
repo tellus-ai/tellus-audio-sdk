@@ -13,9 +13,12 @@ const { test } = require('node:test');
 const platformFiles = {
   ios: ['TellusAudioEngine.xcframework/Info.plist', 'TellusAudioEngine.xcframework/ios-arm64/libtellus_audio_engine.a',
     'TellusAudioEngine.xcframework/ios-arm64-simulator/libtellus_audio_engine.a', 'include/tellus_audio_engine.h',
-    'models/manifest.json', 'models/denoise.temc', 'models/vad.temc', 'speech-detection/silero_vad_v6.2.onnx', 'licenses/silero-vad.txt'],
+    'models/manifest.json', 'models/denoise.temc', 'models/vad.temc', 'speech-detection/silero_vad_v6.2.onnx', 'licenses/silero-vad.txt',
+    'onnxruntime.xcframework/Info.plist', 'onnxruntime.xcframework/ios-arm64/onnxruntime.framework/onnxruntime',
+    'onnxruntime.xcframework/ios-arm64_x86_64-simulator/onnxruntime.framework/onnxruntime', 'licenses/onnxruntime.txt', 'licenses/onnxruntime-third-party.txt'],
   android: ['jniLibs/arm64-v8a/libtellus_audio_engine.so', 'jniLibs/x86_64/libtellus_audio_engine.so',
-    'include/tellus_audio_engine.h', 'models/manifest.json', 'models/denoise.temc', 'models/vad.temc', 'speech-detection/silero_vad_v6.2.onnx', 'licenses/silero-vad.txt'],
+    'include/tellus_audio_engine.h', 'models/manifest.json', 'models/denoise.temc', 'models/vad.temc', 'speech-detection/silero_vad_v6.2.onnx', 'licenses/silero-vad.txt',
+    'jniLibs/arm64-v8a/libonnxruntime.so', 'jniLibs/x86_64/libonnxruntime.so', 'licenses/onnxruntime.txt', 'licenses/onnxruntime-third-party.txt'],
   web: ['tellus-audio-engine.mjs', 'tellus-audio-engine.wasm', 'models/manifest.json',
     'models/denoise.temc', 'models/vad.temc'],
 };
@@ -111,8 +114,8 @@ test('installs the pinned CloudFront artifact through dedicated bearer tokens wi
   const { root, installBinary, requests, asset } = installerFixture(t);
   await installBinary();
   const serviceRequests = requests.filter(({ url }) => new URL(url).hostname === 'speech.example.test');
-  const releaseUrl = 'https://speech.example.test/v1/audio-artifacts/engine/0.4.11';
-  const archive = `tellus-audio-engine-v0.4.11-${asset.platform}.tar.gz`;
+  const releaseUrl = 'https://speech.example.test/v1/audio-artifacts/engine/0.4.12';
+  const archive = `tellus-audio-engine-v0.4.12-${asset.platform}.tar.gz`;
   assert.deepEqual(serviceRequests.map(({ url }) => url), [
     `${releaseUrl}/${archive}.sha256/token`,
     `${releaseUrl}/${archive}/token`,

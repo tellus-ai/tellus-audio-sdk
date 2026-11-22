@@ -223,6 +223,10 @@ export interface CaptureStatus {
   micThreadAlive: boolean;
   speakerThreadAlive: boolean;
   mixerThreadAlive: boolean;
+  /**
+   * Microphone denoise state. On engines with setDenoiseEnabled (v0.4.12+) this is the requested state: false as soon as a disable call returns,
+   * true once an enable resolves, and false after a start whose model load failed.
+   */
   denoiseActive: boolean;
   /** True while uplink input is held by holdInput(). Absent on native engines without input hold support. */
   inputHeld?: boolean;
@@ -931,6 +935,12 @@ export class AudioCapture {
     }
   }
 
+  #requireDenoiseToggleSupport(): void {
+    if (typeof this.#native.setDenoiseEnabled !== 'function') {
+      throw new Error('denoise_toggle_unsupported: install a native engine with runtime denoise toggle support');
+    }
+  }
+
   /** Updates digital microphone gain without changing OS input volume or original raw PCM. */
   setMicGainDb(db: number): void {
     validateGainDb(db);
@@ -961,6 +971,19 @@ export class AudioCapture {
   releaseInput(): void {
     this.#requireInputHoldSupport();
     this.#native.releaseInput();
+  }
+
+  /**
+   * Turns microphone denoise on or off without stopping the capture. Callable after construction, while recording or paused, and after stop;
+   * a running capture applies it from the next microphone processing chunk. Turning it off flushes the audio the denoiser was holding, and turning it on
+   * restarts only the denoiser, which adds a one-time latency (about 330 ms with close_talk, about 30 ms with general). Both boundaries crossfade over 5 ms.
+   * The current value resolves without change and, when calls overlap, the last call wins. The value is kept for the next start of this instance;
+   * until this is first called, each start follows config.denoiseEnabled. getStatus().denoiseActive reports the requested state.
+   * Rejects with `model_required: <cause>` without changing state when the model cannot be used, and with denoise_toggle_unsupported on engines older than v0.4.12.
+   */
+  async setDenoiseEnabled(enabled: boolean): Promise<void> {
+    this.#requireDenoiseToggleSupport();
+    return this.#native.setDenoiseEnabled(enabled);
   }
 
   /** Updates the close_talk noise attenuation limit from the next 10 ms hop. The native engine rejects values outside finite 0..=60. */

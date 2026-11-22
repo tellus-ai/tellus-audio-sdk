@@ -12,13 +12,18 @@ Pod::Spec.new do |s|
   s.source_files = ['ios/**/*.{h,hpp,mm}', 'cpp/**/*.{hpp,cpp}']
   s.exclude_files = ['cpp/tests/**/*']
   s.static_framework = true
-  s.frameworks = 'AVFoundation', 'AudioToolbox', 'UIKit'
-  s.vendored_frameworks = 'vendor/ios/TellusAudioEngine.xcframework'
-  s.dependency 'onnxruntime-c', '1.24.3'
+  s.frameworks = 'AVFoundation', 'AudioToolbox', 'UIKit', 'Foundation', 'CoreFoundation'
+  # The engine archive ships ONNX Runtime 1.24.3 as a static onnxruntime.xcframework; link it with the system
+  # libraries it needs. Apps must not add onnxruntime-c or onnxruntime-react-native, which bring a same-name framework.
+  s.vendored_frameworks = ['vendor/ios/TellusAudioEngine.xcframework', 'vendor/ios/onnxruntime.xcframework']
+  s.weak_frameworks = 'CoreML'
+  s.libraries = 'c++'
   s.resource_bundles = { 'TellusAudioSdkModels' => [
     'vendor/ios/models/*.temc',
     'vendor/ios/speech-detection/silero_vad_v6.2.onnx',
-    'vendor/ios/licenses/silero-vad.txt'
+    'vendor/ios/licenses/silero-vad.txt',
+    'vendor/ios/licenses/onnxruntime.txt',
+    'vendor/ios/licenses/onnxruntime-third-party.txt'
   ] }
   s.pod_target_xcconfig = {
     'HEADER_SEARCH_PATHS' => '"$(PODS_TARGET_SRCROOT)/vendor/ios/include"',
