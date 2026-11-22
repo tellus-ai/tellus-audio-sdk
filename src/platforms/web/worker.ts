@@ -81,7 +81,8 @@ async function dispatch(request: WorkerRequest): Promise<unknown> {
   const session = sessions.get(request.sessionId);
   if (!session) throw new Error('tellus_capture_disposed');
   // Hold and release are idempotent state changes, so they apply in call order even after the epoch changes. Cancelling would leave the engine held after reset() or drop the hold.
-  const epochExempt = command.operation === 'invalidate' || command.operation === 'destroy' || command.operation === 'holdInput' || command.operation === 'releaseInput';
+  // The denoise toggle is the same. Cancelling it would resolve a toggle called before a same-tick pause, reset or stop without applying it.
+  const epochExempt = command.operation === 'invalidate' || command.operation === 'destroy' || command.operation === 'holdInput' || command.operation === 'releaseInput' || command.operation === 'denoise';
   if (request.epoch !== session.epoch && !epochExempt) {
     if (command.operation === 'micGainDb' || command.operation === 'closeTalkThresholdDb' || command.operation === 'denoiseAttenuationLimitDb' || command.operation === 'generalDenoiseAttenuationLimitDb' || command.operation.startsWith('closeTalk')) throw new Error('tellus_capture_cancelled');
     return command.operation === 'capture' || command.operation === 'stop' ? [] : undefined;
