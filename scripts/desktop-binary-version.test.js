@@ -7,11 +7,11 @@ const { test } = require('node:test');
 const { currentAssetKey, nativeFileCandidates } = require('../dist/platform/asset-key');
 
 for (const [metadata, actual, passed] of [
-  ['0.4.12', '0.4.11', false],
-  ['0.4.11', '0.4.12', false],
-  ['0.4.12', '0.4.12', true],
+  ['0.4.13', '0.4.12', false],
+  ['0.4.12', '0.4.13', false],
+  ['0.4.13', '0.4.13', true],
 ]) {
-  test(`desktop binary check compares pinned 0.4.12 with package ${metadata} and loaded ${actual}`, t => {
+  test(`desktop binary check compares pinned 0.4.13 with package ${metadata} and loaded ${actual}`, t => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellus-check-version-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     fs.cpSync(path.join(__dirname, '../platforms/desktop/dist'), path.join(root, 'dist'), { recursive: true });
