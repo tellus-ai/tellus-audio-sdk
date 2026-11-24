@@ -114,8 +114,8 @@ test('installs the pinned CloudFront artifact through dedicated bearer tokens wi
   const { root, installBinary, requests, asset } = installerFixture(t);
   await installBinary();
   const serviceRequests = requests.filter(({ url }) => new URL(url).hostname === 'speech.example.test');
-  const releaseUrl = 'https://speech.example.test/v1/audio-artifacts/engine/0.4.13';
-  const archive = `tellus-audio-engine-v0.4.13-${asset.platform}.tar.gz`;
+  const releaseUrl = 'https://speech.example.test/v1/audio-artifacts/engine/0.4.14';
+  const archive = `tellus-audio-engine-v0.4.14-${asset.platform}.tar.gz`;
   assert.deepEqual(serviceRequests.map(({ url }) => url), [
     `${releaseUrl}/${archive}.sha256/token`,
     `${releaseUrl}/${archive}/token`,

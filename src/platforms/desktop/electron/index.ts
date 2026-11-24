@@ -483,6 +483,7 @@ const {
   probeMicCapture: nativeProbeMicCapture,
   checkMicCapturePermission: nativeCheckMicCapturePermission,
   checkMicCapturePermissionInfo: nativeCheckMicCapturePermissionInfo,
+  checkMicCapturePermissionInfoAsync: nativeCheckMicCapturePermissionInfoAsync,
   checkSpeakerCapturePermissionInfo: nativeCheckSpeakerCapturePermissionInfo,
   probeSpeakerCapturePermissionInfo: nativeProbeSpeakerCapturePermissionInfo,
   requestInitialMicrophonePermissionOpen: nativeRequestInitialMicrophonePermissionOpen,
@@ -1257,6 +1258,19 @@ export const checkMicCapturePermission: () => boolean = () =>
   checkMicCapturePermissionInfo().granted;
 export const checkMicCapturePermissionInfo: () => CapturePermissionCheckResult = () =>
   callPermissionCheck('microphone', callNativeMicPermissionCheck);
+/** 같은 점검을 작업 스레드에서 실행해 JS 스레드를 막지 않는다. 동기판과 같은 결과 형식으로 resolve한다. */
+export const checkMicCapturePermissionInfoAsync: () => Promise<CapturePermissionCheckResult> =
+  async () => {
+    try {
+      const raw =
+        typeof nativeCheckMicCapturePermissionInfoAsync === 'function'
+          ? await nativeCheckMicCapturePermissionInfoAsync()
+          : callNativeMicPermissionCheck();
+      return normalizePermissionResult('microphone', raw);
+    } catch (error) {
+      return permissionFailureResult('microphone', error);
+    }
+  };
 export const checkSpeakerCapturePermissionInfo: () => CapturePermissionCheckResult = () =>
   callPermissionCheck('speaker', callNativeSpeakerPermissionCheck);
 export const probeSpeakerCapturePermissionInfo: () => CapturePermissionCheckResult = () =>
