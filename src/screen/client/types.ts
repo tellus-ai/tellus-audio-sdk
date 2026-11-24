@@ -128,6 +128,7 @@ export interface RecordingAudioMetadata {
   sampleRate: 48000;
   channels: 1;
   samples: number;
+  /** 무음으로 채운 샘플 수(48 kHz). gap 횟수가 아니다. 오디오 cutoff 뒤 영상 길이까지 붙인 무음은 `paddingSamples`이며 여기에 포함되지 않는다. 마이크 재연결 동안과 스피커 유휴 구간에 덮은 무음도 PCM으로 들어가 포함되지 않는다. */
   gaps: number;
   paddingSamples: number;
   queueHighWaterSamples: number;
