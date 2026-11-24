@@ -183,6 +183,21 @@ await capture.setDenoiseEnabled(true);  // 생성 때 정한 denoiseMode로 다�
 - 모델을 쓸 수 없으면 상태를 바꾸지 않고 엔진의 `model_required: <원인>`으로 reject합니다.
 - 이 API는 엔진 v0.4.12 이상이 필요하며(SDK 0.3.12부터 고정), 구형 kit에서는 `denoise_toggle_unsupported: install a native engine with runtime denoise toggle support`로 reject합니다(동기로 던지지 않습니다).
 
+## 마이크 권한 확인을 JS 스레드 밖에서 하기
+
+`checkMicCapturePermissionInfo()`는 Windows에서 마이크 stream을 실제로 열어 보므로 JS 스레드를 수십 ms 막을 수 있습니다. UI나 이벤트 루프 스레드에서는 같은 점검을 작업 스레드에서 실행하는 비동기판을 씁니다.
+
+```ts
+import { checkMicCapturePermissionInfoAsync } from '@tellus-ai/audio-sdk-desktop';
+
+const result = await checkMicCapturePermissionInfoAsync();
+// 동기판과 같은 형식: { granted, status, backend, permissionScope, message, error?, rawStatus, rawResult, ... }
+```
+
+- 결과 형식과 실패 처리는 동기판과 같습니다. 점검이 실패해도 reject하지 않고 `granted: false`와 `error`를 담은 결과로 resolve합니다.
+- 동기판 `checkMicCapturePermissionInfo()`는 그대로 있습니다.
+- 작업 스레드 실행은 엔진 v0.4.14 이상이 필요합니다(SDK 0.3.14부터 고정). 그 전 kit에서는 같은 동기 점검을 실행한 뒤 resolve하므로 호출은 그대로 동작하지만 JS 스레드는 막힙니다.
+
 ## close_talk 임계값과 소음 저감 상한
 
 ```ts

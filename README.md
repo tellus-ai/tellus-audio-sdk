@@ -48,6 +48,8 @@ close_talk 게이트 세부 설정 중 `closeTalkLevelMinDbfs`(유한한 -100..0
 
 Desktop의 런타임 소음 제거 토글 `setDenoiseEnabled(enabled)`(Promise, 상태 `getStatus().denoiseActive`)는 캡처를 멈추지 않고 다음 마이크 처리 청크부터 소음 제거를 켜거나 끕니다. 이 API는 엔진 v0.4.12 이상이 필요하며(SDK 0.3.12부터 고정), 그 전 kit에서는 `denoise_toggle_unsupported`로 reject합니다. 상세는 [Desktop README](platforms/desktop/README.md#소음-제거-켜고-끄기)를 참고하세요.
 
+Desktop의 `checkMicCapturePermissionInfoAsync()`(Promise)는 `checkMicCapturePermissionInfo()`와 같은 점검·결과 형식을 작업 스레드에서 실행해 JS 스레드를 막지 않습니다. 작업 스레드 실행은 엔진 v0.4.14 이상이 필요하며(SDK 0.3.14부터 고정), 그 전 kit에서는 동기 점검을 실행한 뒤 resolve합니다. 상세는 [Desktop README](platforms/desktop/README.md#마이크-권한-확인을-js-스레드-밖에서-하기)를 참고하세요.
+
 입력 hold API `holdInput()`·`releaseInput()`(상태 `getStatus().inputHeld`)는 앱이 업링크를 끄는 동안(예: TTS 재생) 입력을 보류하는 세 플랫폼 공통 API입니다. 이 API는 엔진 v0.4.6 이상이 필요하며(SDK 0.3.6부터 고정), 그 전 kit에서는 `unsupported` 오류를 냅니다. 상세는 각 플랫폼 README를 참고하세요.
 
 모바일·웹 캡처는 장치 입력 결함으로 멈추지 않습니다. [-1, 1] 밖 유한값(예: iOS 큰 목소리의 1.0 초과)은 ±1로 자르고 NaN·±inf는 0으로 바꾸며(샘플 수·샘플 시계는 그대로), 역행한 timestamp도 받고 청크 timestamp는 뒤로 가지 않습니다. 이전에는 이런 입력 하나로 `internal_error`가 나고 모바일 capture를 다시 만들어야 했습니다. 정규화 수는 `getStatus()`의 `inputClippedSamples`·`inputNonFiniteSamples`·`inputTimestampRegressions`와 같은 이름의 청크 필드로 봅니다. 지원하지 않는 장치 레이트는 계속 실패하며 `invalid_argument`입니다. 실패 원인은 React Native 오류의 `engineMessage`(`message`는 기존 오류 코드 그대로), 웹 오류 `message`의 `코드: 설명`, 두 플랫폼의 `getStatus().lastErrorMessage`로 읽습니다. 모바일의 `internal_error` 잠금은 `reset()` 또는 `stop()` → `start()`가 풀어 같은 capture를 다시 씁니다. 이 동작은 엔진 v0.4.9 이상이 필요하며(필드는 선택 필드), 그 전 kit에서는 설명과 정규화 수가 없습니다.
