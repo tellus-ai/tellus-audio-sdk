@@ -53,6 +53,12 @@ export interface AudioCaptureConfig {
   micGainDb?: number;
   /** Captured system audio gain, -60..12 dB. Default 0; does not change playback volume. */
   speakerGainDb?: number;
+  /**
+   * OS input volume applied while the microphone is open: finite 0..1, or 'system' to leave the OS level alone.
+   * Engine default is 1 (maximum). The original level is restored when the microphone stream closes; a level the user
+   * changes in the OS during capture is kept.
+   */
+  micInputVolume?: MicInputVolume;
   autoGainControl?: AutoGainControlConfig;
   /** Includes synchronized PCM16 raw frames in chunk.rawAudio. */
   enableRawAudio?: boolean;
@@ -812,6 +818,17 @@ export async function listAudioDevices(source: AudioDeviceSource): Promise<Audio
 
 const MEETING_SYNC_UNSUPPORTED = 'meeting_sync_unsupported: install a native engine with meeting app sync support';
 
+/** OS microphone input volume request: 0..1, or 'system' to keep the OS setting. */
+export type MicInputVolume = number | 'system';
+
+function validateMicInputVolume(volume: unknown): MicInputVolume {
+  if (volume === 'system') return volume;
+  if (typeof volume !== 'number' || !Number.isFinite(volume) || volume < 0 || volume > 1) {
+    throw new Error('invalid_mic_input_volume');
+  }
+  return volume;
+}
+
 export class AudioCapture {
   #native: any;
   #transition = 0;
@@ -820,8 +837,10 @@ export class AudioCapture {
 
   constructor(config?: AudioCaptureConfig | null) {
     validateDeviceSelection(config);
+    if (config?.micInputVolume !== undefined) validateMicInputVolume(config.micInputVolume);
     const gain = gainConfig(config ?? {});
     this.#native = new NativeAudioCapture({ ...config, ...gain });
+    if (config?.micInputVolume !== undefined) this.#requireMicInputVolumeSupport();
     if (config?.micGainDb !== undefined || config?.speakerGainDb !== undefined || config?.autoGainControl !== undefined) this.#requireGainSupport();
     if (config?.closeTalkThresholdDb !== undefined) this.#requireCloseTalkThresholdSupport();
     if (config?.denoiseAttenuationLimitDb !== undefined) this.#requireDenoiseAttenuationLimitSupport();
@@ -873,6 +892,12 @@ export class AudioCapture {
     if (typeof this.#native.setMicMuted !== 'function' ||
         typeof this.#native.setSpeakerMuted !== 'function') {
       throw new Error('source_mute_unsupported: install a native engine with source mute support');
+    }
+  }
+
+  #requireMicInputVolumeSupport(): void {
+    if (typeof this.#native.setMicInputVolume !== 'function' || typeof this.#native.getMicInputVolume !== 'function') {
+      throw new Error('mic_input_volume_unsupported: install a native engine with OS input volume support');
     }
   }
 
@@ -947,6 +972,19 @@ export class AudioCapture {
     validateGainDb(db);
     this.#requireGainSupport();
     this.#native.setMicGainDb(db);
+  }
+
+  /** Changes the OS input volume used while the microphone is open. Applies immediately during capture; 'system' restores the original level. */
+  setMicInputVolume(volume: MicInputVolume): void {
+    validateMicInputVolume(volume);
+    this.#requireMicInputVolumeSupport();
+    this.#native.setMicInputVolume(volume);
+  }
+
+  /** Requested OS input volume (0..1) or 'system'. This is the request, not the level the device reports. */
+  getMicInputVolume(): MicInputVolume {
+    this.#requireMicInputVolumeSupport();
+    return this.#native.getMicInputVolume();
   }
 
   /** Updates captured system audio gain; playback volume is unaffected. */
