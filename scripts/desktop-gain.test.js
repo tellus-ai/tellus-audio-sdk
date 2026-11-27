@@ -75,3 +75,31 @@ test('desktop never silently ignores gain settings on older engines', () => {
   assert.throws(() => capture.setMicGainDb(1), /gain_unsupported/);
   assert.throws(() => capture.setSpeakerGainDb(1), /gain_unsupported/);
 });
+
+test('desktop OS input volume validates, forwards numbers or system, and fails loudly on older engines', () => {
+  let configured;
+  const values = [];
+  const AudioCapture = wrapper(class {
+    constructor(config) { configured = config; }
+    setMicInputVolume(volume) { values.push(volume); }
+    getMicInputVolume() { return 'system'; }
+  });
+  for (const micInputVolume of [NaN, Infinity, -0.01, 1.01, 'max', '1', null]) {
+    assert.throws(() => new AudioCapture({ micInputVolume }), /invalid_mic_input_volume/);
+  }
+  const capture = new AudioCapture({ micInputVolume: 'system' });
+  assert.equal(configured.micInputVolume, 'system');
+  for (const volume of [NaN, -1, 2, 'max', undefined]) {
+    assert.throws(() => capture.setMicInputVolume(volume), /invalid_mic_input_volume/);
+  }
+  capture.setMicInputVolume(0);
+  capture.setMicInputVolume(1);
+  capture.setMicInputVolume('system');
+  assert.deepEqual(values, [0, 1, 'system']);
+  assert.equal(capture.getMicInputVolume(), 'system');
+
+  const Old = wrapper(class {});
+  assert.throws(() => new Old({ micInputVolume: 1 }), /mic_input_volume_unsupported/);
+  const old = new Old();
+  assert.throws(() => old.setMicInputVolume(1), /mic_input_volume_unsupported/);
+});

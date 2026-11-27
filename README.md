@@ -86,7 +86,9 @@ Web 설치 검증에는 공식 엔진 v0.4.10 WASM archive와 checksum 게시가
 
 ## 디지털 게인과 자동 보정
 
-새 엔진은 캡처 시작·일시정지·재개·재시도·종료 중 OS 마이크 입력 볼륨을 변경하지 않습니다. 이전의 입력 100% 자동 설정에 의존했다면 OS 입력 수준은 사용자가 정하고, 세션의 처리된 신호만 `micGainDb`로 보정하세요. `micGainDb`와 `speakerGainDb`는 기본 0 dB이며 유한한 -60..+12 dB만 받습니다. 원본 raw PCM, OS 볼륨, SDK 재생 볼륨은 바꾸지 않습니다. `speakerGainDb`는 Desktop에서 캡처한 시스템 오디오에만 적용됩니다. Web·Mobile은 설정의 기본값 0만 허용하고, 0이 아닌 설정 또는 `setSpeakerGainDb()` 호출은 `tellus_speaker_gain_unsupported`로 거부합니다.
+Desktop은 마이크가 열린 동안 OS 마이크 입력 볼륨을 기본 최대(1)로 맞추고, 스트림이 닫히면(정지·일시정지·장치 변경) 원래 값으로 되돌립니다. 캡처 중 사용자가 OS에서 바꾼 값은 유지합니다. `micInputVolume`(유한한 0..1 또는 `'system'`)과 `setMicInputVolume()`·`getMicInputVolume()`으로 바꿀 수 있고, `'system'`은 OS 설정을 건드리지 않습니다. 잘못된 값은 `invalid_mic_input_volume`, 이 기능이 없는 엔진에서는 `mic_input_volume_unsupported`로 거부합니다. Web·Mobile은 OS 입력 볼륨을 바꾸지 않습니다.
+
+`micGainDb`·`speakerGainDb`는 OS 볼륨과 별개인 디지털 게인입니다. `micGainDb`와 `speakerGainDb`는 기본 0 dB이며 유한한 -60..+12 dB만 받습니다. 원본 raw PCM, OS 볼륨, SDK 재생 볼륨은 바꾸지 않습니다. `speakerGainDb`는 Desktop에서 캡처한 시스템 오디오에만 적용됩니다. Web·Mobile은 설정의 기본값 0만 허용하고, 0이 아닌 설정 또는 `setSpeakerGainDb()` 호출은 `tellus_speaker_gain_unsupported`로 거부합니다.
 
 Web·Mobile의 `setMicGainDb()`는 Promise를 반환합니다. 설정 대기 중 pause/stop/dispose 또는 승인 취소로 해당 제어 작업이 취소되면 Promise를 reject합니다. 적용되지 않은 변경을 성공으로 처리하지 마세요. 일시정지가 끝난 뒤 새 setter 호출로 다시 요청할 수 있습니다.
 
