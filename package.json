@@ -1,6 +1,6 @@
 {
   "name": "@tellus-ai/audio-sdk-workspace",
-  "version": "0.3.14",
+  "version": "0.3.15",
   "private": true,
   "workspaces": [
     "platforms/*"
