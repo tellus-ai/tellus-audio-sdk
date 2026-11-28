@@ -5,9 +5,21 @@ const { execFileSync } = require('node:child_process');
 const root = path.resolve(__dirname, '..');
 if (process.argv.length > 2) throw new Error('Usage: assemble-platforms');
 const release = JSON.parse(fs.readFileSync(path.join(root, 'release-assets.json')));
-for (const platform of ['desktop', 'web', 'mobile']) {
+for (const platform of ['desktop', 'web', 'mobile', 'flutter']) {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'platforms', platform, 'package.json')));
   if (pkg.version !== release.sdkVersion) throw new Error(`${platform} package version differs from pinned SDK version`);
+}
+const flutter = path.join(root, 'platforms', 'flutter');
+const pubspecVersion = /^version:[ \t]*(\S+)/m.exec(fs.readFileSync(path.join(flutter, 'pubspec.yaml'), 'utf8'))?.[1];
+if (pubspecVersion !== release.sdkVersion) throw new Error('flutter pubspec version differs from pinned SDK version');
+// Sources of the React Native package that the Flutter plugin also compiles.
+const flutterSharedSources = [
+  ...['AudioDevice.hpp', 'CaptureSession.hpp', 'CaptureSession.cpp', 'CaptureWorker.hpp', 'CaptureWorker.cpp', 'InputHold.hpp', 'InputHold.cpp',
+    'LastError.hpp', 'LastError.cpp', 'MicrophonePriority.hpp', 'MicrophonePriority.cpp'].map(file => `cpp/${file}`),
+  'ios/IOSAudioDevice.mm',
+].map(file => path.join(root, 'platforms', 'mobile', file));
+for (const source of [path.join(flutter, 'native'), ...flutterSharedSources]) {
+  if (!fs.existsSync(source)) throw new Error(`Flutter native source is missing: ${path.relative(root, source).split(path.sep).join('/')}`);
 }
 fs.rmSync(path.join(root, 'dist'), { recursive: true, force: true });
 const compiler = path.join(root, 'node_modules/typescript/bin/tsc');
@@ -38,4 +50,17 @@ for (const platform of ['desktop', 'web', 'mobile']) {
   if (platform === 'web') fs.cpSync(path.join(root, 'licenses'), path.join(destination, 'licenses'), { recursive: true });
   if (!fs.existsSync(path.join(destination, pkg.main))) throw new Error(`SDK build is missing ${pkg.main}`);
 }
-console.log('Built desktop, web and mobile SDK packages from SDK sources.');
+
+// The Flutter plugin has no TypeScript runtime: it takes the installer, its manifest and the native sources.
+fs.rmSync(path.join(flutter, 'dist'), { recursive: true, force: true });
+fs.cpSync(path.join(root, 'dist'), path.join(flutter, 'dist'), { recursive: true });
+for (const extension of ['js', 'd.ts']) fs.rmSync(path.join(flutter, `dist/installer/copy-web-assets.${extension}`));
+fs.writeFileSync(path.join(flutter, 'release-assets.json'), JSON.stringify({ ...release, assets: Object.fromEntries(['ios', 'android'].map(key => [key, release.assets[key]])) }, null, 2) + '\n');
+fs.copyFileSync(path.join(root, 'LICENSE'), path.join(flutter, 'LICENSE'));
+// CocoaPods cannot reference sources outside the pod folder, so the iOS pod gets a copy. Android uses relative paths.
+const podSources = path.join(flutter, 'ios', 'Classes', 'native');
+fs.rmSync(podSources, { recursive: true, force: true });
+fs.cpSync(path.join(flutter, 'native'), podSources, { recursive: true });
+// COPYFILE_EXCL: a shared source must not silently replace a Flutter source of the same name.
+for (const source of flutterSharedSources) fs.copyFileSync(source, path.join(podSources, path.basename(source)), fs.constants.COPYFILE_EXCL);
+console.log('Built desktop, web, mobile and Flutter SDK packages from SDK sources.');

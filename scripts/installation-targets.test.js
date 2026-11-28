@@ -9,6 +9,7 @@ const { test } = require('node:test');
 for (const [platform, targets, args = [], selectedPlatform] of [
   ['desktop', [null]], ['web', ['web']], ['mobile', ['ios', 'android']],
   ['mobile', ['android'], ['--platform', 'android']], ['mobile', ['ios'], [], 'ios'],
+  ['flutter', ['ios', 'android']], ['flutter', ['android'], ['--platform', 'android']], ['flutter', ['ios'], [], 'ios'],
 ]) {
   test(`${platform} selects ${targets.join(',')} using package identity and existing options`, t => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellus-targets-'));

@@ -7,8 +7,9 @@
 | Electron | `@tellus-ai/audio-sdk-desktop` | [Desktop](platforms/desktop/README.md) |
 | 브라우저 | `@tellus-ai/audio-sdk-web` | [Web](platforms/web/README.md) |
 | React Native·Expo 개발 앱 | `@tellus-ai/audio-sdk-mobile` | [Mobile](platforms/mobile/README.md) |
+| Flutter(iOS·Android) | `tellus_audio_sdk`(path 의존성) | [Flutter](platforms/flutter/README.md) |
 
-각 플랫폼의 `package.json`은 자신의 실행 파일과 의존성만 배포합니다. 기존 단일 패키지의 `/browser`·`/react-native` 진입점은 각 플랫폼 패키지의 기본 진입점으로 이동했습니다. 승인 API는 모든 패키지의 `/authorization`으로 제공합니다. Expo plugin 이름은 `@tellus-ai/audio-sdk-mobile`입니다.
+각 플랫폼의 `package.json`은 자신의 실행 파일과 의존성만 배포합니다. 기존 단일 패키지의 `/browser`·`/react-native` 진입점은 각 플랫폼 패키지의 기본 진입점으로 이동했습니다. 승인 API는 모든 패키지의 `/authorization`으로 제공합니다. Expo plugin 이름은 `@tellus-ai/audio-sdk-mobile`입니다. Flutter 플러그인은 npm으로 배포하지 않으며, 빌드한 이 저장소의 `platforms/flutter`를 path 의존성으로 지정하고 그 폴더에서 엔진을 설치합니다.
 
 ## 설치
 
@@ -30,7 +31,7 @@ Desktop은 OS·CPU에 맞는 엔진을 선택합니다. Web은 웹 엔진만 설
 
 ## 유지보수 빌드
 
-SDK 저장소의 실행 래퍼와 설치 코드를 빌드하고 세 플랫폼 패키지를 조립합니다.
+SDK 저장소의 실행 래퍼와 설치 코드를 빌드하고 세 플랫폼 패키지와 Flutter 플러그인을 조립합니다.
 
 Desktop의 신규 native API는 장치 선택을 지원하는 엔진이 필요하며, 구형 엔진에서는 명시 장치 선택을 `unsupported`로 거부합니다. 고객에게 제공하기 전에 고정된 버전의 엔진 archive와 checksum이 발행되어 있는지 확인해야 합니다. 소스 빌드·패키지 검증 통과만으로 새 장치 기능의 배포 완료를 의미하지 않습니다.
 

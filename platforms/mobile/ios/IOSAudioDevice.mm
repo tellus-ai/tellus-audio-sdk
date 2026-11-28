@@ -376,7 +376,9 @@ private:
 
   void observeSession() {
     _observers = [NSMutableArray new];
-    auto observe = [&](NSNotificationName name, std::function<bool(NSNotification*)> applies, const std::string& code, id object = nil) {
+    // `code` is taken by value: the block below copies a C++ object it captures, but keeps only a
+    // reference to a reference parameter, which would dangle once observe returns.
+    auto observe = [&](NSNotificationName name, std::function<bool(NSNotification*)> applies, std::string code, id object = nil) {
       id observer = [[NSNotificationCenter defaultCenter] addObserverForName:name object:object
           queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification* notification) {
         if (_running && applies(notification)) {

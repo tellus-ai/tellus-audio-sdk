@@ -26,10 +26,11 @@ for (let index = 0; index < args.length; index += 2) {
 }
 const packagePlatform = (JSON.parse(readFileSync(join(__dirname, '..', '..', 'package.json'), 'utf8')) as { tellusPlatform?: string }).tellusPlatform;
 const selectedPlatform = platform ?? process.env.TELLUS_AUDIO_ENGINE_PLATFORM;
+const mobileTargets = packagePlatform === 'mobile' || packagePlatform === 'flutter';
 const targets = selectedPlatform !== undefined ? [selectedPlatform] :
-  packagePlatform === 'web' ? ['web'] : packagePlatform === 'mobile' ?
+  packagePlatform === 'web' ? ['web'] : mobileTargets ?
     ['ios', 'android'] : [undefined];
-if (packagePlatform === 'mobile' && targets.some(target => target !== 'ios' && target !== 'android')) {
+if (mobileTargets && targets.some(target => target !== 'ios' && target !== 'android')) {
   fail('Mobile installation requires the ios or android target');
 }
 if (output !== undefined && (targets.length !== 1 || targets[0] !== 'web')) {

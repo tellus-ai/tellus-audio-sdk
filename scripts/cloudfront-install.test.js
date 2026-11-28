@@ -245,10 +245,25 @@ test('web package chooses web artifacts on a desktop host', async (t) => {
   await installBinary();
   assert.ok(requests.every(({ url }) => !url.includes('darwin') && !url.includes('linux') && !url.includes('win32')));
 });
-for (const [packagePlatform, target] of [['desktop', 'web'], ['web', 'ios'], ['mobile', undefined], ['mobile', 'web']]) {
+for (const [packagePlatform, target] of [['desktop', 'web'], ['web', 'ios'], ['mobile', undefined], ['mobile', 'web'], ['flutter', undefined], ['flutter', 'web']]) {
   test(`${packagePlatform} rejects the wrong target ${String(target)} before downloading`, async (t) => {
     const { installBinary, requests } = installerFixture(t, { packagePlatform });
     await assert.rejects(installBinary(target), /only installs|requires/);
     assert.equal(requests.length, 0);
+  });
+}
+
+// CocoaPods and Gradle only read the Flutter plugin's ios/ and android/ folders, so each kit is installed inside its own.
+for (const platform of ['ios', 'android']) {
+  test(`Flutter package installs ${platform} inside its ${platform} folder and finds it installed afterwards`, async t => {
+    const { root, installBinary, requests } = installerFixture(t, { platform, packagePlatform: 'flutter' });
+    await installBinary(platform);
+    const target = path.join(root, platform, 'vendor', platform);
+    for (const file of platformFiles[platform]) assert.ok(fs.statSync(path.join(target, file)).isFile());
+    assert.equal(JSON.parse(fs.readFileSync(path.join(target, '.install-state.json'))).key, platform);
+    assert.deepEqual(fs.readdirSync(path.join(root, platform, 'vendor')), [platform]);
+    assert.ok(!fs.existsSync(path.join(root, 'vendor')));
+    await installBinary(platform);
+    assert.equal(requests.length, 6);
   });
 }
