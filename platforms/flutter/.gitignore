@@ -1,0 +1,5 @@
+.dart_tool/
+pubspec.lock
+build/
+# Copied from platforms/mobile and native/ by `npm run build` (scripts/assemble-platforms.js).
+ios/Classes/native/
