@@ -372,7 +372,7 @@ export async function installBinary(platform?: string): Promise<void> {
   assertManifestVersion(manifest);
   const packagePlatform = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { tellusPlatform?: string }).tellusPlatform;
   const selectedPlatform = platform ?? process.env.TELLUS_AUDIO_ENGINE_PLATFORM ?? (packagePlatform === 'web' ? 'web' : undefined);
-  if (packagePlatform === 'mobile' && selectedPlatform !== 'ios' && selectedPlatform !== 'android') {
+  if ((packagePlatform === 'mobile' || packagePlatform === 'flutter') && selectedPlatform !== 'ios' && selectedPlatform !== 'android') {
     fail('Mobile installation requires the ios or android target');
   }
   if (packagePlatform === 'web' && selectedPlatform !== 'web') fail('Web package only installs the web target');
@@ -392,7 +392,9 @@ export async function installBinary(platform?: string): Promise<void> {
   const { archiveUrl, sha256Url, authorizationOrigin, artifactTokenService } = await resolveReleaseAssetUrls(manifest, asset);
 
   const platformDir = asset.platform || key;
-  const targetDir = join(ROOT, 'vendor', platformDir);
+  // CocoaPods and Gradle only read files under the Flutter plugin's ios/ and android/ folders.
+  const vendorPath = packagePlatform === 'flutter' ? `${platformDir}/vendor/${platformDir}` : `vendor/${platformDir}`;
+  const targetDir = join(ROOT, vendorPath);
   const vendorDir = dirname(targetDir);
   mkdirSync(vendorDir, { recursive: true });
   const tempDir = mkdtempSync(join(vendorDir, '.tmp-'));
@@ -415,7 +417,7 @@ export async function installBinary(platform?: string): Promise<void> {
     const expectedSha = readExpectedSha256(shaPath);
 
     if (alreadyInstalled(targetDir, expectedSha) && missingRequiredFiles(targetDir, asset).length === 0) {
-      log(`binary asset already installed: vendor/${platformDir}`);
+      log(`binary asset already installed: ${vendorPath}`);
       return;
     }
 
@@ -459,7 +461,7 @@ export async function installBinary(platform?: string): Promise<void> {
         2,
       ),
     );
-    log(`binary asset installed: vendor/${platformDir}`);
+    log(`binary asset installed: ${vendorPath}`);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

@@ -13,8 +13,9 @@ test('fresh SDK sources build all packages without an engine checkout or runtime
   const inputs = ['src', 'licenses', 'LICENSE', 'package.json', 'release-assets.json',
     'scripts/assemble-platforms.js', 'tsconfig.json',
     ...['desktop', 'web', 'mobile'].map(platform => `tsconfig.runtime.${platform}.json`),
-    ...['desktop', 'web', 'mobile'].map(platform => `platforms/${platform}/package.json`),
-    ...['cpp', 'ios', 'android/src', 'nitrogen/generated'].map(directory => `platforms/mobile/${directory}`)];
+    ...['desktop', 'web', 'mobile', 'flutter'].map(platform => `platforms/${platform}/package.json`),
+    ...['cpp', 'ios', 'android/src', 'nitrogen/generated'].map(directory => `platforms/mobile/${directory}`),
+    'platforms/flutter/pubspec.yaml', 'platforms/flutter/native'];
   for (const input of inputs) {
     fs.mkdirSync(path.dirname(path.join(fixture, input)), { recursive: true });
     fs.cpSync(path.join(root, input), path.join(fixture, input), { recursive: true });

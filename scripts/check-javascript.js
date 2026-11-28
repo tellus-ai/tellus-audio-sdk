@@ -13,3 +13,5 @@ for (const platform of ['desktop', 'web', 'mobile']) {
   check(path.join(root, 'platforms', platform, 'runtime'));
   check(path.join(root, 'platforms', platform, 'dist'));
 }
+// The Flutter package ships the installer only.
+check(path.join(root, 'platforms', 'flutter', 'dist'));

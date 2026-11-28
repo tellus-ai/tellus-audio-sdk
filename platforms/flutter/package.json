@@ -1,0 +1,19 @@
+{
+  "name": "@tellus-ai/audio-sdk-flutter",
+  "version": "0.3.15",
+  "private": true,
+  "description": "Tellus Audio SDK for Flutter: engine installer of the Flutter plugin",
+  "tellusPlatform": "flutter",
+  "scripts": {
+    "install:binary": "node dist/installer/install-binary-cli.js",
+    "check:binary": "node dist/installer/check-binary-cli.js"
+  },
+  "engines": {
+    "node": ">= 18"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tellus-ai/tellus-audio-sdk.git"
+  }
+}

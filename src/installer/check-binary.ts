@@ -67,7 +67,7 @@ function requiredOrtRuntimePaths(): string[] {
 
 export function checkBinary(platform?: string): void {
   const packagePlatform = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { tellusPlatform?: string }).tellusPlatform;
-  if (packagePlatform === 'web' || packagePlatform === 'mobile') {
+  if (packagePlatform === 'web' || packagePlatform === 'mobile' || packagePlatform === 'flutter') {
     const manifest = JSON.parse(readFileSync(join(ROOT, 'release-assets.json'), 'utf8')) as { assets: Record<string, { requiredFiles: string[] }> };
     const selectedPlatform = platform ?? process.env.TELLUS_AUDIO_ENGINE_PLATFORM;
     const targets = selectedPlatform !== undefined ? [selectedPlatform] :
@@ -76,7 +76,8 @@ export function checkBinary(platform?: string): void {
       const asset = manifest.assets[target];
       if (!asset?.requiredFiles.length) fail(`Release asset does not include the installation target: ${target}`);
       const missing = asset.requiredFiles.filter(file => {
-        const filename = join(ROOT, 'vendor', target, file);
+        // The Flutter plugin keeps each kit under its own ios/ or android/ folder, where CocoaPods and Gradle read it.
+        const filename = packagePlatform === 'flutter' ? join(ROOT, target, 'vendor', target, file) : join(ROOT, 'vendor', target, file);
         return !existsSync(filename) || !statSync(filename).isFile();
       });
       if (missing.length) fail(`Binary asset is missing required files: ${target}: ${missing.join(', ')}`);
